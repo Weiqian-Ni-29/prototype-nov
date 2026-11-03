@@ -1,0 +1,25 @@
+; Godot project configuration. Original game assets and rules live in this repository.
+config_version=5
+
+[application]
+config/name="归灯之野 · 白栎远征"
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.7", "GL Compatibility")
+config/description="六边形远征、伙伴与归途。单人 2.5D 探索 RPG。"
+
+[display]
+window/size/viewport_width=1440
+window/size/viewport_height=900
+window/size/window_width_override=1280
+window/size/window_height_override=800
+window/stretch/mode="canvas_items"
+
+[rendering]
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/default_filters/use_nearest_mipmap_filter=false
+environment/defaults/default_clear_color=Color(0.035, 0.06, 0.065, 1)
+anti_aliasing/quality/msaa_3d=1
+
+[audio]
+driver/enable_input=false

@@ -1,0 +1,5 @@
+.godot/
+game/builds/
+*.tmp
+test-results/
+.DS_Store
