@@ -3,8 +3,10 @@ const Run = preload("res://scripts/domain/expedition.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Combat = preload("res://scripts/domain/battle.gd")
+const Story = preload("res://scripts/domain/narrative.gd")
 const World = preload("res://scripts/presentation/world_view.gd")
 const FontAsset = preload("res://assets/fonts/NotoSansSC.ttf")
+const Sound = preload("res://scripts/presentation/sound.gd")
 var run = Run.new()
 var view: Node3D
 var ui: Control
@@ -19,12 +21,18 @@ var selected_target = "enemy_0"
 var menu_visible = true
 var battle_timer = 0.0
 var toast_text = ""
+var narrative: RefCounted
+var dialogue_subject = ""
+var dialogue_response = ""
+var sound: Node
 var gold = Color("dec38e")
 var ink = Color("e8e4d1")
 var muted = Color("a2b3a7")
 
 func _ready() -> void:
 	DisplayServer.window_set_title("归灯之野 · 白栎远征")
+	sound = Sound.new()
+	add_child(sound)
 	view = World.new()
 	add_child(view)
 	view.cell_clicked.connect(_select_cell)
@@ -49,8 +57,8 @@ func _ready() -> void:
 	theme.set_color("font_disabled_color", "Button", Color("718077"))
 	theme.set_stylebox("panel", "PopupMenu", _style(Color("233c36"), gold, 6))
 	theme.set_stylebox("normal", "LineEdit", _style(Color("213831"), Color("647460"), 5))
-	theme.set_stylebox("background", "ProgressBar", _style(Color("152d2b"), Color.TRANSPARENT, 3))
-	theme.set_stylebox("fill", "ProgressBar", _style(Color("92aa7a"), Color.TRANSPARENT, 3))
+	theme.set_stylebox("background", "ProgressBar", _bar_style(Color("152d2b")))
+	theme.set_stylebox("fill", "ProgressBar", _bar_style(Color("92aa7a")))
 	ui.theme = theme
 	canvas.add_child(ui)
 	modal_layer = Control.new()
@@ -59,11 +67,13 @@ func _ready() -> void:
 	modal_layer.theme = theme
 	canvas.add_child(modal_layer)
 	run.new_run(20261104, "wayfarer")
+	narrative = Story.new(run)
 	selected_cell = run.data.start
 	view.refresh(run, selected_id, selected_cell)
 	view.focus_cell(selected_cell)
 	_refresh()
 	if "--smoke" in OS.get_cmdline_user_args():
+		run.save_path = "user://smoke-run.json"
 		_start_new()
 		get_tree().create_timer(4.0).timeout.connect(_smoke_capture)
 
@@ -94,9 +104,24 @@ func _button(parent: Node, text: String, callback: Callable, disabled: bool = fa
 	button.text = text
 	button.custom_minimum_size.y = 38
 	button.disabled = disabled
-	button.pressed.connect(callback)
+	button.pressed.connect(func(): sound.play("click"); callback.call())
 	parent.add_child(button)
 	return button
+
+func _hp_bar(parent: Node, hp: float, maximum: float, enemy: bool = false) -> void:
+	var bar = ProgressBar.new()
+	bar.value = hp / maxf(1.0, maximum) * 100
+	bar.show_percentage = false
+	bar.custom_minimum_size.y = 6
+	if enemy:
+		bar.add_theme_stylebox_override("fill", _bar_style(Color("bd8b6e")))
+	parent.add_child(bar)
+
+func _bar_style(color: Color) -> StyleBoxFlat:
+	var style = StyleBoxFlat.new()
+	style.bg_color = color
+	style.set_corner_radius_all(3)
+	return style
 
 func _panel(parent: Node, rectangle: Rect2, background: Color = Color("19332ff2")) -> VBoxContainer:
 	var panel = PanelContainer.new()
@@ -111,7 +136,19 @@ func _panel(parent: Node, rectangle: Rect2, background: Color = Color("19332ff2"
 
 func _clear(parent: Node) -> void:
 	for child in parent.get_children():
-		child.free()
+		parent.remove_child(child)
+		child.queue_free()
+
+func _scroll_content(parent: Node) -> VBoxContainer:
+	var scroll = ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	parent.add_child(scroll)
+	var content = VBoxContainer.new()
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.add_theme_constant_override("separation", 9)
+	scroll.add_child(content)
+	return content
 
 func _refresh() -> void:
 	_clear(ui)
@@ -131,6 +168,15 @@ func _refresh() -> void:
 	_footer(screen)
 
 func _menu(screen: Vector2) -> void:
+	if ResourceLoader.exists("res://assets/portraits/hero.png"):
+		var illustration = TextureRect.new()
+		illustration.texture = load("res://assets/portraits/hero.png")
+		illustration.position = Vector2(screen.x * 0.43, 0)
+		illustration.size = Vector2(screen.x * 0.57, screen.y)
+		illustration.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		illustration.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		illustration.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		ui.add_child(illustration)
 	var box = _panel(ui, Rect2(70, 65, 570, minf(775, screen.y - 90)))
 	_text(box, "RETURN TO THE LAMPS", 13, gold)
 	_text(box, "归灯之野", 52, ink)
@@ -153,6 +199,7 @@ func _menu(screen: Vector2) -> void:
 	row.add_child(seed_edit)
 	_button(box, "开始远征  →", _start_new)
 	_button(box, "继续上次远征", _continue_run, not FileAccess.file_exists(run.save_path))
+	_button(box, "设置与操作指南", _settings_dialog)
 	_text(box, "每位角色独立行动 · 无撤离期限\nWASD 平移地图，滚轮缩放，点击相邻地块前进。", 15, muted)
 	var info = _panel(ui, Rect2(screen.x - 350, screen.y - 155, 315, 110), Color("19332fd9"))
 	_text(info, "六边形上的一次冒险", 21, gold)
@@ -200,17 +247,21 @@ func _header(screen: Vector2) -> void:
 	box.add_child(row)
 	_text(row, "归灯之野", 29, gold).custom_minimum_size.x = 190
 	var weather = "细雨" if run.data.weather == "rain" else "晴朗"
-	_text(row, "第 %d 天  ·  %s\n已探索 %d / 217 格" % [run.data.day, weather, run.data.explored.size()], 16).custom_minimum_size.x = 220
+	var forecast = "雨" if run.next_weather() == "rain" else "晴"
+	_text(row, "第 %d 天  ·  %s\n明日%s · 探索 %d/217" % [run.data.day, weather, forecast, run.data.explored.size()], 16).custom_minimum_size.x = 250
 	_text(row, "归航方向  " + _exit_direction() + "\n没有撤离期限，抵达后可等待同伴。", 16, muted).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_button(row, "操作指南", _guide)
+	_button(row, "设置/帮助", _settings_dialog)
+	_button(row, "旅途手记", _journal)
 	_button(row, "保存", func(): _run_action(run.save_game()), combat != null)
 	_button(row, "主菜单", _to_menu)
 
 func _exit_direction() -> String:
-	var delta = Hex.coord(run.data.exit) - Hex.coord(run.actor("hero").position)
-	if delta == Vector2i.ZERO:
+	if run.actor("hero").position == run.data.exit:
 		return "已抵达"
-	return ("北" if delta.y < -2 else "南" if delta.y > 2 else "") + ("东" if delta.x + delta.y * 0.5 > 1 else "西" if delta.x + delta.y * 0.5 < -1 else "侧")
+	if run.data.explored.has(run.data.exit):
+		return "已发现 · 见手记"
+	var delta = Hex.coord(run.data.exit) - Hex.coord(run.data.start)
+	return ("北" if delta.y < -2 else "南" if delta.y > 2 else "") + ("东" if delta.x + delta.y * 0.5 > 1 else "西" if delta.x + delta.y * 0.5 < -1 else "侧") + "一带"
 
 func _crew_panel(screen: Vector2) -> void:
 	var box = _panel(ui, Rect2(20, 120, 244, screen.y - 275))
@@ -245,7 +296,8 @@ func _crew_panel(screen: Vector2) -> void:
 	_button(box, "结束一天", _end_day_dialog)
 
 func _tile_panel(screen: Vector2) -> void:
-	var box = _panel(ui, Rect2(screen.x - 342, 120, 322, screen.y - 275))
+	var outer = _panel(ui, Rect2(screen.x - 342, 120, 322, screen.y - 275))
+	var box = _scroll_content(outer)
 	if selected_cell == "" or not run.data.explored.has(selected_cell):
 		_text(box, "迷雾之中", 25, gold)
 		_text(box, "移动揭开周围一圈。探索过的地块将永久点亮。", 17, muted)
@@ -272,20 +324,28 @@ func _tile_panel(screen: Vector2) -> void:
 	if not t.enemies.is_empty():
 		if t.discovered_enemy:
 			_text(box, "驻守敌人 · 强度固定", 18, Color("e4ab87"))
+			_text(box, "首次上场另付每人 2 AP；同地最多四名在场，进入后开始遭遇。", 14, muted)
 			for enemy in t.enemies:
 				_text(box, Catalog.ENEMIES[enemy].name + " · " + Catalog.ENEMIES[enemy].role, 14, muted)
+				if run.actor("grit").joined and run.actor("grit").hp > 0 and run.actor("grit").position == run.actor(selected_id).position and Hex.distance(Hex.coord(selected_cell), Hex.coord(run.actor(selected_id).position)) <= 1:
+					var definition = Catalog.ENEMIES[enemy]
+					_text(box, "砾牙辨识：HP %d · 攻击 %d · 速度 %d" % [definition.hp, definition.attack, definition.speed], 13, gold)
 			if here:
 				_button(box, "选择阵容并交战", _open_current_encounter)
 		else:
 			_text(box, "危险迹象", 18, Color("e4ab87"))
 			_text(box, "泥水下有气泡，附近足迹忽然中断。" if t.terrain == "swamp" else "蛛丝挂在枝间，林下有新鲜脚印。", 16, muted)
-	if t.npc != "":
+	if t.npc != "" and run.actor(t.npc).position == selected_cell:
 		var npc = run.actor(t.npc)
 		_text(box, npc.name + " · " + npc.title, 18)
 		if here:
 			_button(box, "交谈 / 个人故事", _talk.bind(t.npc))
-	elif t.site in ["inn", "home", "record", "exit"] and here:
+	elif t.site in ["inn", "home", "record", "exit", "water", "track", "forest"] and here:
 		_button(box, "调查与交谈", _talk.bind(t.site))
+	if here:
+		for id in run.same_cell(selected_cell):
+			if id != "hero" and id != t.npc:
+				_button(box, "与 " + run.actor(id).name + " 交谈", _talk.bind(id))
 	if t.quantity > 0:
 		_text(box, "可采集：%s ×%d" % [Catalog.item_name(t.resource), t.quantity], 16, muted)
 		if here:
@@ -341,6 +401,8 @@ func _select_cell(id: String) -> void:
 
 func _move_selected() -> void:
 	var result = run.move(moving_ids, selected_cell)
+	if result.ok and selected_id in moving_ids:
+		view.focus_cell(selected_cell)
 	_run_action(result)
 	if result.ok and result.get("battle", false):
 		_formation_dialog()
@@ -399,6 +461,14 @@ func _inventory_dialog(id: String) -> void:
 	var a = run.actor(id)
 	var box = _modal(a.name + " · 背包与装备", 850, 670)
 	_text(box, "攻击 %d · 防御 %d · 速度 %d\n战斗外免费换装；物品只在同格交接，不刷新资源。" % [run.stat(id, "attack"), run.stat(id, "defense"), run.stat(id, "speed")], 16, muted)
+	var slots: Array[String] = []
+	for slot in ["weapon", "armor", "accessory"]:
+		var item = str(a.equipment.get(slot, ""))
+		slots.append({"weapon": "武器", "armor": "防具", "accessory": "饰品"}[slot] + "：" + (Catalog.item_name(item) if item != "" else "空"))
+	_text(box, "  ·  ".join(slots), 17, gold)
+	_text(box, "专长：" + Catalog.passive_description(id), 16, muted)
+	_text(box, "技能 · " + Catalog.SKILLS[a.skill].name + "\n" + Catalog.skill_description(a.skill), 16, muted)
+	_text(box, "终结技 · " + Catalog.SKILLS[a.ultimate].name + "\n" + Catalog.skill_description(a.ultimate) + "；满能量额外释放，不占正常行动。", 16, muted)
 	var scroll = ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(scroll)
@@ -410,13 +480,27 @@ func _inventory_dialog(id: String) -> void:
 			continue
 		var row = HBoxContainer.new()
 		list.add_child(row)
-		_text(row, Catalog.item_name(item) + " ×%d" % a.inventory[item], 16).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_text(row, Story.DOCUMENTS.get(item, Catalog.item_name(item)) + " ×%d" % a.inventory[item], 16).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		if Catalog.ITEMS.get(item, {}).has("slot"):
 			_button(row, "卸下" if item in a.equipment.values() else "装备", func(): _run_action(run.equip(id, item)); _inventory_dialog(id))
-		for other in run.same_cell(a.position):
-			if other != id:
-				_button(row, "交给" + run.actor(other).name, func(): _run_action(run.transfer(id, other, item, 1)); _inventory_dialog(id))
+		if run.same_cell(a.position).size() > 1:
+			_button(row, "交接", _transfer_dialog.bind(id, item))
 	_button(box, "关闭", _close_modal)
+
+func _transfer_dialog(owner: String, item: String) -> void:
+	var box = _modal("同地交接 · " + Story.DOCUMENTS.get(item, Catalog.item_name(item)), 650, 540)
+	_text(box, "每次交接一件，不消耗行动点。已装备的物品需先卸下。", 17, muted)
+	var content = _scroll_content(box)
+	for other in run.same_cell(run.actor(owner).position):
+		if other != owner:
+			_button(content, "交给" + run.actor(other).name, func():
+				var result = run.transfer(owner, other, item, 1)
+				if result.ok:
+					_run_action(result)
+					_inventory_dialog(owner)
+				else:
+					_text(content, result.message, 16, gold))
+	_button(box, "返回背包", _inventory_dialog.bind(owner))
 
 func _item_dialog(user_id: String) -> void:
 	var box = _modal("使用物资 · " + run.actor(user_id).name, 650, 460)
@@ -444,7 +528,11 @@ func _item_dialog(user_id: String) -> void:
 
 func _healing_dialog() -> void:
 	var box = _modal("选择同地治疗对象", 620, 500)
-	for id in run.same_cell(run.actor(selected_id).position):
+	var candidates = run.same_cell(run.actor(selected_id).position)
+	for id in Catalog.COMPANIONS:
+		if id not in candidates and run.actor(id).position == run.actor(selected_id).position and run.data.story[id].met:
+			candidates.append(id)
+	for id in candidates:
 		_button(box, "%s · %d/%d HP" % [run.actor(id).name, run.actor(id).hp, run.actor(id).hp_max], func(): _close_modal(); _run_action(run.heal_skill(selected_id, id)))
 	_button(box, "取消", _close_modal)
 
@@ -492,25 +580,31 @@ func _formation_dialog() -> void:
 
 func _battle_ui(screen: Vector2) -> void:
 	view.refresh_battle(run, combat)
-	var left = _panel(ui, Rect2(20, 120, 250, screen.y - 275))
-	_text(left, "出战角色", 24, gold)
+	var left_outer = _panel(ui, Rect2(20, 120, 250, screen.y - 275))
+	_text(left_outer, "出战角色", 24, gold)
+	var left = _scroll_content(left_outer)
+	left.add_theme_constant_override("separation", 4)
 	for id in combat.active:
 		var a = run.actor(id)
-		_text(left, ("▶ " if combat.current == id else "") + a.name, 19, ink if a.hp > 0 else muted)
-		_text(left, "HP %d/%d  MP %d/%d\n能量 %d%% · 护盾 %d" % [a.hp, a.hp_max, a.mp, a.mp_max, a.energy, a.shield], 14, muted)
-		_button(left, "终结技 · " + Catalog.SKILLS[a.ultimate].name, _ultimate.bind(id), a.energy < 100 or a.hp <= 0)
-	var right = _panel(ui, Rect2(screen.x - 330, 120, 310, screen.y - 275))
-	_text(right, "敌方阵容", 24, gold)
+		_text(left, ("▶ " if combat.current == id else "") + a.name + (" · 盾%d" % a.shield if a.shield > 0 else ""), 19, ink if a.hp > 0 else muted)
+		_text(left, "HP %d/%d · MP %d/%d" % [a.hp, a.hp_max, a.mp, a.mp_max], 14, muted)
+		_hp_bar(left, a.hp, a.hp_max)
+		_button(left, "%d%% · " % a.energy + Catalog.SKILLS[a.ultimate].name, _ultimate.bind(id), a.energy < 100 or a.hp <= 0)
+	var right_outer = _panel(ui, Rect2(screen.x - 330, 120, 310, screen.y - 275))
+	_text(right_outer, "敌方阵容", 24, gold)
+	var right = _scroll_content(right_outer)
+	right.add_theme_constant_override("separation", 4)
 	for id in combat.enemies:
 		var e = combat.enemies[id]
 		_button(right, ("◆ " if selected_target == id else "") + e.name, func(): selected_target = id; _refresh(), e.hp <= 0)
 		_text(right, "HP %d/%d · %s\n%s" % [e.hp, e.hp_max, "蓄力中！" if e.charged else "行动蓄积", e.role], 14, muted)
+		_hp_bar(right, e.hp, e.hp_max, true)
 	var timeline: Array[String] = []
 	for entry in combat.timeline(6):
 		timeline.append(combat.unit(entry.id).name)
 	_text(right, "行动顺序\n" + " → ".join(timeline), 14, gold)
-	var center = _panel(ui, Rect2(290, screen.y - 285, screen.x - 640, 135))
-	var is_friendly = combat.current != "" and not combat.enemies.has(combat.current) and combat.outcome == ""
+	var center = _panel(ui, Rect2(290, screen.y - 305, screen.x - 640, 155))
+	var is_friendly = combat.current != "" and not combat.enemies.has(combat.current) and combat.outcome == "" and battle_timer <= 0
 	_text(center, (combat.unit(combat.current).name + " 的行动") if combat.current != "" else "战斗结算", 20, gold)
 	var commands = HBoxContainer.new()
 	center.add_child(commands)
@@ -521,7 +615,15 @@ func _battle_ui(screen: Vector2) -> void:
 	_button(commands, "物资", func(): _item_dialog(combat.current), not is_friendly)
 	_button(commands, "换人", _swap_dialog, not is_friendly or combat.reserves().is_empty())
 	_button(commands, "自动 ON" if combat.auto_mode else "自动 OFF", func(): combat.auto_mode = not combat.auto_mode; _refresh())
+	_button(commands, "自动可点火" if combat.allow_auto_ignite else "自动保林", func(): combat.allow_auto_ignite = not combat.allow_auto_ignite; _refresh())
 	_button(commands, "撤退", func(): _confirm("撤退？", "已付 AP 不退还；本战出战者承受 10% 最大生命损伤，敌人恢复。", func(): _run_action(combat.retreat()); _finish_battle()))
+	var terrain = run.data.tiles[combat.position]
+	var context = "场地：" + Catalog.terrain_name(terrain.terrain) + (" · 燃烧" if terrain.burning else " · 潮湿" if terrain.wet_until > run.data.day else "")
+	if is_friendly:
+		context += "\n" + Catalog.skill_description(skill_id)
+		if selected_target in combat.alive_enemies() and Catalog.SKILLS[skill_id].target == "enemy":
+			context += " · 预计基础伤害 %d（护盾/防守等另计）" % combat.damage_preview(combat.current, selected_target, skill_id)
+	_text(center, context, 12, muted)
 
 func _combat_action(skill_id: String) -> void:
 	if skill_id != "guard" and Catalog.SKILLS[skill_id].target == "ally":
@@ -541,6 +643,10 @@ func _perform_combat(skill_id: String, target: String) -> void:
 func _ultimate(id: String) -> void:
 	var result = combat.request_ultimate(id, selected_target)
 	if result.ok:
+		if battle_timer > 0:
+			toast_text = "终结技已排队，在当前动作结束后释放。"
+			_refresh()
+			return
 		combat.resolve_queued()
 	else:
 		toast_text = result.message
@@ -553,13 +659,18 @@ func _swap_dialog() -> void:
 	_button(box, "取消", _close_modal)
 
 func _after_combat_step() -> void:
-	view.animate_events(combat.events)
+	var presentation_events = combat.events.duplicate(true)
 	combat.events.clear()
+	if not presentation_events.is_empty():
+		sound.play("attack" if presentation_events[0].kind == "attack" else "cast")
 	battle_timer = 0.85
 	if not combat.alive_enemies().has(selected_target) and not combat.alive_enemies().is_empty():
 		selected_target = combat.alive_enemies()[0]
 	_refresh()
+	view.animate_events(presentation_events)
 	if combat.outcome != "":
+		if combat.outcome == "victory":
+			sound.play("victory")
 		get_tree().create_timer(0.8).timeout.connect(_finish_battle)
 
 func _finish_battle() -> void:
@@ -573,14 +684,103 @@ func _finish_battle() -> void:
 func _process(delta: float) -> void:
 	if combat == null or combat.outcome != "" or modal_layer.get_child_count() > 0:
 		return
+	var was_playing = battle_timer > 0
 	battle_timer -= delta
+	if battle_timer <= 0 and not combat.queue.is_empty():
+		combat.resolve_queued()
+		_after_combat_step()
+		return
 	if battle_timer <= 0 and (combat.enemies.has(combat.current) or combat.auto_mode):
 		combat.step_auto()
 		_after_combat_step()
+	elif was_playing and battle_timer <= 0:
+		_refresh()
 
 func _talk(id: String) -> void:
-	# Story interpreter and authored branch data are integrated next, with physical item ownership.
-	_notice("已抵达 %s。首章与伙伴分支正在接入。" % (run.actor(id).name if run.data.actors.has(id) else World._site_name(id)))
+	dialogue_subject = id
+	dialogue_response = ""
+	_render_dialogue()
+
+func _render_dialogue() -> void:
+	var d = narrative.dialogue(selected_id, dialogue_subject)
+	if not d.ok:
+		_notice(d.message)
+		return
+	var box = _modal(d.title, 900, 740)
+	var columns = HBoxContainer.new()
+	columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	columns.add_theme_constant_override("separation", 20)
+	box.add_child(columns)
+	var portrait_path = "res://assets/portraits/" + dialogue_subject + ".png"
+	if ResourceLoader.exists(portrait_path):
+		var portrait = TextureRect.new()
+		portrait.texture = load(portrait_path)
+		portrait.custom_minimum_size = Vector2(245, 340)
+		portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		columns.add_child(portrait)
+	var content = _scroll_content(columns)
+	_text(content, d.text, 19)
+	if dialogue_response != "":
+		_text(content, dialogue_response, 18, gold)
+	for option in d.options:
+		var caption = str(option.text)
+		if not option.enabled:
+			caption += "\n" + str(option.reason)
+		var button = _button(content, caption, _story_choice.bind(str(option.id)), not option.enabled)
+		button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_button(box, "结束交谈，继续远征", _close_modal)
+	run.save_game()
+
+func _story_choice(option_id: String) -> void:
+	var result = narrative.choose(selected_id, dialogue_subject, option_id)
+	if not result.ok:
+		dialogue_response = result.message
+		_render_dialogue()
+		return
+	if result.get("close", false):
+		_close_modal()
+		_refresh()
+	elif result.get("battle", false):
+		_formation_dialog()
+	elif result.get("extract_requested", false):
+		_extraction_dialog()
+	elif result.has("rescue"):
+		_item_dialog(selected_id)
+	elif result.has("heal_dialog"):
+		_healing_dialog()
+	else:
+		dialogue_response = str(result.get("response", "同行状态已更新。"))
+		run.save_game()
+		_refresh()
+		_render_dialogue()
+
+func _journal() -> void:
+	var box = _modal("旅途手记 · 亲历、文书与同行", 920, 720)
+	var content = _scroll_content(box)
+	if run.data.explored.has(run.data.exit):
+		_text(content, "已发现归航站：" + str(run.data.exit), 21, gold)
+		_button(content, "在地图上定位归航站", func(): _close_modal(); selected_cell = run.data.exit; view.focus_cell(selected_cell); _refresh())
+	_text(content, "地方故事", 23, gold)
+	var flags = run.data.flags
+	_text(content, "二十八年前的接应记录与仍有人居住的林边之间存在矛盾。材料可向陆衡、乔禾和旧调度柜核对；调查不是撤离前置条件。" if flags.get("investigated", false) else "渡桥坍塌，归航站在另一端。你可以沿方向归航，也可以探索沿途人物与仍在使用的旧灯路。", 18)
+	for id in Catalog.COMPANIONS:
+		if run.data.story[id].met:
+			var s = run.data.story[id]
+			_text(content, "%s · %s" % [run.actor(id).name, "已同行" if run.actor(id).joined else "暂缓" if s.relation == "later" else "本局未同行" if s.relation == "declined" else "已接触"], 20, gold)
+			_text(content, Story.PERSONAL[id].get(str(s.result), ""), 16, muted)
+	_text(content, "原件的实际去向", 23, gold)
+	for item in Story.DOCUMENTS:
+		var holders: Array[String] = []
+		for id in run.joined_ids():
+			if int(run.actor(id).inventory.get(item, 0)) > 0:
+				holders.append(run.actor(id).name + "（" + str(run.actor(id).position) + "）")
+		if run.data.submitted.has(item):
+			holders.append("归航站已实际收件")
+		if not holders.is_empty():
+			_text(content, Story.DOCUMENTS[item] + "：" + " / ".join(holders), 16, muted)
+	_text(content, "同地角色可当面交换亲历见闻；共享地图不传送物品。", 16, muted)
+	_button(box, "合上手记", _close_modal)
 
 func _summary(screen: Vector2) -> void:
 	var box = _panel(ui, Rect2(300, 135, screen.x - 600, screen.y - 300))
@@ -589,11 +789,15 @@ func _summary(screen: Vector2) -> void:
 	if run.data.status == "failed":
 		_text(box, run.data.flags.get("failure_reason", "远征失败。"), 20, muted)
 	else:
-		var preview = run.extraction_preview()
-		for id in preview.present:
-			_text(box, run.actor(id).name + " · 已到站撤离", 18)
-		for id in preview.absent:
-			_text(box, run.actor(id).name + " · 异地未撤离（不代表死亡）", 18, muted)
+		var ending = narrative.main_ending()
+		_text(box, ending.title, 25, gold)
+		_text(box, ending.text, 18)
+	var content = _scroll_content(box)
+	for id in Catalog.COMPANIONS:
+		var ending = narrative.character_ending(id)
+		var condition = "未相遇" if not run.data.story[id].met and not run.actor(id).joined else "本局未同行" if not run.actor(id).joined else "已到站" if run.actor(id).position == run.data.exit else "异地重伤" if run.actor(id).hp <= 0 else "异地未撤离"
+		_text(content, ending.name + " · " + condition, 20, gold)
+		_text(content, ending.text, 17, muted)
 	_button(box, "返回主菜单", _to_menu)
 
 func _to_menu() -> void:
@@ -606,6 +810,30 @@ func _to_menu() -> void:
 
 func _guide() -> void:
 	_notice("点击角色定位，勾选同格角色可共同移动。点击相邻地块后，在详情面板确认前往。\n\nWASD 平移、滚轮缩放。每人 AP 独立；结束一天恢复个人 AP 以及部分 HP/MP。\n\n同地最多四人出战，候补换人占正常行动；终结技可插队。\n\n交谈与交任务免费，物品只能同格交接。抵达归航站后可等待，只有主动确认才结束。")
+
+func _settings_dialog() -> void:
+	var box = _modal("设置与操作", 650, 430)
+	_text(box, "音效音量（0 为静音）", 20, gold)
+	var slider = HSlider.new()
+	slider.min_value = 0
+	slider.max_value = 1
+	slider.step = 0.05
+	slider.value = sound.volume
+	slider.value_changed.connect(func(value: float): sound.set_volume(value))
+	box.add_child(slider)
+	_text(box, "WASD 平移地图 · 滚轮缩放\n点击角色定位，勾选同格成员同行。\n自动战斗默认保林，可在战斗中允许自动点火。", 18, muted)
+	_button(box, "查看完整操作指南", _guide)
+	_button(box, "制作与许可", _credits_dialog)
+	if not menu_visible and combat == null and run.data.status == "exploring":
+		_button(box, "放弃本次远征", func(): _confirm("结束本次远征？", "将按远征中断记录当前事实；已经交出的文书仍保留，不把异地角色写成成功归航。", func(): run.data.status = "failed"; run.data.flags.failure_reason = "你主动结束了本次远征。"; run.save_game(); _refresh()))
+	_button(box, "返回", _close_modal)
+
+func _credits_dialog() -> void:
+	var box = _modal("制作与许可", 800, 650)
+	var content = _scroll_content(box)
+	_text(content, "《归灯之野》MVP 0.1.0\n原创世界观、角色、程序化立体模型、骨骼、材质与合成音效。肖像由内置图像生成工具制作。\n\n字体：Noto Sans SC，SIL Open Font License。\n引擎：Godot " + Engine.get_version_info().string + "\n许可全文与第三方声明随试玩包附带。", 18)
+	_text(content, Engine.get_license_text(), 14, muted)
+	_button(box, "返回设置", _settings_dialog)
 
 func _smoke_capture() -> void:
 	get_viewport().get_texture().get_image().save_png("user://smoke.png")

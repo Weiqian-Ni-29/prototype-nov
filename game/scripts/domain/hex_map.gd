@@ -157,8 +157,21 @@ static func generate(seed_value: int) -> Dictionary:
 	tiles[start].resource = "salve"
 	tiles[start].quantity = 2
 	# A separate optional boss cannot occupy story or extraction corridors.
+	var forest_encounter = false
 	for k in tiles:
-		if not occupied.has(k) and not safe.has(k) and distance(coord(start), coord(k)) > 8:
+		if tiles[k].terrain == "forest" and not tiles[k].enemies.is_empty():
+			forest_encounter = true
+	if not forest_encounter:
+		for k in tiles:
+			if not occupied.has(k) and not safe.has(k) and distance(coord(start), coord(k)) > 3:
+				tiles[k].terrain = "forest"
+				tiles[k].base_terrain = "forest"
+				tiles[k].enemies = ["boar", "apothecary"]
+				tiles[k].hidden = true
+				tiles[k].discovered_enemy = false
+				break
+	for k in tiles:
+		if not occupied.has(k) and not safe.has(k) and tiles[k].enemies.is_empty() and distance(coord(start), coord(k)) > 8:
 			tiles[k].enemies = ["lamp_boss", "canal"]
 			tiles[k].hidden = false
 			tiles[k].discovered_enemy = true

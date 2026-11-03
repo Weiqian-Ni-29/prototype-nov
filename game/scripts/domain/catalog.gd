@@ -43,7 +43,7 @@ const SKILLS = {
 	"dawn_strike": {"name": "破晓重击", "mp": 0, "power": 2.6, "target": "all_enemies", "element": "normal", "energy": 0},
 	"arrow_rain": {"name": "千枝落羽", "mp": 0, "power": 2.2, "target": "all_enemies", "element": "normal", "energy": 0},
 	"warmth": {"name": "不熄的微光", "mp": 0, "power": 65, "target": "all_allies", "healing": true, "element": "normal", "energy": 0},
-	"wolf_howl": {"name": "群山长鸣", "mp": 0, "power": 2.5, "target": "all_enemies", "element": "normal", "energy": 0},
+	"wolf_howl": {"name": "群山长鸣", "mp": 0, "shield": 45, "target": "all_allies", "element": "normal", "energy": 0},
 	"sunfall": {"name": "余烬落日", "mp": 0, "power": 2.6, "target": "all_enemies", "element": "fire", "energy": 0, "environment": "ignite"},
 	"tide_shelter": {"name": "澄海归潮", "mp": 0, "power": 38, "target": "all_allies", "healing": true, "shield": 25, "element": "water", "energy": 0, "environment": "wet"},
 }
@@ -51,6 +51,7 @@ const ITEMS = {
 	"salve": {"name": "疗伤药", "description": "恢复 45 HP，可同地救援重伤者。", "hp": 45},
 	"ether": {"name": "澄露", "description": "恢复 30 MP。", "mp": 30},
 	"timber": {"name": "营地木料", "description": "两份木料可建立一处营地。"},
+	"trail_food": {"name": "旅途干粮", "description": "可用于分享与任务；不设每日强制消耗。"},
 	"trail_blade": {"name": "巡路短刃", "slot": "weapon", "attack": 4},
 	"padded_coat": {"name": "夹棉旅衣", "slot": "armor", "defense": 3},
 	"lamp_charm": {"name": "旧灯护符", "slot": "accessory", "speed": 8},
@@ -74,3 +75,24 @@ static func item_name(id: String) -> String:
 
 static func terrain_name(id: String) -> String:
 	return str(TERRAIN.get(id, TERRAIN.plains).name)
+
+static func skill_description(id: String) -> String:
+	var skill = SKILLS[id]
+	var parts: Array[String] = ["%d MP" % skill.mp]
+	parts.append({"enemy": "敌方单体", "ally": "己方单体，可救援", "all_enemies": "敌方全体", "all_allies": "己方在场全体"}[skill.target])
+	if skill.get("healing", false):
+		parts.append("恢复 %d HP" % skill.power)
+	elif skill.has("power"):
+		parts.append("攻击 ×%.2f" % skill.power)
+	if skill.has("shield"):
+		parts.append("护盾 +%d，上限 60" % skill.shield)
+	if skill.has("slow"):
+		parts.append("减速 2 次行动")
+	if skill.get("environment", "") == "ignite":
+		parts.append("点燃当前干燥森林，双方承受火伤")
+	elif skill.get("environment", "") == "wet":
+		parts.append("当前格灭火并浸湿")
+	return " · ".join(parts)
+
+static func passive_description(id: String) -> String:
+	return {"hero": "职业决定各自的生命、魔力、机动与技能。", "cen": "未烧毁森林采集额外 +1。", "lorne": "山地移动只需 1 AP。", "eve": "同地可行动时，休整恢复额外 +10 个百分点。", "grit": "辨识附近已发现敌人；在场时令低于 35% HP 的队友减伤 20%。", "ember": "可花 1 AP / 8 MP 点燃当前干燥森林。", "tide": "可花 1 AP / 8 MP 对当前地块灭火或浸湿。"}.get(id, "")

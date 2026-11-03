@@ -13,6 +13,7 @@ var fire_tick = 10.0
 var current = ""
 var outcome = ""
 var auto_mode = false
+var allow_auto_ignite = false
 var pending: Dictionary = {}
 var events: Array = []
 
@@ -46,6 +47,7 @@ func begin(expedition: RefCounted, encounter: Dictionary, formation: Array) -> D
 	outcome = ""
 	current = ""
 	auto_mode = false
+	allow_auto_ignite = false
 	for id in formation:
 		active.append(id)
 		_deploy(id)
@@ -204,7 +206,8 @@ func _cast(id: String, skill_id: String, target_id: String, ultimate: bool = fal
 			t.shield = mini(60, int(t.get("shield", 0)) + int(skill.shield))
 			_log("%s 获得护盾。" % t.name)
 	if skill.has("environment"):
-		run.apply_environment(position, skill.environment)
+		if run.apply_environment(position, skill.environment) and skill.environment == "ignite":
+			run.record_ignition(id, position)
 	events.append({"actor": id, "targets": targets, "kind": "ultimate" if ultimate else "cast" if skill_id != "attack" else "attack", "element": skill.element, "skill": skill.name})
 	return {"ok": true}
 
@@ -213,7 +216,7 @@ func damage_preview(source: String, target: String, skill_id: String) -> int:
 	var attack_value = run.stat(source, "attack")
 	var defense_value = int(unit(target).defense) if enemies.has(target) else run.stat(target, "defense")
 	var multiplier = environment_multiplier(str(skill.element), str(unit(target).get("element", "normal")))
-	return maxi(1, roundi((attack_value * float(skill.get("power", 1.0)) - defense_value * 0.6) * multiplier))
+	return maxi(1, floori((attack_value * float(skill.get("power", 1.0)) - defense_value * 0.6) * multiplier))
 
 func environment_multiplier(element: String, target_element: String) -> float:
 	var multiplier = 1.0
@@ -223,17 +226,17 @@ func environment_multiplier(element: String, target_element: String) -> float:
 		multiplier *= 0.8
 	var t = run.data.tiles[position]
 	if element == "water" and t.terrain == "desert":
-		multiplier *= 0.75
+		multiplier *= 0.8
 	if run.data.weather == "rain":
 		if element == "water":
-			multiplier *= 1.15
+			multiplier *= 1.1
 		elif element == "fire":
 			multiplier *= 0.8
 	if t.burning and element == "fire":
-		multiplier *= 1.15
+		multiplier *= 1.1
 	if t.wet_until > run.data.day and element == "fire":
 		multiplier *= 0.8
-	return clampf(multiplier, 0.5, 1.6)
+	return clampf(multiplier, 0.5, 1.5)
 
 func use_item(item: String, target_id: String) -> Dictionary:
 	if outcome != "" or enemies.has(current) or current.is_empty() or target_id not in active:
@@ -295,7 +298,7 @@ func step_auto() -> void:
 		_enemy_action(current)
 	elif auto_mode:
 		for id in active:
-			if unit(id).hp > 0 and unit(id).energy >= 100:
+			if unit(id).hp > 0 and unit(id).energy >= 100 and _auto_safe_skill(Catalog.SKILLS[unit(id).ultimate]):
 				request_ultimate(id)
 		resolve_queued()
 		if outcome != "":
@@ -312,9 +315,15 @@ func step_auto() -> void:
 		var choice = str(caster.skill)
 		if caster.mp < skill.mp or (skill.get("healing", false) and lowest_ratio > 0.65):
 			choice = "attack"
+		if not _auto_safe_skill(skill):
+			choice = "attack"
 		if Catalog.SKILLS[choice].target == "enemy":
 			target = _weakest(alive_enemies())
 		act(choice, target)
+
+func _auto_safe_skill(skill: Dictionary) -> bool:
+	var tile = run.data.tiles[position]
+	return allow_auto_ignite or skill.get("environment", "") != "ignite" or tile.terrain != "forest" or tile.burning or run.data.weather == "rain" or tile.wet_until > run.data.day
 
 func _enemy_action(id: String) -> void:
 	var a = enemies[id]
@@ -349,13 +358,15 @@ func _enemy_action(id: String) -> void:
 	_complete_action(id)
 
 func _enemy_hit(id: String, target: String, power: float, element: String = "normal") -> void:
-	var damage = maxi(1, roundi((unit(id).attack * power - run.stat(target, "defense") * 0.6) * environment_multiplier(element, unit(target).element)))
+	var damage = maxi(1, floori((unit(id).attack * power - run.stat(target, "defense") * 0.6) * environment_multiplier(element, unit(target).element)))
 	_hurt(target, damage)
 	_log("%s → %s：%d 伤害。" % [unit(id).name, unit(target).name, damage])
 	events.append({"actor": id, "targets": [target], "kind": "attack", "element": element})
 
 func _hurt(id: String, damage: int) -> void:
 	var target = unit(id)
+	if not enemies.has(id) and id != "grit" and "grit" in active and unit("grit").hp > 0 and target.hp < target.hp_max * 0.35:
+		damage = ceili(damage * 0.8)
 	if target.get("guard", false):
 		damage = ceili(damage * 0.55)
 	var absorbed = mini(int(target.get("shield", 0)), damage)
@@ -428,6 +439,12 @@ func _finish(result: String) -> void:
 		for id in paid:
 			if unit(id).hp <= 0:
 				unit(id).hp = 1
+			if not run.data.knowledge.has(id):
+				run.data.knowledge[id] = {}
+			if not run.data.knowledge[id].has("victories"):
+				run.data.knowledge[id].victories = []
+			if position not in run.data.knowledge[id].victories:
+				run.data.knowledge[id].victories.append(position)
 		if npc == "":
 			run.data.tiles[position].enemies = []
 		if not run.data.rewards.has(reward_key):

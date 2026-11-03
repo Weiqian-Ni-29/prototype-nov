@@ -2,6 +2,7 @@ class_name TerrainArt
 extends RefCounted
 const Doll = preload("res://scripts/presentation/doll.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")
+static var ground_materials: Dictionary = {}
 
 static func tile(parent: Node3D, definition: Dictionary, revealed: bool, visual_seed: int) -> Node3D:
 	var root = Node3D.new()
@@ -12,6 +13,12 @@ static func tile(parent: Node3D, definition: Dictionary, revealed: bool, visual_
 	var base = Doll._cylinder(root, 0.975, 0.975, 0.26 + height, color.darkened(0.3), Vector3(0, -0.12 + height * 0.5, 0), 6)
 	var top = Doll._cylinder(root, 0.94, 0.975, 0.07, color, Vector3(0, 0.045 + height, 0), 6)
 	if not revealed:
+		var fog_material = Doll.material(Color("213a39"))
+		fog_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		top.material_override = fog_material
+		return root
+	top.material_override = _ground_material(terrain)
+	if definition.get("ground_only", false):
 		return root
 	var props = Node3D.new()
 	props.position.y = height + 0.08
@@ -91,4 +98,27 @@ static func fire(parent: Node3D) -> void:
 	for i in range(3):
 		var flame = Doll._cone(parent, 0.17, 0.57 + i * 0.08, Color("e6a253"), Vector3(-0.35 + i * 0.32, 0.3, 0.1))
 		flame.set_meta("flame", true)
+		flame.add_to_group("world_flames")
 		Doll._cone(parent, 0.095, 0.38, Color("f2d58a"), Vector3(-0.35 + i * 0.32, 0.25, 0.2))
+
+static func _ground_material(terrain: String) -> StandardMaterial3D:
+	if ground_materials.has(terrain):
+		return ground_materials[terrain]
+	var color = Color(str(Catalog.TERRAIN[terrain].color))
+	var noise = FastNoiseLite.new()
+	noise.seed = hash(terrain)
+	noise.frequency = 0.055
+	noise.fractal_octaves = 4
+	var gradient = Gradient.new()
+	gradient.set_color(0, color.darkened(0.16))
+	gradient.set_color(1, color.lightened(0.10))
+	var texture = NoiseTexture2D.new()
+	texture.width = 256
+	texture.height = 256
+	texture.noise = noise
+	texture.seamless = true
+	texture.color_ramp = gradient
+	var material = Doll.material(Color.WHITE)
+	material.albedo_texture = texture
+	ground_materials[terrain] = material
+	return material

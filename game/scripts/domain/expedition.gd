@@ -13,14 +13,14 @@ func new_run(seed_value: int, profession: String) -> void:
 	assert(Catalog.PROFESSIONS.has(profession))
 	var generated = Hex.generate(seed_value)
 	rng.seed = seed_value ^ 0x5eed123
-	data = {"version": SAVE_VERSION, "seed": seed_value, "profession": profession, "day": 1, "weather": "sun", "tiles": generated.tiles, "start": generated.start, "exit": generated.exit, "actors": {}, "explored": {}, "flags": {}, "knowledge": {}, "submitted": {}, "story": {}, "rewards": {}, "status": "exploring", "log": [], "last_day_settled": 0, "battles": 0, "transaction": 0, "pending_battle": {}}
+	data = {"version": SAVE_VERSION, "seed": seed_value, "profession": profession, "day": 1, "weather": "sun", "tiles": generated.tiles, "start": generated.start, "exit": generated.exit, "actors": {}, "explored": {}, "flags": {}, "knowledge": {}, "submitted": {}, "story": {}, "rewards": {}, "choices": [], "status": "exploring", "log": [], "last_day_settled": 0, "battles": 0, "transaction": 0, "pending_battle": {}}
 	var hero_def = Catalog.PROFESSIONS[profession].duplicate(true)
 	hero_def["title"] = hero_def.name
 	hero_def["name"] = "旅人"
 	hero_def["element"] = "normal"
 	hero_def["portrait"] = "hero"
 	data.actors["hero"] = _actor("hero", hero_def, generated.start, true)
-	data.actors.hero.inventory.merge({"Q-T": 1, "timber": 2, "trail_blade": 1, "padded_coat": 1, "lamp_charm": 1})
+	data.actors.hero.inventory.merge({"Q-T": 1, "timber": 2, "trail_food": 2, "trail_blade": 1, "padded_coat": 1, "lamp_charm": 1})
 	data.actors.hero.equipment = {"weapon": "trail_blade", "armor": "padded_coat", "accessory": "lamp_charm"}
 	for id in Catalog.COMPANIONS:
 		var location = ""
@@ -77,17 +77,23 @@ func move_cost(id: String, destination: String) -> int:
 	return cost
 
 func movement_preview(ids: Array, destination: String) -> Dictionary:
-	if data.status != "exploring":
+	if data.status != "exploring" or not data.pending_battle.is_empty():
 		return fail("战斗或结算期间不能移动。")
 	if ids.is_empty() or not data.tiles.has(destination):
 		return fail("请选择角色和有效地块。")
 	var source = actor(str(ids[0])).get("position", "")
+	if not data.tiles.has(source):
+		return fail("角色位置无效。")
+	if not data.tiles[source].enemies.is_empty():
+		return fail("敌人阻挡此处；需交战，或在战斗中撤退。")
 	if destination not in Hex.neighbors(source, data.tiles):
 		return fail("每次移动一格；可点击远处地块查看路径。")
 	var t = data.tiles[destination]
 	var known_encounter = not t.enemies.is_empty() and t.discovered_enemy
 	var costs = {}
 	for id in ids:
+		if costs.has(id):
+			return fail("同行名单不能重复。")
 		var a = actor(id)
 		if a.is_empty() or not a.joined or a.hp <= 0 or a.position != source:
 			return fail("只能让同格、可行动的己方角色一起移动。")
@@ -153,6 +159,8 @@ func transfer(from_id: String, to_id: String, item: String, amount: int) -> Dict
 	var target = actor(to_id)
 	if source.is_empty() or target.is_empty() or not source.joined or not target.joined or source.position != target.position:
 		return fail("只能在同一地块交接物品。")
+	if same_cell(source.position, true).is_empty():
+		return fail("需要同地可行动的角色协助整理物品。")
 	if amount <= 0 or int(source.inventory.get(item, 0)) < amount:
 		return fail("持有数量不足。")
 	if item in source.equipment.values():
@@ -228,6 +236,8 @@ func environmental_skill(id: String, effect: String) -> Dictionary:
 		return fail("需先处理此处敌人。")
 	if not apply_environment(a.position, effect):
 		return fail("当前环境无法产生有效变化，不消耗资源。")
+	if effect == "ignite":
+		record_ignition(id, a.position)
 	a.ap -= 1
 	a.mp -= 8
 	note("%s 改变了当前地块的环境。" % a.name)
@@ -248,6 +258,18 @@ func apply_environment(position: String, effect: String) -> bool:
 		t.wet_until = int(data.day) + 2
 		return true
 	return false
+
+func record_ignition(source_id: String, position: String) -> void:
+	if not data.flags.has("player_ignitions"):
+		data.flags.player_ignitions = {}
+	data.flags.player_ignitions[position] = source_id
+	for id in same_cell(position, true):
+		if not data.knowledge.has(id):
+			data.knowledge[id] = {}
+		if not data.knowledge[id].has("ignitions"):
+			data.knowledge[id].ignitions = []
+		if position not in data.knowledge[id].ignitions:
+			data.knowledge[id].ignitions.append(position)
 
 func heal_skill(user_id: String, target_id: String) -> Dictionary:
 	var check = _map_action(user_id, 1)
@@ -298,6 +320,10 @@ func rest(id: String) -> Dictionary:
 		return fail("资源已满，无需休整。")
 	a.ap -= 2
 	var ratio = 0.3 if t.camp and t.terrain != "scorched" else 0.2
+	if t.terrain == "forest" and data.weather == "rain":
+		ratio -= 0.05
+	if "eve" in same_cell(a.position, true):
+		ratio += 0.10
 	a.hp = mini(int(a.hp_max), int(a.hp) + ceili(a.hp_max * ratio))
 	a.mp = mini(int(a.mp_max), int(a.mp) + ceili(a.mp_max * ratio))
 	changed.emit()
@@ -315,11 +341,12 @@ func end_day() -> Dictionary:
 		var old = snapshot[k]
 		var current = data.tiles[k]
 		if old.burning:
-			current.fuel = maxi(0, int(old.fuel) - 1)
 			if data.weather == "rain":
 				current.burning = false
 				current.wet_until = new_day + 1
+				continue
 			else:
+				current.fuel = maxi(0, int(old.fuel) - 1)
 				for neighbor in Hex.neighbors(k, snapshot):
 					var next = snapshot[neighbor]
 					if next.terrain == "forest" and not next.burning and int(next.wet_until) <= new_day:
@@ -333,20 +360,25 @@ func end_day() -> Dictionary:
 			data.tiles[k].burning = true
 	for id in joined_ids():
 		var a = actor(id)
+		a.ap = a.ap_max
+		a.ap_initialized_day = new_day
 		if a.hp <= 0:
 			continue
-		if data.tiles[a.position].burning:
+		if snapshot[a.position].burning and data.weather != "rain":
 			a.hp = maxi(0, int(a.hp) - ceili(a.hp_max * 0.1))
 		if a.hp > 0:
 			a.hp = mini(int(a.hp_max), int(a.hp) + ceili(a.hp_max * Catalog.DAILY_HP))
 			a.mp = mini(int(a.mp_max), int(a.mp) + ceili(a.mp_max * Catalog.DAILY_MP))
-			a.ap = a.ap_max
-			a.ap_initialized_day = new_day
 	data.last_day_settled = new_day - 1
 	check_global_failure()
 	note("第 %d 天，%s。可行动者恢复部分生命/魔力，行动点回到各自上限。" % [data.day, "雨" if data.weather == "rain" else "晴"])
 	changed.emit()
 	return success()
+
+func next_weather() -> String:
+	var forecast = RandomNumberGenerator.new()
+	forecast.state = rng.state
+	return "rain" if forecast.randf() < 0.28 else "sun"
 
 func check_global_failure() -> bool:
 	for id in joined_ids():
@@ -417,12 +449,88 @@ func load_game(path: String = "") -> Dictionary:
 	if json.parse(FileAccess.get_file_as_string(path)) != OK or not json.data is Dictionary:
 		return fail("存档损坏；旧文件没有被覆盖。")
 	var loaded: Dictionary = json.data
-	if int(loaded.get("version", -1)) != SAVE_VERSION or not loaded.has_all(["actors", "tiles", "rng_state", "day", "explored", "status"]):
+	if not _whole_number(loaded.get("version", -1)) or int(loaded.version) != SAVE_VERSION or not loaded.has_all(["actors", "tiles", "rng_state", "day", "explored", "status"]):
 		return fail("存档版本不兼容或缺少字段。")
+	var invalid = _validate_save(loaded)
+	if invalid != "":
+		return fail("存档内容无效：" + invalid + "。旧文件没有被覆盖。")
 	data = loaded
+	if not data.has("choices"):
+		data.choices = []
 	rng.state = int(data.rng_state)
 	changed.emit()
 	return success()
+
+func _validate_save(loaded: Dictionary) -> String:
+	if not loaded.has_all(["flags", "story", "submitted", "knowledge", "rewards", "log", "pending_battle", "start", "exit", "profession", "explored", "transaction", "battles", "weather"]):
+		return "缺少进度字段"
+	for key in ["actors", "tiles", "flags", "story", "submitted", "knowledge", "rewards", "pending_battle", "explored"]:
+		if not loaded[key] is Dictionary:
+			return "字段类型不符"
+	if loaded.tiles.size() != 217 or not loaded.tiles.has(loaded.start) or not loaded.tiles.has(loaded.exit):
+		return "地图不完整"
+	if loaded.status not in ["exploring", "extracted", "failed"] or loaded.weather not in ["sun", "rain"] or not Catalog.PROFESSIONS.has(loaded.profession):
+		return "状态或职业无效"
+	if not loaded.log is Array or not _whole_number(loaded.day) or int(loaded.day) < 1 or not str(loaded.rng_state).is_valid_int():
+		return "日期或随机状态无效"
+	if loaded.has("choices") and not loaded.choices is Array:
+		return "选择记录无效"
+	for k in loaded.explored:
+		if not loaded.tiles.has(k):
+			return "探索记录越界"
+	var coordinate = RegEx.new()
+	coordinate.compile("^-?[0-9]+,-?[0-9]+$")
+	for k in loaded.tiles:
+		if coordinate.search(str(k)) == null or Hex.distance(Hex.coord(k), Vector2i.ZERO) > 8:
+			return "六边形坐标无效"
+		var tile = loaded.tiles[k]
+		if not tile is Dictionary or not tile.has_all(["terrain", "base_terrain", "burning", "fuel", "wet_until", "enemies", "site", "npc", "resource", "quantity", "height", "camp", "hidden", "discovered_enemy"]):
+			return "地块字段不完整"
+		if not Catalog.TERRAIN.has(tile.terrain) or not tile.enemies is Array:
+			return "地形或遭遇无效"
+		for enemy in tile.enemies:
+			if not Catalog.ENEMIES.has(enemy):
+				return "未知敌人"
+	for id in ["hero"] + Catalog.COMPANIONS.keys():
+		if not loaded.actors.has(id) or not loaded.actors[id] is Dictionary:
+			return "角色缺失"
+		var a = loaded.actors[id]
+		if not a.has_all(["id", "name", "color", "element", "attack", "defense", "speed", "ap_initialized_day", "shield", "slow", "guard", "position", "joined", "hp", "hp_max", "mp", "mp_max", "ap", "ap_max", "energy", "equipment", "inventory", "skill", "ultimate"]):
+			return "角色字段不完整"
+		if a.id != id or not a.name is String or not a.color is String or not a.element is String or not a.joined is bool:
+			return "角色标识无效"
+		if not loaded.tiles.has(a.position) or not a.inventory is Dictionary or not a.equipment is Dictionary:
+			return "角色位置或背包无效"
+		if not Catalog.SKILLS.has(a.skill) or not Catalog.SKILLS.has(a.ultimate):
+			return "角色技能无效"
+		for resource in ["hp", "mp", "ap"]:
+			if not _whole_number(a[resource]) or not _whole_number(a[resource + "_max"]) or a[resource + "_max"] <= 0 or a[resource] < 0 or a[resource] > a[resource + "_max"]:
+				return "角色资源越界"
+		for field in ["energy", "attack", "defense", "speed", "shield", "slow"]:
+			if not _whole_number(a[field]) or a[field] < 0 or (field == "speed" and a[field] == 0) or (field == "energy" and a[field] > 100):
+				return "角色数值无效"
+		if not a.equipment.has_all(["weapon", "armor", "accessory"]):
+			return "装备栏缺失"
+		for item in a.inventory:
+			if not _whole_number(a.inventory[item]) or a.inventory[item] < 0:
+				return "物品数量无效"
+		for slot in a.equipment:
+			var item = a.equipment[slot]
+			if item != "" and (not Catalog.ITEMS.has(item) or Catalog.ITEMS[item].get("slot", "") != slot or a.inventory.get(item, 0) < 1):
+				return "装备持有状态无效"
+		if id != "hero" and (not loaded.story.has(id) or not loaded.story[id] is Dictionary or not loaded.story[id].has_all(["met", "relation", "result"])):
+			return "故事状态缺失"
+	if not loaded.pending_battle.is_empty():
+		var pending = loaded.pending_battle
+		if not pending.has_all(["position", "origin", "ambush", "movers", "npc"]) or not loaded.tiles.has(pending.position) or not loaded.tiles.has(pending.origin) or not pending.movers is Array:
+			return "遭遇检查点无效"
+		for id in pending.movers:
+			if not loaded.actors.has(id):
+				return "遭遇角色无效"
+	return ""
+
+static func _whole_number(value: Variant) -> bool:
+	return (value is int or value is float) and is_finite(float(value)) and float(value) == floor(float(value))
 
 func note(message: String) -> void:
 	data.log.append(message)

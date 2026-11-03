@@ -20,6 +20,7 @@ var zoom_size = 15.0
 var battle_mode = false
 var selection_ring: MeshInstance3D
 var clock = 0.0
+var rain: CPUParticles3D
 
 func _ready() -> void:
 	var environment = Environment.new()
@@ -50,6 +51,21 @@ func _ready() -> void:
 	add_child(actor_root)
 	add_child(battle_root)
 	selection_ring = Doll._cylinder(self, 1.025, 1.025, 0.035, Color("e3c88b"), Vector3.ZERO, 6)
+	rain = CPUParticles3D.new()
+	rain.amount = 120
+	rain.lifetime = 1.4
+	rain.emission_shape = CPUParticles3D.EMISSION_SHAPE_BOX
+	rain.emission_box_extents = Vector3(14, 0.2, 13)
+	rain.direction = Vector3(0.12, -1.0, 0)
+	rain.initial_velocity_min = 8.0
+	rain.initial_velocity_max = 11.0
+	rain.gravity = Vector3(0, -5, 0)
+	var raindrop = BoxMesh.new()
+	raindrop.size = Vector3(0.014, 0.42, 0.014)
+	raindrop.material = Doll.material(Color("aac8c5"))
+	rain.mesh = raindrop
+	rain.emitting = false
+	add_child(rain)
 	_update_camera()
 
 func reset() -> void:
@@ -119,9 +135,11 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 			model.position = point
 		model.set_meta("cell", a.position)
 	if selected_cell != "" and current_tiles.has(selected_cell):
-		selection_ring.position = Hex.world(selected_cell) + Vector3(0, current_tiles[selected_cell].height + 0.025, 0)
+		var height = current_tiles[selected_cell].height if run.data.explored.has(selected_cell) else 0.0
+		selection_ring.position = Hex.world(selected_cell) + Vector3(0, height + 0.025, 0)
 	light.light_color = Color("d0dce0") if run.data.weather == "rain" else Color("ffe5b2")
 	light.light_energy = 0.48 if run.data.weather == "rain" else 0.68
+	rain.emitting = run.data.weather == "rain"
 
 func focus_cell(id: String) -> void:
 	focus_point = Hex.world(id)
@@ -162,6 +180,10 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _process(delta: float) -> void:
 	clock += delta
+	if rain:
+		rain.position = (Vector3.ZERO if battle_mode else focus_point) + Vector3(0, 10, 0)
+	for flame in get_tree().get_nodes_in_group("world_flames"):
+		flame.scale.y = 0.9 + sin(clock * 5.0 + flame.get_instance_id() % 11) * 0.16
 	if not battle_mode:
 		var motion = Vector3.ZERO
 		if Input.is_physical_key_pressed(KEY_A):
@@ -191,13 +213,20 @@ func begin_battle(run: RefCounted, combat: RefCounted) -> void:
 	tile.npc = ""
 	tile.site = ""
 	tile.quantity = 0
+	tile.ground_only = true
 	var stage = Terrain.tile(battle_root, tile, true, hash(combat.position))
 	stage.scale = Vector3(6.5, 1.0, 4.5)
+	tile.ground_only = false
 	# Backdrop is assembled from the actual biome; props never reveal neighboring cells.
 	for i in range(5):
 		var backdrop = Terrain.tile(battle_root, tile, true, i + 31)
 		backdrop.position = Vector3(-5 + i * 2.4, -0.2, -4.0)
 		backdrop.scale = Vector3(1.4, 1.7, 1.4)
+	if tile.burning:
+		var fire_ring = Node3D.new()
+		battle_root.add_child(fire_ring)
+		fire_ring.position = Vector3(0, 0.05, 2.8)
+		Terrain.fire(fire_ring)
 	battle_root.set_meta("environment_signature", _battle_signature(tile))
 	_update_camera()
 	refresh_battle(run, combat)
@@ -237,6 +266,21 @@ func animate_events(events: Array) -> void:
 		for target in event.get("targets", []):
 			if battle_dolls.has(target):
 				battle_dolls[target].play_action("heal" if event.kind == "heal" else "hit")
+				if battle_dolls.has(event.actor):
+					_projectile(event, target)
+
+func _projectile(event: Dictionary, target: String) -> void:
+	var start = battle_dolls[event.actor].position + Vector3(0, 1.0, 0)
+	var end = battle_dolls[target].position + Vector3(0, 0.9, 0)
+	var color = Color("84c2ce") if event.get("element", "normal") == "water" else Color("e6a367") if event.get("element", "normal") == "fire" else Color("e3cc91")
+	var size = 0.13 if event.kind == "ultimate" else 0.075
+	var mote = Doll._sphere(battle_root, Vector3.ONE * size, color, start)
+	var material = mote.material_override
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	var tween = create_tween()
+	tween.tween_property(mote, "position", end, 0.3).set_trans(Tween.TRANS_SINE)
+	tween.tween_property(mote, "scale", Vector3.ZERO, 0.2)
+	tween.tween_callback(mote.queue_free)
 
 func end_battle() -> void:
 	battle_mode = false
