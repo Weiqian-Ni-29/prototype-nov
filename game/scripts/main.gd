@@ -590,7 +590,8 @@ func _battle_ui(screen: Vector2) -> void:
 	for id in combat.active:
 		var a = run.actor(id)
 		var shown_hp = view.display_hp(id,int(a.hp))
-		_text(left, ("▶ " if combat.current == id else "") + a.name + (" · 盾%d" % a.shield if a.shield > 0 else ""), 19, ink if a.hp > 0 else muted)
+		var shown_shield = view.display_shield(id,int(a.shield))
+		_text(left, ("▶ " if view.presentation_actor(combat.current) == id else "") + a.name + (" · 盾%d" % shown_shield if shown_shield > 0 else ""), 19, ink if shown_hp > 0 else muted)
 		_text(left, "HP %d/%d · MP %d/%d" % [shown_hp, a.hp_max, a.mp, a.mp_max], 14, muted)
 		_hp_bar(left, shown_hp, a.hp_max)
 		_button(left, "%d%% · " % a.energy + Catalog.SKILLS[a.ultimate].name, _ultimate.bind(id), a.energy < 100 or a.hp <= 0)
@@ -610,7 +611,7 @@ func _battle_ui(screen: Vector2) -> void:
 	_text(right, "行动顺序\n" + " → ".join(timeline), 14, gold)
 	var center = _panel(ui, Rect2(290, screen.y - 305, screen.x - 640, 155))
 	var is_friendly = combat.current != "" and not combat.enemies.has(combat.current) and combat.outcome == "" and battle_timer <= 0 and not view.is_animating()
-	_text(center, (combat.unit(combat.current).name + " 的行动") if combat.current != "" else "战斗结算", 20, gold)
+	_text(center, view.presentation_title((combat.unit(combat.current).name + " 的行动") if combat.current != "" else "战斗结算"), 20, gold)
 	var commands = HBoxContainer.new()
 	center.add_child(commands)
 	_button(commands, "普攻", func(): _combat_action("attack"), not is_friendly)

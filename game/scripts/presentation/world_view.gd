@@ -4,6 +4,7 @@ const Hex = preload("res://scripts/domain/hex_map.gd")
 const Terrain = preload("res://scripts/presentation/terrain.gd")
 const Doll = preload("res://scripts/presentation/doll.gd")
 const FontAsset = preload("res://assets/fonts/NotoSansSC.ttf")
+const Catalog = preload("res://scripts/domain/catalog.gd")
 signal cell_clicked(id: String)
 var camera: Camera3D
 var light: DirectionalLight3D
@@ -87,6 +88,7 @@ func _ready() -> void:
 	presenter.view = self
 	presenter.finished.connect(func(): presentation_changed.emit())
 	presenter.feedback_changed.connect(func(): presentation_changed.emit())
+	presenter.started.connect(func(): presentation_changed.emit())
 	_update_camera()
 
 func reset() -> void:
@@ -356,7 +358,7 @@ func refresh_battle(run: RefCounted, combat: RefCounted) -> void:
 		model.visible = true
 		if not is_animating(): model.set_down(a.hp <= 0)
 		if not is_animating() and a.get("charged",false) and model.rigged.role=="crossbow": model.play_action("aim")
-		model.selected = id == combat.current
+		model.selected = id == presentation_actor(combat.current)
 
 func animate_events(events: Array) -> void:
 	if not is_animating():
@@ -373,6 +375,22 @@ func is_animating() -> bool:
 
 func display_hp(id: String, current: int) -> int:
 	return int(display_results.get(id,{}).get("hp_after",current)) if is_animating() else current
+
+func display_shield(id: String, current: int) -> int:
+	return int(display_results.get(id,{}).get("shield_after",current)) if is_animating() else current
+
+func presentation_actor(fallback: String) -> String:
+	return str(presenter.active_event.get("actor",fallback)) if is_animating() else fallback
+
+func presentation_title(fallback: String) -> String:
+	if not is_animating(): return fallback
+	var event = presenter.active_event
+	if event.get("kind","")=="environment": return "火场伤害 · 结算中"
+	var id = str(event.get("actor",""))
+	if battle_combat==null or id=="": return "演出中"
+	var skill = str(event.get("skill_id",""))
+	var title = str(Catalog.SKILLS[skill].name) if Catalog.SKILLS.has(skill) else "防守" if event.get("kind","")=="guard" else "使用物资" if event.get("kind","")=="heal" else "行动"
+	return str(battle_combat.unit(id).name)+" · "+title
 
 func sync_battle_states() -> void:
 	if not battle_mode or battle_combat==null: return

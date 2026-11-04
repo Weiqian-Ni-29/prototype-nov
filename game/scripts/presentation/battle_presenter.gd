@@ -2,6 +2,7 @@ extends Node
 ## Sequential visual replay of immutable settled events. Never calls battle/domain methods.
 signal finished
 signal feedback_changed
+signal started
 var view: Node3D
 var queue: Array = []
 var seen: Dictionary = {}
@@ -11,6 +12,7 @@ var contact_records: Array = []
 var event_order: Array = []
 var tweens: Array[Tween] = []
 var visible_ids: Dictionary = {}
+var active_event: Dictionary = {}
 
 func enqueue(events: Array) -> void:
 	for event in events:
@@ -22,6 +24,7 @@ func enqueue(events: Array) -> void:
 		queue.append(event.duplicate(true))
 	if not queue.is_empty() and not playing:
 		playing = true
+		active_event = queue[0]
 		call_deferred("_play_queue",generation)
 
 func cancel() -> void:
@@ -35,6 +38,7 @@ func cancel() -> void:
 	tweens.clear()
 	contact_records.clear()
 	event_order.clear()
+	active_event.clear()
 
 func _wait(seconds: float, token: int) -> bool:
 	await get_tree().create_timer(maxf(0.01,seconds)).timeout
@@ -43,10 +47,13 @@ func _wait(seconds: float, token: int) -> bool:
 func _play_queue(token: int) -> void:
 	while token==generation and not queue.is_empty():
 		var event = queue.pop_front()
+		active_event = event
+		started.emit()
 		event_order.append(event.get("event_id",event.get("skill_id","")))
 		await _play_event(event,token)
 	if token!=generation: return
 	playing = false
+	active_event = {}
 	tweens.clear()
 	visible_ids.clear()
 	view.sync_battle_states()
