@@ -21,11 +21,23 @@ var battle_mode = false
 var selection_ring: MeshInstance3D
 var clock = 0.0
 var rain: CPUParticles3D
+var effects: Node3D
+var presenter: Node
+var battle_stage: Node3D
+var battle_run: RefCounted
+var battle_combat: RefCounted
+var display_results: Dictionary = {}
+var ocean: Node3D
+var environment: Environment
+var camera_impulse = 0.0
+var map_batch: Node3D
+signal presentation_changed
+signal sound_cue(kind: String)
 
 func _ready() -> void:
-	var environment = Environment.new()
+	environment = Environment.new()
 	environment.background_mode = Environment.BG_COLOR
-	environment.background_color = Color("172d2d")
+	environment.background_color = Color("23577b")
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	environment.ambient_light_color = Color("e2ddbe")
 	environment.ambient_light_energy = 0.42
@@ -50,6 +62,8 @@ func _ready() -> void:
 	add_child(map_root)
 	add_child(actor_root)
 	add_child(battle_root)
+	ocean = preload("res://scripts/presentation/ocean.gd").new()
+	add_child(ocean)
 	selection_ring = Doll._cylinder(self, 1.025, 1.025, 0.035, Color("e3c88b"), Vector3.ZERO, 6)
 	rain = CPUParticles3D.new()
 	rain.amount = 120
@@ -66,13 +80,27 @@ func _ready() -> void:
 	rain.mesh = raindrop
 	rain.emitting = false
 	add_child(rain)
+	effects = preload("res://scripts/presentation/skill_effects.gd").new()
+	add_child(effects)
+	presenter = preload("res://scripts/presentation/battle_presenter.gd").new()
+	add_child(presenter)
+	presenter.view = self
+	presenter.finished.connect(func(): presentation_changed.emit())
+	presenter.feedback_changed.connect(func(): presentation_changed.emit())
 	_update_camera()
 
 func reset() -> void:
+	presenter.cancel()
+	effects.clear()
+	display_results.clear()
+	battle_stage = null
+	battle_run = null
+	battle_combat = null
 	for root in [map_root, actor_root, battle_root]:
 		for child in root.get_children():
 			child.free()
 	tile_nodes.clear()
+	map_batch = null
 	tile_signatures.clear()
 	dolls.clear()
 	battle_dolls.clear()
@@ -81,18 +109,25 @@ func reset() -> void:
 	map_root.visible = true
 	actor_root.visible = true
 	selection_ring.visible = true
+	ocean.visible = true
+	camera_impulse = 0.0
 
 func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> void:
 	current_tiles = run.data.tiles
+	if ocean.sea_cells.is_empty(): ocean.build(current_tiles)
+	ocean.visible = not battle_mode
+	if not battle_mode: environment.background_color = Color("23577b")
 	map_root.visible = not battle_mode
 	actor_root.visible = not battle_mode
 	selection_ring.visible = not battle_mode
+	var terrain_changed = false
 	for id in current_tiles:
 		var revealed = run.data.explored.has(id)
 		var t = current_tiles[id].duplicate(true)
 		t.current_day = run.data.day
 		var signature = JSON.stringify(t) if revealed else "fog"
 		if tile_signatures.get(id, "") != signature:
+			terrain_changed = true
 			if tile_nodes.has(id):
 				tile_nodes[id].free()
 			var node = Terrain.tile(map_root, t, revealed, hash(str(run.data.seed) + id))
@@ -104,8 +139,20 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 					_label(node, "⚔" if t.discovered_enemy else "…", Vector3(0, 0.8, 0.25), Color("e8aa86") if t.discovered_enemy else Color("b8b59e"))
 			tile_nodes[id] = node
 			tile_signatures[id] = signature
+	if terrain_changed: _batch_map_geometry()
 	var counts = {}
-	for id in run.data.actors:
+	var visible_counts = {}
+	var actor_ids = run.data.actors.keys()
+	actor_ids.sort_custom(func(a,b):
+		if a==b: return false
+		if a=="hero": return true
+		if b=="hero": return false
+		return str(a)<str(b))
+	for id in actor_ids:
+		var a = run.actor(id)
+		if a.joined or (run.data.explored.has(a.position) and current_tiles[a.position].npc==id):
+			visible_counts[a.position] = int(visible_counts.get(a.position,0))+1
+	for id in actor_ids:
 		var a = run.actor(id)
 		var visible_actor = a.joined or (run.data.explored.has(a.position) and current_tiles[a.position].npc == id)
 		if not visible_actor:
@@ -116,7 +163,6 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 			var doll = Doll.new()
 			actor_root.add_child(doll)
 			doll.configure(a)
-			doll.scale = Vector3.ONE * 0.45
 			dolls[id] = doll
 		var model = dolls[id]
 		model.visible = true
@@ -124,14 +170,19 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 		model.set_down(a.hp <= 0)
 		var count = int(counts.get(a.position, 0))
 		counts[a.position] = count + 1
-		var offset = Vector3((count % 3 - 1) * 0.29, current_tiles[a.position].height + 0.1, (count / 3) * 0.3 + 0.22)
+		var total = int(visible_counts[a.position])
+		model.scale = Vector3.ONE*(0.32 if total>4 else 0.4 if total>1 else 0.45)
+		var offset = Vector3(0,current_tiles[a.position].height+0.1,0)
+		if total>1:
+			var ring_count = total-1 if total==7 else total
+			var index = count-1 if total==7 else count
+			if index>=0:
+				var angle = TAU*float(index)/ring_count
+				offset += Vector3(cos(angle),0,sin(angle))*(0.52 if total>3 else 0.34)
 		var point = Hex.world(a.position) + offset
 		if model.has_meta("cell") and model.get_meta("cell") != a.position:
-			model.play_action("walk")
-			var tween = create_tween()
-			tween.tween_property(model, "position", point, 0.42).set_trans(Tween.TRANS_SINE)
-			tween.tween_callback(model.play_action.bind("idle"))
-		else:
+			model.move_to(point)
+		elif not model.is_moving():
 			model.position = point
 		model.set_meta("cell", a.position)
 	if selected_cell != "" and current_tiles.has(selected_cell):
@@ -140,6 +191,32 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 	light.light_color = Color("d0dce0") if run.data.weather == "rain" else Color("ffe5b2")
 	light.light_energy = 0.48 if run.data.weather == "rain" else 0.68
 	rain.emitting = run.data.weather == "rain"
+
+func _batch_map_geometry() -> void:
+	# Rebuild only after actual tile/fog changes. Particles, labels and actors stay independent.
+	if is_instance_valid(map_batch): map_batch.free()
+	map_batch = Node3D.new()
+	map_root.add_child(map_batch)
+	var groups = {}
+	for tile in tile_nodes.values():
+		for instance in tile.find_children("*","MeshInstance3D",true,false):
+			if instance.skin!=null: continue
+			for surface in range(instance.mesh.get_surface_count()):
+				var material = instance.get_active_material(surface)
+				var key = str(material.get_instance_id())
+				if material is StandardMaterial3D:
+					key = "%s:%s:%s:%s:%s" % [material.albedo_color.to_html(),material.shading_mode,material.metallic,material.roughness,material.albedo_texture.resource_path if material.albedo_texture else ""]
+				if not groups.has(key):
+					var tool = SurfaceTool.new()
+					tool.begin(Mesh.PRIMITIVE_TRIANGLES)
+					groups[key] = {"tool":tool,"material":material}
+				groups[key].tool.append_from(instance.mesh,surface,map_root.global_transform.affine_inverse()*instance.global_transform)
+			instance.visible = false
+	for group in groups.values():
+		var instance = MeshInstance3D.new()
+		instance.mesh = group.tool.commit()
+		instance.material_override = group.material
+		map_batch.add_child(instance)
 
 func focus_cell(id: String) -> void:
 	focus_point = Hex.world(id)
@@ -180,6 +257,10 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _process(delta: float) -> void:
 	clock += delta
+	if camera_impulse>0.0:
+		camera_impulse = maxf(0.0,camera_impulse-delta*0.7)
+		camera.v_offset = sin(clock*72.0)*camera_impulse
+	else: camera.v_offset = 0.0
 	if rain:
 		rain.position = (Vector3.ZERO if battle_mode else focus_point) + Vector3(0, 10, 0)
 	for flame in get_tree().get_nodes_in_group("world_flames"):
@@ -199,46 +280,63 @@ func _process(delta: float) -> void:
 			_update_camera()
 
 func begin_battle(run: RefCounted, combat: RefCounted) -> void:
+	presenter.cancel()
+	effects.clear()
+	display_results.clear()
+	battle_run = run
+	battle_combat = combat
 	battle_mode = true
+	ocean.visible = false
 	map_root.visible = false
 	actor_root.visible = false
 	selection_ring.visible = false
 	for child in battle_root.get_children():
 		child.free()
+	battle_stage = null
 	battle_dolls.clear()
 	battle_root.visible = true
-	var tile = run.data.tiles[combat.position].duplicate(true)
-	tile.current_day = run.data.day
+	_draw_battle_stage(run.data.tiles[combat.position],run.data.day,combat.position)
+	_update_camera()
+	refresh_battle(run, combat)
+
+func _draw_battle_stage(definition: Dictionary, day: int, position: String) -> void:
+	environment.background_color = {"plains":Color("526757"),"forest":Color("354b42"),"mountain":Color("657078"),"ruins":Color("64695b"),"desert":Color("9b8965"),"swamp":Color("405c60"),"scorched":Color("4f5652")}.get(str(definition.terrain),Color("526757"))
+	if is_instance_valid(battle_stage): battle_stage.free()
+	battle_stage = Node3D.new()
+	battle_root.add_child(battle_stage)
+	var tile = definition.duplicate(true)
+	tile.current_day = day
+	tile.height = 0.0
 	tile.enemies = []
 	tile.npc = ""
 	tile.site = ""
 	tile.quantity = 0
 	tile.ground_only = true
-	var stage = Terrain.tile(battle_root, tile, true, hash(combat.position))
+	var stage = Terrain.tile(battle_stage, tile, true, hash(position))
 	stage.scale = Vector3(6.5, 1.0, 4.5)
 	tile.ground_only = false
 	# Backdrop is assembled from the actual biome; props never reveal neighboring cells.
 	for i in range(5):
-		var backdrop = Terrain.tile(battle_root, tile, true, i + 31)
+		var backdrop = Terrain.tile(battle_stage, tile, true, i + 31)
 		backdrop.position = Vector3(-5 + i * 2.4, -0.2, -4.0)
 		backdrop.scale = Vector3(1.4, 1.7, 1.4)
 	if tile.burning:
 		var fire_ring = Node3D.new()
-		battle_root.add_child(fire_ring)
+		battle_stage.add_child(fire_ring)
 		fire_ring.position = Vector3(0, 0.05, 2.8)
 		Terrain.fire(fire_ring)
 	battle_root.set_meta("environment_signature", _battle_signature(tile))
-	_update_camera()
-	refresh_battle(run, combat)
 
 func refresh_battle(run: RefCounted, combat: RefCounted) -> void:
 	var tile = run.data.tiles[combat.position].duplicate(true)
 	tile.current_day = run.data.day
-	if battle_root.get_meta("environment_signature", "") != _battle_signature(tile):
-		begin_battle(run, combat)
-		return
+	if not is_animating() and battle_root.get_meta("environment_signature", "") != _battle_signature(tile):
+		_draw_battle_stage(tile,run.data.day,combat.position)
 	var ids = combat.active.duplicate()
 	ids.append_array(combat.enemies.keys())
+	if is_animating():
+		for id in presenter.visible_ids:
+			if battle_dolls.has(id) and id not in ids: ids.append(id)
 	for id in battle_dolls:
 		battle_dolls[id].visible = id in ids
 	for index in range(ids.size()):
@@ -254,41 +352,64 @@ func refresh_battle(run: RefCounted, combat: RefCounted) -> void:
 			battle_dolls[id] = doll
 		var slot = combat.enemies.keys().find(id) if enemy else combat.active.find(id)
 		var model = battle_dolls[id]
-		model.position = Vector3(2.1 if enemy else -2.5, 0.1, -1.6 + slot * 1.25)
+		if slot>=0: model.position = Vector3(2.1 if enemy else -2.5, 0.1, -1.6 + slot * 1.25)
 		model.visible = true
-		model.set_down(a.hp <= 0)
+		if not is_animating(): model.set_down(a.hp <= 0)
+		if not is_animating() and a.get("charged",false) and model.rigged.role=="crossbow": model.play_action("aim")
 		model.selected = id == combat.current
 
 func animate_events(events: Array) -> void:
-	for event in events:
-		if battle_dolls.has(event.actor):
-			battle_dolls[event.actor].play_action(event.kind)
-		for target in event.get("targets", []):
-			if battle_dolls.has(target):
-				battle_dolls[target].play_action("heal" if event.kind == "heal" else "hit")
-				if battle_dolls.has(event.actor):
-					_projectile(event, target)
+	if not is_animating():
+		var initialized = {}
+		for event in events:
+			for result in event.get("results",[]):
+				if not initialized.has(result.target):
+					display_results[result.target] = {"hp_after":result.hp_before,"shield_after":result.shield_before}
+					initialized[result.target] = true
+	presenter.enqueue(events)
 
-func _projectile(event: Dictionary, target: String) -> void:
-	var start = battle_dolls[event.actor].position + Vector3(0, 1.0, 0)
-	var end = battle_dolls[target].position + Vector3(0, 0.9, 0)
-	var color = Color("84c2ce") if event.get("element", "normal") == "water" else Color("e6a367") if event.get("element", "normal") == "fire" else Color("e3cc91")
-	var size = 0.13 if event.kind == "ultimate" else 0.075
-	var mote = Doll._sphere(battle_root, Vector3.ONE * size, color, start)
-	var material = mote.material_override
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	var tween = create_tween()
-	tween.tween_property(mote, "position", end, 0.3).set_trans(Tween.TRANS_SINE)
-	tween.tween_property(mote, "scale", Vector3.ZERO, 0.2)
-	tween.tween_callback(mote.queue_free)
+func is_animating() -> bool:
+	return presenter!=null and presenter.playing
+
+func display_hp(id: String, current: int) -> int:
+	return int(display_results.get(id,{}).get("hp_after",current)) if is_animating() else current
+
+func sync_battle_states() -> void:
+	if not battle_mode or battle_combat==null: return
+	refresh_battle(battle_run,battle_combat)
+	for id in battle_dolls:
+		battle_dolls[id].set_down(battle_combat.unit(id).hp<=0)
+	var tile = battle_run.data.tiles[battle_combat.position].duplicate(true)
+	tile.current_day = battle_run.data.day
+	if battle_root.get_meta("environment_signature", "") != _battle_signature(tile):
+		_draw_battle_stage(tile,battle_run.data.day,battle_combat.position)
+
+func sync_event_environment(event: Dictionary) -> void:
+	if not event.has("environment_after") or battle_run==null: return
+	var tile = battle_run.data.tiles[battle_combat.position].duplicate(true)
+	tile.merge(event.environment_after,true)
+	tile.current_day = battle_run.data.day
+	if battle_root.get_meta("environment_signature", "") != _battle_signature(tile):
+		_draw_battle_stage(tile,battle_run.data.day,battle_combat.position)
 
 func end_battle() -> void:
+	presenter.cancel()
+	effects.clear()
+	battle_run = null
+	battle_combat = null
 	battle_mode = false
 	battle_root.visible = false
 	map_root.visible = true
 	actor_root.visible = true
 	selection_ring.visible = true
+	ocean.visible = true
+	environment.background_color = Color("23577b")
+	camera_impulse = 0.0
+	camera.v_offset = 0.0
 	_update_camera()
+
+func impact_camera(strength: float) -> void:
+	camera_impulse = maxf(camera_impulse,strength)
 
 func _battle_signature(tile: Dictionary) -> String:
 	return "%s:%s:%s" % [tile.terrain, tile.burning, int(tile.wet_until) > int(tile.current_day)]

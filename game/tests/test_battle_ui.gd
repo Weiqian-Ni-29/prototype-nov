@@ -33,6 +33,14 @@ func press(prefix: String) -> void:
 		button.pressed.emit()
 	await process_frame
 
+func finish_presentation() -> void:
+	var started = Time.get_ticks_msec()
+	while game.view.is_animating() and Time.get_ticks_msec()-started<10000:
+		await process_frame
+	expect(not game.view.is_animating(),"Visual event queue completed before the next normal command")
+	game.battle_timer = 0
+	game._refresh()
+
 func execute() -> void:
 	game = Main.instantiate()
 	root.add_child(game)
@@ -59,6 +67,7 @@ func execute() -> void:
 	var next_time = b.next_time.hero
 	await press("100% · 归途号令")
 	expect(run.actor("hero").energy == 0 and b.next_time.hero == next_time, "Ultimate button spends personal energy and preserves normal action")
+	await finish_presentation()
 	game.battle_timer = 0
 	game._refresh()
 	var original_item_count = run.actor("hero").inventory.salve
@@ -67,6 +76,7 @@ func execute() -> void:
 	await press("疗伤药")
 	expect(run.actor("hero").inventory.salve == original_item_count - 1 and b.current == "hero", "Battle item button consumes item without consuming action")
 	await press("用完了，返回")
+	await finish_presentation()
 	game.battle_timer = 0
 	game._refresh()
 	await press("换人")

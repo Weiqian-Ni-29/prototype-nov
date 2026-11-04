@@ -16,6 +16,7 @@ var auto_mode = false
 var allow_auto_ignite = false
 var pending: Dictionary = {}
 var events: Array = []
+var event_serial = 0
 
 func begin(expedition: RefCounted, encounter: Dictionary, formation: Array) -> Dictionary:
 	if expedition.data.status != "exploring" or formation.is_empty() or formation.size() > 4:
@@ -42,6 +43,7 @@ func begin(expedition: RefCounted, encounter: Dictionary, formation: Array) -> D
 	next_time.clear()
 	queue.clear()
 	events.clear()
+	event_serial = 0
 	clock = 0.0
 	fire_tick = 10.0
 	outcome = ""
@@ -157,6 +159,7 @@ func act(skill_id: String, target_id: String = "") -> Dictionary:
 		unit(id).guard = true
 		unit(id).energy = mini(100, int(unit(id).energy) + 10)
 		_log("%s 防守，下次正常行动前减伤。" % unit(id).name)
+		_emit_event({"actor":id,"targets":[id],"kind":"guard","skill_id":"guard","element":"normal","results":[]})
 	else:
 		var result = _cast(id, skill_id, target_id)
 		if not result.ok:
@@ -166,6 +169,12 @@ func act(skill_id: String, target_id: String = "") -> Dictionary:
 
 func _cast(id: String, skill_id: String, target_id: String, ultimate: bool = false) -> Dictionary:
 	var skill = Catalog.SKILLS[skill_id]
+	var environment_before = _environment_view()
+	var results: Array = []
+	var effects: Array = []
+	if skill.get("healing",false): effects.append("heal")
+	if skill.has("shield"): effects.append("shield")
+	if skill.has("power") and not skill.get("healing",false): effects.append("damage")
 	var caster = unit(id)
 	if caster.hp <= 0 or int(caster.mp) < int(skill.get("mp", 0)):
 		return _fail("无法施放：重伤或魔力不足。")
@@ -190,6 +199,7 @@ func _cast(id: String, skill_id: String, target_id: String, ultimate: bool = fal
 		caster.energy = mini(100, int(caster.energy) + int(skill.get("energy", 0)))
 	for target in targets:
 		var t = unit(target)
+		var before = _unit_view(t)
 		if skill.get("healing", false):
 			var was_down = t.hp <= 0
 			t.hp = mini(int(t.hp_max), int(t.hp) + int(skill.power))
@@ -205,10 +215,11 @@ func _cast(id: String, skill_id: String, target_id: String, ultimate: bool = fal
 		if skill.has("shield") and t.hp > 0:
 			t.shield = mini(60, int(t.get("shield", 0)) + int(skill.shield))
 			_log("%s 获得护盾。" % t.name)
+		results.append(_visual_result(target,before))
 	if skill.has("environment"):
 		if run.apply_environment(position, skill.environment) and skill.environment == "ignite":
 			run.record_ignition(id, position)
-	events.append({"actor": id, "targets": targets, "kind": "ultimate" if ultimate else "cast" if skill_id != "attack" else "attack", "element": skill.element, "skill": skill.name})
+	_emit_event({"actor": id, "targets": targets, "kind": "ultimate" if ultimate else "cast" if skill_id != "attack" else "attack", "element": skill.element, "skill": skill.name, "skill_id":skill_id,"effects":effects,"results":results,"environment_before":environment_before,"environment_after":_environment_view()})
 	return {"ok": true}
 
 func damage_preview(source: String, target: String, skill_id: String) -> int:
@@ -241,11 +252,12 @@ func environment_multiplier(element: String, target_element: String) -> float:
 func use_item(item: String, target_id: String) -> Dictionary:
 	if outcome != "" or enemies.has(current) or current.is_empty() or target_id not in active:
 		return _fail("只在我方本人正常行动窗口用物资，目标须在场。")
+	var before = _unit_view(unit(target_id))
 	var result = run.use_item(current, target_id, item, true)
 	if result.ok:
 		if unit(target_id).hp > 0 and float(next_time.get(target_id, 0.0)) < clock:
 			next_time[target_id] = clock + _delay(target_id)
-		events.append({"actor": current, "targets": [target_id], "kind": "heal", "element": "normal"})
+		_emit_event({"actor": current, "targets": [target_id], "kind": "heal", "skill_id":"item:"+item,"element": "normal","results":[_visual_result(target_id,before)]})
 	return result
 
 func swap(incoming: String) -> Dictionary:
@@ -332,13 +344,19 @@ func _enemy_action(id: String) -> void:
 		"heal":
 			var patient = _weakest(alive_enemies())
 			if unit(patient).hp < unit(patient).hp_max * 0.75:
+				var before = _unit_view(unit(patient))
 				unit(patient).hp = mini(int(unit(patient).hp_max), int(unit(patient).hp) + 28)
 				_log("%s 为 %s 恢复生命。" % [a.name, unit(patient).name])
+				_emit_event({"actor":id,"targets":[patient],"kind":"cast","skill_id":"enemy_heal","element":"normal","effects":["heal"],"results":[_visual_result(patient,before)]})
 			else:
 				_enemy_hit(id, target, 1.0)
 		"guard":
+			var results: Array = []
 			for e in alive_enemies():
+				var before = _unit_view(unit(e))
 				unit(e).shield = mini(40, int(unit(e).shield) + 10)
+				results.append(_visual_result(e,before))
+			_emit_event({"actor":id,"targets":alive_enemies(),"kind":"cast","skill_id":"enemy_shield","element":"normal","effects":["shield"],"results":results})
 			_enemy_hit(id, target, 0.8)
 		"charge":
 			if a.charged:
@@ -347,21 +365,42 @@ func _enemy_action(id: String) -> void:
 			else:
 				a.charged = true
 				_log("%s 正在蓄力，下次行动重弩射击！" % a.name)
+				_emit_event({"actor":id,"targets":[id],"kind":"cast","skill_id":"enemy_charge","element":"normal","results":[]})
 		"slow":
 			_enemy_hit(id, target, 1.0)
 			unit(target).slow = 2
 		"ignite", "wet":
+			var environment_before = _environment_view()
 			_enemy_hit(id, target, 1.15, "fire" if a.skill == "ignite" else "water")
 			run.apply_environment(position, a.skill)
+			events[-1].environment_before = environment_before
+			events[-1].environment_after = _environment_view()
 		_:
 			_enemy_hit(id, target, 1.0)
 	_complete_action(id)
 
 func _enemy_hit(id: String, target: String, power: float, element: String = "normal") -> void:
+	var before = _unit_view(unit(target))
 	var damage = maxi(1, floori((unit(id).attack * power - run.stat(target, "defense") * 0.6) * environment_multiplier(element, unit(target).element)))
 	_hurt(target, damage)
 	_log("%s → %s：%d 伤害。" % [unit(id).name, unit(target).name, damage])
-	events.append({"actor": id, "targets": [target], "kind": "attack", "element": element})
+	_emit_event({"actor": id, "targets": [target], "kind": "attack", "skill_id":"enemy_attack","element": element,"results":[_visual_result(target,before)]})
+
+func _unit_view(a: Dictionary) -> Dictionary:
+	return {"hp":int(a.hp),"shield":int(a.get("shield",0)),"mp":int(a.get("mp",0))}
+
+func _visual_result(id: String, before: Dictionary) -> Dictionary:
+	var after = _unit_view(unit(id))
+	return {"target":id,"hp_before":before.hp,"hp_after":after.hp,"shield_before":before.shield,"shield_after":after.shield,"damage":maxi(0,before.hp-after.hp),"healing":maxi(0,after.hp-before.hp),"shield_gain":maxi(0,after.shield-before.shield),"absorbed":maxi(0,before.shield-after.shield),"mp_gain":maxi(0,after.mp-before.mp)}
+
+func _environment_view() -> Dictionary:
+	var tile = run.data.tiles[position]
+	return {"terrain":tile.terrain,"burning":tile.burning,"wet_until":tile.wet_until}
+
+func _emit_event(event: Dictionary) -> void:
+	event_serial += 1
+	event["event_id"] = "%d:%d" % [run.data.battles,event_serial]
+	events.append(event)
 
 func _hurt(id: String, damage: int) -> void:
 	var target = unit(id)
@@ -390,8 +429,13 @@ func _settle_fire() -> void:
 		if not run.data.tiles[position].burning:
 			continue
 		# Simultaneous environmental damage; do not check victory between victims.
-		for id in alive_allies() + alive_enemies():
+		var results: Array = []
+		var victims = alive_allies() + alive_enemies()
+		for id in victims:
+			var before = _unit_view(unit(id))
 			_hurt(id, ceili(unit(id).hp_max * 0.08))
+			results.append(_visual_result(id,before))
+		_emit_event({"actor":"","targets":victims,"kind":"environment","skill_id":"fire_tick","element":"fire","results":results})
 		_log("火场灼伤在场双方；森林燃料仍按天消耗。")
 
 func check_end() -> bool:

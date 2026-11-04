@@ -1,6 +1,6 @@
 # prototype-nov
 
-一款带 Roguelike 元素的 2.5D 回合制小队探索游戏。`dev/mvp-expedition` 分支实现 MVP 0.1.0，供审阅与试玩。
+一款带 Roguelike 元素的 2.5D 回合制小队探索游戏。`dev/mvp-expedition` 分支实现 MVP 0.2.0，供审阅与试玩。
 
 玩家在迷雾沙盘中寻找补给、结识伙伴、安排角色分头探索，应对敌人与环境，最终完成撤离；没有强制撤离期限。
 
@@ -39,6 +39,8 @@
 行为细则与首轮数值已按用户授权自主落定，见实现记录。无每日强制口粮，没有撤离天数上限。当前试玩平台为 Windows x64，其他发行平台另行安排。
 
 开发按 [MVP 实现计划](docs/implementation-plan.md) 的 M0～M6 推进，当前成果、真实验证与剩余工作见 [开发进度](docs/development-status.md)。
+
+本轮已升级完整骨骼人偶、实际接近目标的近战、七类终结技演出、精细地景与蓝色六边形海域。实现与真实帧验收见 [动画升级记录](docs/animation-upgrade-progress.md)。
 
 ## 运行开发版
 

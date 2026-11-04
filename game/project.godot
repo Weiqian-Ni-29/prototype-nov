@@ -7,6 +7,8 @@ run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/description="六边形远征、伙伴与归途。单人 2.5D 探索 RPG。"
 config/icon="res://icon.svg"
+config/version="0.2.0"
+run/max_fps=60
 
 [display]
 window/size/viewport_width=1440
@@ -14,6 +16,7 @@ window/size/viewport_height=900
 window/size/window_width_override=1280
 window/size/window_height_override=800
 window/stretch/mode="canvas_items"
+window/vsync/vsync_mode=0
 
 [rendering]
 renderer/rendering_method="gl_compatibility"

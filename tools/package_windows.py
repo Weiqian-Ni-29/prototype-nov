@@ -30,7 +30,7 @@ def run_engine(engine: Path, arguments: list[str], log: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--engine')
-    parser.add_argument('--output', type=Path, default=GAME / 'builds/ReturnToTheLamps-MVP-0.1.0-Windows-x64')
+    parser.add_argument('--output', type=Path, default=GAME / 'builds/ReturnToTheLamps-MVP-0.2.0-Windows-x64')
     args = parser.parse_args()
     engine = find_engine(args.engine)
     build = GAME / 'builds'
@@ -43,11 +43,14 @@ def main() -> None:
     shutil.copy2(ROOT / 'docs/player-guide.md', destination / '开始游玩.txt')
     shutil.copytree(GAME / 'assets/licenses', destination / 'licenses', dirs_exist_ok=True)
     shutil.copy2(GAME / 'assets/fonts/OFL.txt', destination / 'licenses/NOTO-OFL.txt')
+    shutil.copy2(GAME / 'assets/README.md', destination / 'licenses/ASSET-SOURCES.md')
+    shutil.copy2(GAME / 'assets/characters/sources.json', destination / 'licenses/CHARACTER-SOURCES.json')
+    shutil.copy2(GAME / 'assets/nature/sources.json', destination / 'licenses/NATURE-SOURCES.json')
     commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     dirty = bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip())
     files = {str(path.relative_to(destination)).replace('\\', '/'): sha256(path)
              for path in destination.rglob('*') if path.is_file() and path.name != 'build-info.json'}
-    metadata = dict(version='0.1.0', target='Windows x64', source_commit=commit, source_dirty=dirty,
+    metadata = dict(version='0.2.0', target='Windows x64', source_commit=commit, source_dirty=dirty,
                     engine=subprocess.check_output([str(engine), '--version'], text=True).strip(),
                     created_utc=datetime.now(timezone.utc).isoformat(), files_sha256=files)
     (destination / 'build-info.json').write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding='utf-8')

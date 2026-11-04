@@ -61,7 +61,7 @@ func execute() -> void:
 		game._refresh()
 		await create_timer(0.6).timeout
 		expect(game.view.battle_dolls.size() == 8, "Four friends and four distinct foes rendered")
-		expect(game.view.battle_dolls.grit.skeleton.get_bone_count() == 7, "Four-legged character has an actual rig")
+		expect(game.view.battle_dolls.grit.skeleton.get_bone_count() >= 23 and game.view.battle_dolls.grit.rigged.animator!=null, "Four-legged character has a full imported rig and animation player")
 		expect(game.view.battle_dolls.enemy_0.family == "spider" and game.view.battle_dolls.enemy_2.family == "swarm", "Enemy silhouettes match spider and swarm")
 		await capture("battle-" + biome)
 		if biome == "plains":

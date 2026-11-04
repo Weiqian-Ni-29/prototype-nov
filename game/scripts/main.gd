@@ -36,6 +36,8 @@ func _ready() -> void:
 	view = World.new()
 	add_child(view)
 	view.cell_clicked.connect(_select_cell)
+	view.presentation_changed.connect(func(): call_deferred("_refresh"))
+	view.sound_cue.connect(func(kind: String): sound.play(kind))
 	var canvas = CanvasLayer.new()
 	add_child(canvas)
 	ui = Control.new()
@@ -523,6 +525,7 @@ func _item_dialog(user_id: String) -> void:
 			var target = targets[select.selected]
 			var result = combat.use_item(item, target) if combat != null else run.use_item(user_id, target, item)
 			_run_action(result)
+			if combat!=null and result.ok: _after_combat_step()
 			_item_dialog(user_id), quantity <= 0 or targets.is_empty())
 	_button(box, "用完了，返回", _close_modal)
 
@@ -586,9 +589,10 @@ func _battle_ui(screen: Vector2) -> void:
 	left.add_theme_constant_override("separation", 4)
 	for id in combat.active:
 		var a = run.actor(id)
+		var shown_hp = view.display_hp(id,int(a.hp))
 		_text(left, ("▶ " if combat.current == id else "") + a.name + (" · 盾%d" % a.shield if a.shield > 0 else ""), 19, ink if a.hp > 0 else muted)
-		_text(left, "HP %d/%d · MP %d/%d" % [a.hp, a.hp_max, a.mp, a.mp_max], 14, muted)
-		_hp_bar(left, a.hp, a.hp_max)
+		_text(left, "HP %d/%d · MP %d/%d" % [shown_hp, a.hp_max, a.mp, a.mp_max], 14, muted)
+		_hp_bar(left, shown_hp, a.hp_max)
 		_button(left, "%d%% · " % a.energy + Catalog.SKILLS[a.ultimate].name, _ultimate.bind(id), a.energy < 100 or a.hp <= 0)
 	var right_outer = _panel(ui, Rect2(screen.x - 330, 120, 310, screen.y - 275))
 	_text(right_outer, "敌方阵容", 24, gold)
@@ -596,15 +600,16 @@ func _battle_ui(screen: Vector2) -> void:
 	right.add_theme_constant_override("separation", 4)
 	for id in combat.enemies:
 		var e = combat.enemies[id]
+		var shown_hp = view.display_hp(id,int(e.hp))
 		_button(right, ("◆ " if selected_target == id else "") + e.name, func(): selected_target = id; _refresh(), e.hp <= 0)
-		_text(right, "HP %d/%d · %s\n%s" % [e.hp, e.hp_max, "蓄力中！" if e.charged else "行动蓄积", e.role], 14, muted)
-		_hp_bar(right, e.hp, e.hp_max, true)
+		_text(right, "HP %d/%d · %s\n%s" % [shown_hp, e.hp_max, "蓄力中！" if e.charged else "行动蓄积", e.role], 14, muted)
+		_hp_bar(right, shown_hp, e.hp_max, true)
 	var timeline: Array[String] = []
 	for entry in combat.timeline(6):
 		timeline.append(combat.unit(entry.id).name)
 	_text(right, "行动顺序\n" + " → ".join(timeline), 14, gold)
 	var center = _panel(ui, Rect2(290, screen.y - 305, screen.x - 640, 155))
-	var is_friendly = combat.current != "" and not combat.enemies.has(combat.current) and combat.outcome == "" and battle_timer <= 0
+	var is_friendly = combat.current != "" and not combat.enemies.has(combat.current) and combat.outcome == "" and battle_timer <= 0 and not view.is_animating()
 	_text(center, (combat.unit(combat.current).name + " 的行动") if combat.current != "" else "战斗结算", 20, gold)
 	var commands = HBoxContainer.new()
 	center.add_child(commands)
@@ -643,7 +648,7 @@ func _perform_combat(skill_id: String, target: String) -> void:
 func _ultimate(id: String) -> void:
 	var result = combat.request_ultimate(id, selected_target)
 	if result.ok:
-		if battle_timer > 0:
+		if battle_timer > 0 or view.is_animating():
 			toast_text = "终结技已排队，在当前动作结束后释放。"
 			_refresh()
 			return
@@ -661,28 +666,28 @@ func _swap_dialog() -> void:
 func _after_combat_step() -> void:
 	var presentation_events = combat.events.duplicate(true)
 	combat.events.clear()
-	if not presentation_events.is_empty():
-		sound.play("attack" if presentation_events[0].kind == "attack" else "cast")
-	battle_timer = 0.85
+	battle_timer = 0.08
 	if not combat.alive_enemies().has(selected_target) and not combat.alive_enemies().is_empty():
 		selected_target = combat.alive_enemies()[0]
-	_refresh()
 	view.animate_events(presentation_events)
-	if combat.outcome != "":
-		if combat.outcome == "victory":
-			sound.play("victory")
-		get_tree().create_timer(0.8).timeout.connect(_finish_battle)
+	_refresh()
 
 func _finish_battle() -> void:
 	if combat == null or combat.outcome == "":
 		return
+	if combat.outcome=="victory": sound.play("victory")
 	combat = null
 	view.end_battle()
 	selected_cell = run.actor(selected_id).position
 	_refresh()
 
 func _process(delta: float) -> void:
-	if combat == null or combat.outcome != "" or modal_layer.get_child_count() > 0:
+	if combat == null:
+		return
+	if combat.outcome != "":
+		if not view.is_animating(): _finish_battle()
+		return
+	if modal_layer.get_child_count() > 0 or view.is_animating():
 		return
 	var was_playing = battle_timer > 0
 	battle_timer -= delta
@@ -831,7 +836,7 @@ func _settings_dialog() -> void:
 func _credits_dialog() -> void:
 	var box = _modal("制作与许可", 800, 650)
 	var content = _scroll_content(box)
-	_text(content, "《归灯之野》MVP 0.1.0\n原创世界观、角色、程序化立体模型、骨骼、材质与合成音效。肖像由内置图像生成工具制作。\n\n字体：Noto Sans SC，SIL Open Font License。\n引擎：Godot " + Engine.get_version_info().string + "\n许可全文与第三方声明随试玩包附带。", 18)
+	_text(content, "《归灯之野》MVP 0.2.0\n原创世界观、角色与肖像；原创怪物、适配、特效及合成音效。肖像由内置图像生成工具制作。\n\n人形模型、动作与自然地景：Kay Lousberg，CC0。\n狼基础模型：crownjoshua，CC0；本项目修复绑定并制作动作。\n粒子纹理：Kenney，CC0。\n字体：Noto Sans SC，SIL Open Font License。\n引擎：Godot " + Engine.get_version_info().string + "\n完整来源、许可与适配说明随试玩包附带。", 18)
 	_text(content, Engine.get_license_text(), 14, muted)
 	_button(box, "返回设置", _settings_dialog)
 
