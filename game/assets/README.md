@@ -14,6 +14,10 @@ Source pages: [Adventurers](https://kaylousberg.itch.io/kaykit-adventurers), [An
 
 `boar.glb`, `lurker.glb`, `spider.glb` and `swarm.glb` are original project meshes, skins, rigs and 13 clips per family, reproducible with `tools/build_creature_assets.py`. Hex geometry, soil/surface shaders, ruins, reeds, ocean, VFX, palette shaders and PCM audio are project code. No third-party scripts or external sound samples were introduced.
 
-`portraits/` contains ten original fictional illustrations generated with the built-in image_gen tool on 2026-11-04. Prompts are in `portrait-prompts.md`. Noto Sans SC is from [google/fonts](https://github.com/google/fonts/tree/main/ofl/notosanssc), under `fonts/OFL.txt`.
+`portraits/` contains original illustrations generated with the built-in image_gen tool. The title illustration and two additional profession portraits were generated on 2026-11-05. Art direction is recorded in `portrait-prompts.md`. Noto Sans SC is from [google/fonts](https://github.com/google/fonts/tree/main/ofl/notosanssc), under `fonts/OFL.txt`.
+
+`story/` contains original widescreen scene illustrations generated with the built-in image_gen tool. The three `opening-*.png` images paint the protagonist into each opening scene. Other images provide locations and terrain backdrops for the game's character portraits.
+
+`portraits/mattes/` contains grayscale opacity masks derived from the existing portraits using U²-NetP and refined around clothing and props. The dialogue shader uses the original portrait colors and samples these masks for opacity only.
 
 Godot and its components retain their notices in `licenses/`. Standard export templates are used. No editor, Blender, original download archive, access token or paid source pack is shipped.

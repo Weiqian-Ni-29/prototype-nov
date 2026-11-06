@@ -2,6 +2,7 @@ class_name Narrative
 extends RefCounted
 ## Authored, finite branches. Objects, knowledge, consent, companionship and location are distinct.
 const Catalog = preload("res://scripts/domain/catalog.gd")
+const EncounterStory = preload("res://scripts/domain/encounter_story.gd")
 var run: RefCounted
 const DOCUMENTS = {
 	"Q-T": "测绘委托登记副本", "Q-TR": "测绘登记回执", "Q-A": "迁离完成摘要摘录",
@@ -80,6 +81,20 @@ func _valid(visitor: String, subject: String) -> String:
 		return "该角色不在对应地点。"
 	return ""
 
+func encounter_intro(visitor: String, subject: String) -> Dictionary:
+	var invalid = _valid(visitor, subject)
+	if invalid != "":
+		return {"ok": false, "message": invalid}
+	var beats: Array = EncounterStory.BEATS.get(subject, [])
+	if beats.is_empty():
+		return {"ok": true, "beats": []}
+	if run.data.story.has(subject):
+		if run.data.story[subject].met or run.actor(subject).hp <= 0:
+			beats = []
+	elif run.data.flags.get("intro_seen_" + subject, false) or run.data.choices.any(func(choice): return choice.get("subject") == subject):
+		beats = []
+	return {"ok": true, "beats": beats}
+
 func dialogue(visitor: String, subject: String) -> Dictionary:
 	var invalid = _valid(visitor, subject)
 	if invalid != "":
@@ -88,6 +103,8 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 	var title = "旧灯路上的人"
 	var text = ""
 	var flags = run.data.flags
+	var actor = run.actor(visitor)
+	var can_investigate = actor.ap >= 1
 	if run.data.actors.has(subject):
 		var npc = run.actor(subject)
 		title = npc.name + " · " + npc.title
@@ -95,16 +112,16 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 		if run.data.story[subject].relation == "unmet":
 			run.data.story[subject].relation = "met"
 		if npc.hp <= 0:
-			var rescue_choices = [_choice("rescue", "使用个人物资救援")]
-			if run.actor(visitor).skill == "heal":
-				rescue_choices.append(_choice("rescue_skill", "治疗救援 · 1 AP / 12 MP"))
+			var rescue_choices = [_choice("rescue", "使用个人物资救援", _has(visitor, "salve"), "需要携带疗伤药")]
+			if actor.skill == "heal":
+				rescue_choices.append(_choice("rescue_skill", "治疗救援 · 1 AP / 12 MP", can_investigate and actor.mp >= 12, "需要 1 AP 和 12 MP"))
 			rescue_choices.append(_choice("leave", "暂时离开，保留回访机会"))
 			return {"ok": true, "subject": subject, "title": title, "text": "对方仍昏迷着，无法交谈。可由同地队友使用疗伤药或治疗技能救援。", "options": rescue_choices}
 		match subject:
 			"cen":
-				text = "岑枝扶着绷紧的树枝，捕网里是一只送信鸟。\n“地图说这里没人？那张图见过我吗？”"
+				text = "“脚别往前。你踩的是网绳。”\n岑枝用肩抵着一根弯枝，网里扑腾着一只信鸟。“帮我托一下？等它飞走，我再指给你看林子里哪条路有人走。”"
 				if flags.get("cen_helped", false):
-					text = "岑枝摊开随身的林地地图，放鸟的那次帮助已经发生。\n“接下来要画的，是仍有人使用的路，不是一条穿过空白的直线。”"
+					text = "岑枝摊开林地图，指尖沿着一条弯弯的细线走。\n“有人每天走这条小路去药草坡。你给归航站画图的时候，记得留上这一笔。”"
 				if run.data.tiles[run.actor(visitor).position].site == "forest":
 					_learn(visitor, "cen_boundary")
 				options.append(_choice("help", "扶住树枝，帮她放开捕网", not flags.get("cen_helped", false), "鸟已经放走，帮助不重复发生"))
@@ -112,28 +129,28 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 				options.append(_choice("straight", "坚持直线清障，不考虑林地使用情况"))
 				options.append(_choice("report", "当面回告：边界意见已实际送站", _knows(visitor, "boundary_submitted"), "需把边界意见真实交到归航站，并当面回告"))
 			"lorne":
-				text = "洛恩正把旧路牌转回正确方向。\n“归航站恢复接应了，旧信却还在找收件人。乔禾住在林边；这封信由她决定怎样处理。”"
+				text = "洛恩正把旧路牌转回正确方向。\n“你是从断桥那边来的？顺着这些灯走，归航站还有船。我得先去林边找乔禾。这封信在旧邮仓躺了好多年，读不读，得由她自己决定。”"
 				if npc.joined or run.data.story.lorne.result != "E0":
 					text = "洛恩检查信袋上的旧地址与已有记录。\n“信的去向已经发生的，就不能重新说成还没发生。下一段路，我们照实际情况走。”"
 				options.append(_choice("letter", "接过原信，答应实际代送", _has("lorne", "Q-L") and run.data.story.lorne.result != "E2", "原信已交给持有人，或已按收件人意愿封存"))
 				options.append(_choice("letter_report", "当面说明旧信的真实结果", _knows(visitor, "letter_delivered") or _knows(visitor, "letter_opened") or (_knows(visitor, "letter_sealed") and (_has(visitor, "Q-L") or _has("lorne", "Q-L"))), "需亲历投递/私拆，或实际带回封存原信"))
 				flags["invite_lorne"] = true
 			"eve":
-				text = "伊芙把药瓶一一对上清单。\n“旧驿站登记的这次用药户，就是乔禾家。药送到之后，请把真实回执带回来。”"
+				text = "树荫下，伊芙把最后一只药瓶裹进干布，塞进箱角。\n“你若往林边走，能替我把这箱药捎给乔禾吗？旧驿站把她家写在清单上了。请她照单点一遍，再把签好的回执带给我。”"
 				if flags.get("medicine_receipt_returned", false):
-					text = "伊芙收好核对过的回执，清单上的实际差异没有被擦去。她检查随身用品，但没有凭交谈自动治疗任何人。"
+					text = "伊芙把回执夹在原清单后面。\n“以后有人来查这箱药，就让他两页一起看。”"
 				elif not _has("eve", "Q-M"):
-					text = "伊芙翻着药箱簿，回执那栏仍空着。\n“乔禾家是唯一接收户。原件与药物在哪里，要照实际记录。”"
+					text = "伊芙的药箱簿摊在膝上，签收栏还空着。\n“箱子已经托出去了。我得见到乔禾的回执，才好填这一栏。”"
 				options.append(_choice("medicine", "接取药箱，送往乔禾家", _has("eve", "Q-M"), "药箱已在实际接取者处"))
 				options.append(_choice("emergency", "说明应急分药，改写清单并实际分出一份", _has(visitor, "Q-M") and not flags.get("medicine_split", false), "需要实际携带尚未分药的药箱"))
 				options.append(_choice("conceal", "隐瞒取走一份药物", _has(visitor, "Q-M") and not flags.get("medicine_split", false), "需要实际携带尚未分药的药箱"))
 				options.append(_choice("medicine_report", "交回真实回执，核对送药结果", _has(visitor, "Q-R"), "回执需实际带到伊芙身边"))
 			"grit":
-				text = "巨狼守着一枚刻名扣环，反复嗅着旧营地。名字是“舒远”。\n气味和衣物都不足以证明一个人的死讯。"
+				text = "巨狼在旧营地转了一圈，把一枚扣环推到你脚边。环上刻着“舒远”。\n“他的气味到这儿就淡了。你见过他吗？”"
 				if run.data.tiles[run.actor(visitor).position].site != "track":
-					text = "砾牙碰了碰随身的刻名扣环，名字是“舒远”。旧营地仍在原处，他没有因为回忆就回到墓旁。"
+					text = "砾牙用鼻尖碰了碰带在身边的扣环。\n“舒远。旧营地那边还能闻到一点。这里没有。”"
 				if run.data.story.grit.result != "E0":
-					text = "砾牙把扣环放在爪边。已经说清的答案没有改写；新路、守候或目前未证实，都仍由真实脚步承接。"
+					text = "砾牙把扣环拢到爪边。环在石子上轻轻碰了一声。\n“舒远的事，我记着。”"
 				_learn(visitor, "grit_name")
 				_learn(visitor, "grit_ring")
 				if run.data.tiles[run.actor(visitor).position].site == "track":
@@ -144,25 +161,31 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 				options.append(_choice("stay", "核实记录后，尊重暂时守候的意愿", proof, "需完整证据"))
 				options.append(_choice("uncertain", "证据不足，不制造确定的答案", not proof, "已有完整证据时应如实面对"))
 			"ember":
-				text = "弥烬拦在旧清障设备旁。\n“三年前，我把在用的储物棚看成了废物。这次先说清楚：你们来这里做什么？”"
+				text = "弥烬横过一步，挡住旧清障设备，手停在燧石上。\n“又有人拿着地图来拆东西？三年前我也信过图上的‘废弃’二字，结果烧了别人还在用的棚子。说吧，谁让你来的？”"
 				if flags.get("invite_ember", false):
-					text = "弥烬检查随身的燧石，来意已经解释清楚。\n“三年前的事故不会重写，这次的清障记录也一样。”"
+					text = "弥烬把燧石收回袋里。\n“这回先说看到的事。哪块林子还在，哪块过了火，我照实写。”"
 				options.append(_choice("explain", "出示实际持有的测绘副本或登记回执，说明来意", _has(visitor, "Q-T") or _has(visitor, "Q-TR"), "凭据在异地时不能遥取"))
-				options.append(_choice("duel", "普通交战：承担重伤与远征失败风险", not npc.joined, "已经同行，不重复制造初遇冲突"))
+				var can_deploy = false
+				for ally_id in run.same_cell(npc.position, true):
+					if run.actor(ally_id).ap >= Catalog.BATTLE_AP:
+						can_deploy = true
+						break
+				var duel_reason = "弥烬已经同行。" if npc.joined else "至少一名同地队员需要 %d AP 才能参战。" % Catalog.BATTLE_AP
+				options.append(_choice("duel", "普通交战：承担重伤与远征失败风险", not npc.joined and can_deploy, duel_reason))
 				if flags.get("duel_won_ember", false):
 					flags["invite_ember"] = true
 				options.append(_choice("preserve", "报告亲历的解除危险与保林结果", _has_conservation_report(visitor), "需亲历森林遭遇胜利，林地实际保留且未燃烧"))
 				options.append(_choice("admit", "如实承认已经观察到的火场损失", _has_fire_report(visitor), "需有真实、已知的火场代价"))
 				options.append(_choice("falsify", "明知损失，仍要求不写入报告", _has_fire_report(visitor), "不能凭空假设发生过火灾"))
 			"tide":
-				text = "澄汐指着干渠石壁的刻度。\n“旧稿只写‘可能是季节变化’。刻度能证明差异，维护页才可能解释流向；它们都不能替老师回答动机。”"
+				text = "澄汐蹲在干渠边，用指节敲了敲石壁上的刻度。\n“老师写‘可能是季节变化’。你看，这一道比他记得高。台下石匣是放拓片的，背面那道槽存维护页。先对水位，再查水去了哪儿。”"
 				if run.data.tiles[run.actor(visitor).position].site != "water":
-					text = "澄汐翻开随身记录。水文台仍在原处，现场、原稿和维护页各有真实来源，不能因为离开就随手复制。"
+					text = "澄汐用两根手指比出刻度间的距离。\n“就差这么一截，记下来却是两回事。要弄清楚，还得回水文台对刻度。”"
 				options.append(_choice("water_draft", "借取她实际持有的旧水文稿", _has("tide", "Q-WA"), "原稿已交给实际持有人"))
 				var at_water = run.data.tiles[run.actor(visitor).position].site == "water"
 				options.append(_choice("water_observe", "观察现场石壁与流向", at_water, "需实际到水文台"))
-				options.append(_choice("water_rubbing", "调查石匣，取得旧水位拓片 · 1 AP", at_water and not flags.get("taken_Q-WB", false), "仅有一份原件，需实际到场"))
-				options.append(_choice("water_maintenance", "调查背侧档案槽，取得维护页 · 1 AP", at_water and not flags.get("taken_Q-WC", false), "仅有一份原件，需实际到场"))
+				options.append(_choice("water_rubbing", "调查石匣，取得旧水位拓片 · 1 AP", at_water and can_investigate and not flags.get("taken_Q-WB", false), "原件需仍在现场，且需要 1 AP"))
+				options.append(_choice("water_maintenance", "调查背侧档案槽，取得维护页 · 1 AP", at_water and can_investigate and not flags.get("taken_Q-WC", false), "原件需仍在现场，且需要 1 AP"))
 				var observed = _knows(visitor, "water_wall") and _knows(visitor, "water_rubbing") and (_has(visitor, "Q-WA") or visitor == "tide" or _knows(visitor, "water_draft"))
 				options.append(_choice("annotate", "保留原稿，加注真实观测差异", observed, "需现场观测并核对旧稿"))
 				options.append(_choice("limited", "只写可证明的事实，不推断动机", observed, "需实际完成核对"))
@@ -173,19 +196,22 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 			options.append(_choice("later", "暂缓决定，之后再来"))
 		else:
 			options.append(_choice("share", "同地交换亲历见闻与记录"))
-		text += "\n\n" + PERSONAL[subject].get(str(run.data.story[subject].result), "")
+		if run.data.story[subject].result != "E0":
+			text += "\n\n" + PERSONAL[subject].get(str(run.data.story[subject].result), "")
 	else:
+		if EncounterStory.BEATS.has(subject):
+			flags["intro_seen_" + subject] = true
 		match subject:
 			"inn":
 				title = "陆衡 · 白栎旧驿站"
-				text = "“图是照档案画的。不是我把房子抹掉了。”\n摘要写着二十八年前十七户全部迁离，他今天却仍在送药。陆衡当年四十二岁，不是八十年前断路之夜的亲历官员。"
+				text = "陆衡把药包挪开，腾出一角桌面让你摊开地图。\n“你问这里为什么还有灯？今晚还有药要送。档案说十七户早搬走了，你也看见了，灯底下还有人在等。”"
 				options.append(_choice("read", "平静阅读摘要，请他给出有来源的摘录"))
 				options.append(_choice("accuse", "直接质问为何签下不实摘要"))
 				options.append(_choice("statement", "当面请他解释签署过程", not flags.get("accused_lu", false) and (_knows(visitor, "resident_alive") or _has(visitor, "Q-B")), "需要有矛盾线索；强硬质问后他可拒绝额外说明"))
 				options.append(_choice("diagnosis", "询问舒远，取得有来源的诊疗/安葬摘录", _knows(visitor, "grit_name"), "先实际听到舒远的名字"))
 			"home":
 				title = "乔禾 · 林边仍有人居住的家"
-				text = "“那年我们没有登船。但你不能拿我的签名替另外十六户作主。”\n她愿意说明本户经历，也坚持自己决定公开范围。这里就是伊芙药箱清单上的唯一接收户。"
+				text = "乔禾推开门，把挡路的药篮提到一旁。\n“伊芙的药送我这儿。你若是来问旧驿站那班船，我也记得。我们一家等到灯灭，都没上船。要把这话写下来，先告诉我会给谁看。”"
 				_learn(visitor, "resident_alive")
 				_learn(visitor, "home_route")
 				options.append(_choice("public", "说明仅本户、不代迁离，按她授权范围署名", not flags.get("taken_Q-C", false), "本户证词已交给真实接收者"))
@@ -200,13 +226,13 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 				title = "旧调度柜 · 同一批次的两种记录"
 				text = "柜里的接应回执写着：告知已送达，接应未实施。它与摘要属于同一批次，不能证明今天居民的意愿。"
 				_learn(visitor, "record_seen")
-				options.append(_choice("take_record", "实际调查并取出原始回执 · 1 AP", not flags.get("taken_Q-B", false), "原件已在实际持有人处或已交站"))
+				options.append(_choice("take_record", "实际调查并取出原始回执 · 1 AP", can_investigate and not flags.get("taken_Q-B", false), "原件需仍在现场，且需要 1 AP"))
 			"water":
 				title = "水文台 · 现场与档案槽"
 				text = "即使澄汐已经离开，刻度、石匣与背侧档案槽仍在原处。任何角色都可以调查，不需要先掌握水魔法。"
 				options.append(_choice("water_observe", "观察现场石壁与流向"))
-				options.append(_choice("water_rubbing", "调查石匣，取得旧水位拓片 · 1 AP", not flags.get("taken_Q-WB", false), "原件已被实际取走"))
-				options.append(_choice("water_maintenance", "调查背侧档案槽，取得维护页 · 1 AP", not flags.get("taken_Q-WC", false), "原件已被实际取走"))
+				options.append(_choice("water_rubbing", "调查石匣，取得旧水位拓片 · 1 AP", can_investigate and not flags.get("taken_Q-WB", false), "原件需仍在现场，且需要 1 AP"))
+				options.append(_choice("water_maintenance", "调查背侧档案槽，取得维护页 · 1 AP", can_investigate and not flags.get("taken_Q-WC", false), "原件需仍在现场，且需要 1 AP"))
 			"track":
 				title = "旧兽径营地 · 墓记"
 				text = "墓记刻着舒远的名字与一年前的日期。需与诊疗摘录及砾牙的刻名扣环核对，才能形成有来源的结论。"
@@ -219,7 +245,7 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 				options.append(_choice("observe", "记下真实林地边界"))
 			"exit":
 				title = "归航站 · 常态接应，没有末班倒计时"
-				text = "值守者为你留出桌面。\n“我能收件、核对本航线住处和路况，无权用一封信裁定整个灯路的历史。先登记位置，还是再等同伴？”"
+				text = "值守者把码头的灯拨亮，给你留出一块干净桌面。\n“从断桥走到这儿，辛苦了。委托副本可以交给我，路上记下的事也可以一起说。你要是还等人，船会照常往返。”"
 				options.append(_choice("register", "交付本次测绘副本，领取唯一登记回执", _has(visitor, "Q-T") and not run.data.submitted.has("Q-T"), "副本需实际持有，普通登记不算旧案证据"))
 				options.append(_choice("roads", "只提交亲历路况，不替历史下结论"))
 				options.append(_choice("report_oral", "提供亲历口述，作为待查线索", _knows(visitor, "resident_alive") or _knows(visitor, "record_seen") or _knows(visitor, "summary_seen"), "需要实际获得有来源的线索"))
@@ -269,17 +295,17 @@ func _choose(visitor: String, subject: String, option_id: String) -> Dictionary:
 				"help":
 					flags["cen_helped"] = true
 					flags["invite_cen"] = run.data.story.cen.result != "E2"
-					response = "鸟重新飞进林间。" + ("岑枝愿意同行，也接受你帮助后不邀请。" if flags.invite_cen else "岑枝谢谢你的帮助，但清障的分歧还在，她此时不愿同行。")
+					response = "信鸟掠过你们的头顶，抖落几片叶子。" + ("\n“多谢。你还要往前走？要是缺个认路的人，可以叫上我。”" if flags.invite_cen else "\n“多谢你搭手。林路的事我还是那个意思，咱们各走各的吧。”")
 				"boundary":
 					_grant(visitor, "Q-BOUND")
 					_learn(visitor, "boundary_terms")
-					response = "你记下已在使用的林地边界。要得到明确回音，需真正送到归航站，再当面告诉岑枝。"
+					response = "岑枝听你把林地边界说完，点了点头。\n“这份意见捎给归航站吧。要是他们收下了，回来跟我说一声。”"
 				"straight":
 					_result("cen", "E2")
-					response = "“这条线不是画在空地上的。”她不再提供私人路线，但没有抹去已加入的历史。"
+					response = "岑枝把自己的图折起来。\n“你这条直线从人家的药草坡上过。再往前的林路，我就不给你画了。”"
 				"report":
 					_result("cen", "E1")
-					response = "岑枝核对了你当面带回的提交消息，在自己的图上留下边界。"
+					response = "“他们收下了？好。”岑枝重新摊开自己的图，在林路边补了一道短线。"
 		"lorne":
 			match option_id:
 				"letter":
@@ -300,25 +326,25 @@ func _choose(visitor: String, subject: String, option_id: String) -> Dictionary:
 				"medicine":
 					_hand_over("eve", visitor, "Q-M")
 					_learn(visitor, "medicine_task")
-					response = "药箱交到你手中，清单唯一接收户是乔禾家。交付免费，实际药物不会从异地背包传来。"
+					response = "伊芙把药箱递给你，清单压在提绳下面。\n“抬稳些。到了乔禾家，先把清单给她看。”"
 				"emergency", "conceal":
 					flags["medicine_split"] = true
 					flags["medicine_concealed"] = option_id == "conceal"
 					flags["medicine_authorized"] = option_id == "emergency"
 					run.actor(visitor).inventory.salve = int(run.actor(visitor).inventory.get("salve", 0)) + 1
-					response = "一份应急药真实分出，剩余药箱保留。" + ("伊芙在清单标出缺口。" if option_id == "emergency" else "清单仍写齐备，差异没有消失。")
+					response = ("“急用就先拿一份。等等，我把缺的这瓶写上，免得乔禾对不上。”\n伊芙改过清单，才把箱盖合上。" if option_id == "emergency" else "你把一瓶药收进自己的包里。清单上，那一格还是满的。")
 				"medicine_report":
 					_consume(visitor, "Q-R")
 					flags["medicine_receipt_returned"] = true
 					_result("eve", "E3" if flags.get("medicine_concealed", false) else "E2" if flags.get("medicine_authorized", false) else "E1")
 					flags["invite_eve"] = run.data.story.eve.result != "E3"
-					response = "回执与实际清单一同核对，药箱不会在另一个所谓接收户重复交付。"
+					response = "伊芙把乔禾签的回执贴着清单，顺着两张纸逐行核对。"
 		"grit":
 			match option_id:
 				"share_food":
 					_consume(visitor, "trail_food")
 					flags["invite_grit"] = true
-					response = "砾牙吃下你实际交出的干粮，安静地把选择留给你。没有新增每日口粮制度。"
+					response = "砾牙低头吃完你递来的干粮，往旁边挪了一步。\n“还走吗？我可以跟你一程。”"
 				"new_path", "stay", "uncertain":
 					_result("grit", "E1" if option_id == "new_path" else "E2" if option_id == "stay" else "E3")
 					flags["invite_grit"] = true
@@ -327,7 +353,7 @@ func _choose(visitor: String, subject: String, option_id: String) -> Dictionary:
 			match option_id:
 				"explain":
 					flags["invite_ember"] = true
-					response = "弥烬看过实际凭据，放低手中的燧石。登记副本或回执只证明本次来意，不是二十八年前的旧案证据。"
+					response = "弥烬读过你递到眼前的凭据，手从燧石上移开。\n“是这趟测绘的登记。看来我拦错人了。接下来的路，要我搭把手吗？”"
 				"duel":
 					run.data.pending_battle = {"position": run.actor(visitor).position, "origin": run.actor(visitor).position, "ambush": false, "movers": [], "npc": "ember"}
 					flags["duel_seen_ember"] = true
@@ -340,10 +366,10 @@ func _choose(visitor: String, subject: String, option_id: String) -> Dictionary:
 				"water_draft":
 					_hand_over("tide", visitor, "Q-WA")
 					_learn(visitor, "water_draft")
-					response = "澄汐交出旧稿。写着季节变化的推测，还不能证明老师见过设施背后的维护页。"
+					response = "澄汐把旧稿递给你，指了一下末尾的批注。\n“‘可能’两个字也留着。我还不知道老师看没看过维护页。”"
 				"water_observe":
 					_learn(visitor, "water_wall")
-					response = "石壁水位与旧稿不符；你记录差异，没有直接断言人工分流。"
+					response = "石壁的水痕停在另一道刻度上。你先记下这一笔，成因那一栏暂且空着。"
 				"water_rubbing", "water_maintenance":
 					var check = run._map_action(visitor, 1)
 					if not check.ok:
@@ -352,7 +378,7 @@ func _choose(visitor: String, subject: String, option_id: String) -> Dictionary:
 					var item = "Q-WB" if option_id == "water_rubbing" else "Q-WC"
 					_grant(visitor, item)
 					_learn(visitor, "water_rubbing" if item == "Q-WB" else "water_maintenance")
-					response = "实际取得" + DOCUMENTS[item] + "。" + ("同批次流向记录补强人工分流，但不证明老师动机或世界级灾难原因。" if item == "Q-WC" else "与旧稿核对仅能说明差异。")
+					response = ("你从背槽抽出维护页。同批记录里有开闸日期，还有一支指向稳流支路的箭头。" if item == "Q-WC" else "你从石匣里取出旧水位拓片。墨线还能辨认，正好带回去对旧稿。")
 				"annotate", "limited", "forge":
 					_result("tide", "E1" if option_id == "annotate" else "E2" if option_id == "limited" else "E3")
 					flags["invite_tide"] = option_id != "forge"
@@ -380,33 +406,33 @@ func _choose(visitor: String, subject: String, option_id: String) -> Dictionary:
 				"public", "sealed":
 					flags["testimony_scope"] = option_id
 					_grant(visitor, "Q-C")
-					response = "乔禾只为本户经历署名，不代其他十六户授权，也不允许把私人家信夹作公开证词。" + ("她明确许可此范围公开。" if option_id == "public" else "材料仅供站内密封核查。")
+					response = "乔禾在本户的证词末尾签了字。\n“这只写我们一家。邻居自己开口，家信也归家信。" + ("这一页可以公开。”" if option_id == "public" else "请封好，只交给站里核查的人看。”")
 				"oral":
 					_learn(visitor, "resident_oral")
-					response = "你只听见她的亲历，没有在背包生成署名证词或许可副本。"
+					response = "乔禾指向窗边的长凳。\n“那晚我娘就坐这儿等船。天快亮的时候，我把她劝回屋了。”\n你听她讲完，没有请她签字。"
 				"terms":
 					_grant(visitor, "Q-TERMS")
-					response = "条款明确：保留住处、药物通路与协商权，不等于同意搬迁或无限清障。原件交给实际来者。"
+					response = "乔禾在纸上按住三行字，把它推到你面前。\n“房子留着，送药的路留着。要动林路，先来跟住在这儿的人商量。”"
 				"deliver_letter":
 					_consume(visitor, "Q-L")
 					flags["letter_location"] = "home"
 					_learn(visitor, "letter_delivered")
 					if flags.get("letter_opened", false):
 						_learn(visitor, "letter_opened")
-					response = "乔禾接过姐姐的旧信，决定此刻阅读。原信现在由她保管，不再留在任何队员背包。"
+					response = "乔禾接过信，用指腹抹平信封的一角。\n“是我姐姐的字。我想现在看。”她把信留在自己手中。"
 				"seal_letter":
 					_learn(visitor, "letter_sealed")
-					response = "乔禾要求按自己的意愿封存。原信仍在实际持有人手中，需要真正带回洛恩，而非远程签收。"
+					response = "乔禾看了片刻，把手收了回去。\n“我今天还没准备好。请把原信带回给洛恩，托他替我封好。”"
 				"open_letter":
 					flags["letter_opened"] = true
 					_learn(visitor, "letter_opened")
-					response = "未经许可拆阅的事实留下了。此后送达也不会改成从未发生。"
+					response = "封口在你手中裂开。信还可以送到，封口已经合不回去了。"
 				"deliver_medicine":
 					_consume(visitor, "Q-M")
 					_grant(visitor, "Q-R")
 					flags["medicine_delivered"] = true
 					_learn(visitor, "medicine_delivered")
-					response = "乔禾核对了实际药箱，签发唯一回执 Q-R，交给当场交药者。没有第二处必送点。"
+					response = "乔禾照着清单点完药瓶，签好回执递给你。\n“劳你交给伊芙。她看了，就知道我收到多少。”"
 		"record":
 			var check = run._map_action(visitor, 1)
 			if not check.ok:
@@ -487,7 +513,10 @@ func _common(visitor: String, subject: String, option: String) -> Dictionary:
 		return result
 	if option in ["decline", "later"]:
 		run.data.story[subject].relation = "declined" if option == "decline" else "later"
-		return {"ok": true, "response": "你们明确了这次不同行或暂缓的选择。已经做过的帮助与个人线结果保留，不算已加入后未撤离。"}
+		var response = "你说明接下来想独自走。%s点了点头，留在原地。" % run.actor(subject).name
+		if option == "later":
+			response = "你们约好各自再想一想。若沿路折返，还能到这里继续这场谈话。"
+		return {"ok": true, "response": response}
 	if option == "share":
 		var facts = {}
 		for id in run.same_cell(run.actor(visitor).position, true):

@@ -13,7 +13,7 @@ func new_run(seed_value: int, profession: String) -> void:
 	assert(Catalog.PROFESSIONS.has(profession))
 	var generated = Hex.generate(seed_value)
 	rng.seed = seed_value ^ 0x5eed123
-	data = {"version": SAVE_VERSION, "seed": seed_value, "profession": profession, "day": 1, "weather": "sun", "tiles": generated.tiles, "start": generated.start, "exit": generated.exit, "actors": {}, "explored": {}, "flags": {}, "knowledge": {}, "submitted": {}, "story": {}, "rewards": {}, "choices": [], "status": "exploring", "log": [], "last_day_settled": 0, "battles": 0, "transaction": 0, "pending_battle": {}}
+	data = {"version": SAVE_VERSION, "seed": seed_value, "profession": profession, "day": 1, "weather": "sun", "tiles": generated.tiles, "start": generated.start, "exit": generated.exit, "actors": {}, "explored": {}, "visited": {}, "flags": {}, "knowledge": {}, "submitted": {}, "story": {}, "rewards": {}, "choices": [], "status": "exploring", "log": [], "last_day_settled": 0, "battles": 0, "transaction": 0, "pending_battle": {}}
 	var hero_def = Catalog.PROFESSIONS[profession].duplicate(true)
 	hero_def["title"] = hero_def.name
 	hero_def["name"] = "旅人"
@@ -66,9 +66,17 @@ func stat(id: String, field: String) -> int:
 	return value
 
 func reveal(position: String) -> void:
+	data.visited[position] = true
 	data.explored[position] = true
 	for k in Hex.neighbors(position, data.tiles):
 		data.explored[k] = true
+
+func has_visited(position: String) -> bool:
+	return data.visited.has(position)
+
+func knows_encounter(position: String) -> bool:
+	var tile = data.tiles[position]
+	return has_visited(position) and tile.discovered_enemy and not tile.enemies.is_empty()
 
 func move_cost(id: String, destination: String) -> int:
 	var cost = int(Catalog.TERRAIN[data.tiles[destination].terrain].cost)
@@ -81,6 +89,8 @@ func movement_preview(ids: Array, destination: String) -> Dictionary:
 		return fail("战斗或结算期间不能移动。")
 	if ids.is_empty() or not data.tiles.has(destination):
 		return fail("请选择角色和有效地块。")
+	if not Hex.is_land(data.tiles, destination):
+		return fail("湖面无法通行，请沿湖岸绕行。")
 	var source = actor(str(ids[0])).get("position", "")
 	if not data.tiles.has(source):
 		return fail("角色位置无效。")
@@ -88,8 +98,7 @@ func movement_preview(ids: Array, destination: String) -> Dictionary:
 		return fail("敌人阻挡此处；需交战，或在战斗中撤退。")
 	if destination not in Hex.neighbors(source, data.tiles):
 		return fail("每次移动一格；可点击远处地块查看路径。")
-	var t = data.tiles[destination]
-	var known_encounter = not t.enemies.is_empty() and t.discovered_enemy
+	var known_encounter = knows_encounter(destination)
 	var costs = {}
 	for id in ids:
 		if costs.has(id):
@@ -110,7 +119,7 @@ func movement_preview(ids: Array, destination: String) -> Dictionary:
 				available += 1
 		if available == 0:
 			return fail("进入已知遭遇需要至少一名角色能支付移动和参战费。")
-	return {"ok": true, "costs": costs, "encounter": known_encounter, "risk": not t.enemies.is_empty() and t.hidden, "source": source}
+	return {"ok": true, "costs": costs, "encounter": known_encounter, "source": source}
 
 func move(ids: Array, destination: String) -> Dictionary:
 	var preview = movement_preview(ids, destination)
@@ -123,9 +132,10 @@ func move(ids: Array, destination: String) -> Dictionary:
 	var t = data.tiles[destination]
 	var encounter = not t.enemies.is_empty()
 	if encounter:
-		var ambush = t.hidden and not t.discovered_enemy
+		var surprise = not preview.encounter
+		var ambush = t.hidden and surprise
 		t.discovered_enemy = true
-		data.pending_battle = {"position": destination, "ambush": ambush, "origin": preview.source, "movers": ids.duplicate(), "npc": ""}
+		data.pending_battle = {"position": destination, "ambush": ambush, "surprise": surprise, "origin": preview.source, "movers": ids.duplicate(), "npc": ""}
 		note("隐蔽处的敌人发动伏击！" if ambush else "抵达遭遇地点，请选择出战角色。")
 	else:
 		note("抵达%s。" % Catalog.terrain_name(t.terrain))
@@ -455,11 +465,28 @@ func load_game(path: String = "") -> Dictionary:
 	if invalid != "":
 		return fail("存档内容无效：" + invalid + "。旧文件没有被覆盖。")
 	data = loaded
+	if not data.has("visited"):
+		_restore_legacy_visits()
 	if not data.has("choices"):
 		data.choices = []
 	rng.state = int(data.rng_state)
 	changed.emit()
 	return success()
+
+func _restore_legacy_visits() -> void:
+	# Previous saves stored sight, but no route history. Recover only evidence of arrival.
+	data.visited = {data.start: true}
+	for id in joined_ids():
+		data.visited[actor(id).position] = true
+	for position in data.explored:
+		var tile = data.tiles[position]
+		if (tile.hidden and tile.discovered_enemy) or data.story.get(tile.npc, {}).get("met", false):
+			data.visited[position] = true
+	if not data.pending_battle.is_empty():
+		data.visited[data.pending_battle.origin] = true
+		data.visited[data.pending_battle.position] = true
+	for position in data.visited:
+		data.explored[position] = true
 
 func _validate_save(loaded: Dictionary) -> String:
 	if not loaded.has_all(["flags", "story", "submitted", "knowledge", "rewards", "log", "pending_battle", "start", "exit", "profession", "explored", "transaction", "battles", "weather"]):
@@ -478,6 +505,12 @@ func _validate_save(loaded: Dictionary) -> String:
 	for k in loaded.explored:
 		if not loaded.tiles.has(k):
 			return "探索记录越界"
+	if loaded.has("visited"):
+		if not loaded.visited is Dictionary:
+			return "到访记录无效"
+		for k in loaded.visited:
+			if not loaded.explored.has(k):
+				return "到访记录越界"
 	var coordinate = RegEx.new()
 	coordinate.compile("^-?[0-9]+,-?[0-9]+$")
 	for k in loaded.tiles:
@@ -488,6 +521,8 @@ func _validate_save(loaded: Dictionary) -> String:
 			return "地块字段不完整"
 		if not Catalog.TERRAIN.has(tile.terrain) or not tile.enemies is Array:
 			return "地形或遭遇无效"
+		if tile.terrain == "lake" and (tile.site != "" or tile.npc != "" or tile.camp or not tile.enemies.is_empty() or tile.quantity > 0 or loaded.get("visited", {}).has(k)):
+			return "湖面包含陆地事件"
 		for enemy in tile.enemies:
 			if not Catalog.ENEMIES.has(enemy):
 				return "未知敌人"
@@ -499,7 +534,7 @@ func _validate_save(loaded: Dictionary) -> String:
 			return "角色字段不完整"
 		if a.id != id or not a.name is String or not a.color is String or not a.element is String or not a.joined is bool:
 			return "角色标识无效"
-		if not loaded.tiles.has(a.position) or not a.inventory is Dictionary or not a.equipment is Dictionary:
+		if not Hex.is_land(loaded.tiles, a.position) or not a.inventory is Dictionary or not a.equipment is Dictionary:
 			return "角色位置或背包无效"
 		if not Catalog.SKILLS.has(a.skill) or not Catalog.SKILLS.has(a.ultimate):
 			return "角色技能无效"
@@ -523,6 +558,8 @@ func _validate_save(loaded: Dictionary) -> String:
 	if not loaded.pending_battle.is_empty():
 		var pending = loaded.pending_battle
 		if not pending.has_all(["position", "origin", "ambush", "movers", "npc"]) or not loaded.tiles.has(pending.position) or not loaded.tiles.has(pending.origin) or not pending.movers is Array:
+			return "遭遇检查点无效"
+		if pending.has("surprise") and not pending.surprise is bool:
 			return "遭遇检查点无效"
 		for id in pending.movers:
 			if not loaded.actors.has(id):

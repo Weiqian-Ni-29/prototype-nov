@@ -57,6 +57,7 @@ func execute() -> void:
 	await process_frame
 	game.set_process(false)
 	game.ui.visible = false
+	game.view.show()
 	game.view.map_root.visible = false
 	game.view.actor_root.visible = false
 	game.view.selection_ring.visible = false

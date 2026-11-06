@@ -51,9 +51,14 @@ func execute() -> void:
 		expect(route_cost >= 12, "Extraction route cost seed %d" % seed_value)
 		var counts = {}
 		var terrains = {}
+		var lake: Array[String] = []
 		for k in tiles:
 			expect(Hex.distance(Hex.coord(k), Vector2i.ZERO) <= 8, "Hex boundary " + k)
 			terrains[tiles[k].terrain] = true
+			if tiles[k].terrain == "lake":
+				lake.append(k)
+				expect(tiles[k].npc == "" and tiles[k].site == "" and tiles[k].enemies.is_empty() and tiles[k].quantity == 0,
+					"No land encounters, sites or items on water " + k)
 			if tiles[k].npc != "":
 				var id = tiles[k].npc
 				counts[id] = int(counts.get(id, 0)) + 1
@@ -64,17 +69,38 @@ func execute() -> void:
 					expect(Hex.path(tiles, generated.start, k, true).size() <= 4, "Early companion <=3 moves")
 		for id in Catalog.COMPANIONS:
 			expect(counts.get(id, 0) == 1, "Exactly one companion " + id)
-		expect(terrains.size() == 6, "Six base terrain types seed %d" % seed_value)
+		expect(terrains.size() == 7, "Six land biomes plus a lake seed %d" % seed_value)
+		expect(lake.size() >= 5 and lake.size() <= 11, "Lake is a multi-tile feature seed %d" % seed_value)
+		if not lake.is_empty():
+			expect(Hex.path(tiles, generated.start, lake[0]).is_empty(), "No route into lake seed %d" % seed_value)
+			var wet = {lake[0]: true}
+			var frontier: Array[String] = [lake[0]]
+			while not frontier.is_empty():
+				for next in Hex.neighbors(frontier.pop_back(), tiles):
+					if tiles[next].terrain == "lake" and not wet.has(next):
+						wet[next] = true
+						frontier.append(next)
+			expect(wet.size() == lake.size(), "A single connected lake seed %d" % seed_value)
+			expect(Hex._connected_land(tiles, generated.start, tiles.size() - lake.size()), "All land stays connected seed %d" % seed_value)
 		if seed_value < 4:
 			expect(JSON.stringify(generated) == JSON.stringify(Hex.generate(seed_value)), "Deterministic map seed %d" % seed_value)
 	expect(early_locations.size() > 1, "Early companion placement varies with seed")
 	var r = fresh()
 	expect(r.data.explored.size() == 7, "Initial one-ring view")
 	var destination = Hex.neighbors(r.actor("hero").position, r.data.tiles)[0]
+	expect(r.has_visited(r.data.start) and not r.has_visited(destination), "Sight does not count as visiting a tile")
+	var original_terrain = r.data.tiles[destination].terrain
+	r.data.tiles[destination].terrain = "lake"
+	var before_lake = JSON.stringify(r.data)
+	var blocked = r.move(["hero"], destination)
+	expect(not blocked.ok and "绕行" in blocked.message and JSON.stringify(r.data) == before_lake,
+		"Attempting to enter lake water spends no AP and does not reveal tiles")
+	r.data.tiles[destination].terrain = original_terrain
 	var before_ap = int(r.actor("hero").ap)
 	var before_energy = int(r.actor("hero").energy)
 	var cost = r.move_cost("hero", destination)
 	expect(r.move(["hero"], destination).ok, "Valid move")
+	expect(r.has_visited(destination), "Successful movement records the destination as visited")
 	expect(r.actor("hero").ap == before_ap - cost, "Individual movement charge")
 	expect(r.actor("hero").energy == before_energy, "Exploration never charges ultimate")
 	var explored = r.data.explored.size()

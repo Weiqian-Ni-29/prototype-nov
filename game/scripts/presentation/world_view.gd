@@ -5,6 +5,15 @@ const Terrain = preload("res://scripts/presentation/terrain.gd")
 const Doll = preload("res://scripts/presentation/doll.gd")
 const FontAsset = preload("res://assets/fonts/NotoSansSC.ttf")
 const Catalog = preload("res://scripts/domain/catalog.gd")
+const Board = preload("res://scripts/presentation/board_surface.gd")
+const OCCLUSION = preload("res://scripts/presentation/board_occlusion.gdshader")
+const MAP_PLANE = Plane(Vector3.UP, 0.05)
+const DRAG_THRESHOLD = 8.0
+const DEFAULT_MAP_ZOOM = 5.5
+const MIN_MAP_ZOOM = 3.8
+const MAX_MAP_ZOOM = 38.0
+const MAP_ZOOM_STEP = 1.14
+const OCCLUSION_ZOOM = 9.0
 signal cell_clicked(id: String)
 var camera: Camera3D
 var light: DirectionalLight3D
@@ -17,7 +26,12 @@ var battle_dolls: Dictionary = {}
 var tile_signatures: Dictionary = {}
 var current_tiles: Dictionary = {}
 var focus_point = Vector3.ZERO
-var zoom_size = 15.0
+var map_min = Vector3.ZERO
+var map_max = Vector3.ZERO
+var zoom_size = DEFAULT_MAP_ZOOM
+var map_pointer_down = false
+var map_dragging = false
+var map_pointer_position = Vector2.ZERO
 var battle_mode = false
 var selection_ring: MeshInstance3D
 var clock = 0.0
@@ -32,6 +46,16 @@ var ocean: Node3D
 var environment: Environment
 var camera_impulse = 0.0
 var map_batch: Node3D
+var canopy_batch: Node3D
+var canopy_individual = false
+var board_surface = Board.new()
+var board_mesh: MeshInstance3D
+var board_fog: MeshInstance3D
+var board_stamp: Dictionary
+var outline_cell = ""
+var map_occluders: Array[MeshInstance3D] = []
+var fading_occluders: Dictionary
+var map_actor = ""
 signal presentation_changed
 signal sound_cue(kind: String)
 
@@ -65,7 +89,13 @@ func _ready() -> void:
 	add_child(battle_root)
 	ocean = preload("res://scripts/presentation/ocean.gd").new()
 	add_child(ocean)
-	selection_ring = Doll._cylinder(self, 1.025, 1.025, 0.035, Color("e3c88b"), Vector3.ZERO, 6)
+	selection_ring = MeshInstance3D.new()
+	var outline_material = Doll.material(Color("f0d9a0"))
+	outline_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	outline_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	selection_ring.material_override = outline_material
+	selection_ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(selection_ring)
 	rain = CPUParticles3D.new()
 	rain.amount = 120
 	rain.lifetime = 1.4
@@ -92,6 +122,8 @@ func _ready() -> void:
 	_update_camera()
 
 func reset() -> void:
+	_cancel_map_pointer()
+	zoom_size = DEFAULT_MAP_ZOOM
 	presenter.cancel()
 	effects.clear()
 	display_results.clear()
@@ -103,6 +135,13 @@ func reset() -> void:
 			child.free()
 	tile_nodes.clear()
 	map_batch = null
+	canopy_batch = null
+	board_mesh = null
+	board_fog = null
+	board_stamp.clear()
+	outline_cell = ""
+	map_occluders.clear()
+	fading_occluders.clear()
 	tile_signatures.clear()
 	dolls.clear()
 	battle_dolls.clear()
@@ -116,34 +155,72 @@ func reset() -> void:
 
 func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> void:
 	current_tiles = run.data.tiles
+	map_actor = selected_id
+	if tile_nodes.is_empty() and not current_tiles.is_empty():
+		board_surface.prepare(current_tiles, int(run.data.seed))
+		map_min = Hex.world(current_tiles.keys()[0])
+		map_max = map_min
+		for id in current_tiles:
+			var point = Hex.world(id)
+			map_min = map_min.min(point)
+			map_max = map_max.max(point)
 	if ocean.sea_cells.is_empty(): ocean.build(current_tiles)
 	ocean.visible = not battle_mode
 	if not battle_mode: environment.background_color = Color("23577b")
 	map_root.visible = not battle_mode
 	actor_root.visible = not battle_mode
 	selection_ring.visible = not battle_mode
+	var visible_layout: Dictionary = {}
+	for id in run.data.explored:
+		visible_layout[id] = [current_tiles[id].terrain, current_tiles[id].height]
+	var relief_changed = visible_layout != board_stamp
+	if relief_changed:
+		board_stamp = visible_layout
+		if not is_instance_valid(board_mesh):
+			board_mesh = MeshInstance3D.new()
+			var ground = ShaderMaterial.new()
+			ground.shader = Board.GROUND
+			board_mesh.material_override = ground
+			board_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			map_root.add_child(board_mesh)
+			board_fog = MeshInstance3D.new()
+			var clouds = ShaderMaterial.new()
+			clouds.shader = Board.FOG
+			board_fog.material_override = clouds
+			board_fog.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			map_root.add_child(board_fog)
+		board_mesh.mesh = board_surface.rebuild(run.data.explored)
+		board_fog.mesh = board_surface.fog_mesh
 	var terrain_changed = false
-	for id in current_tiles:
-		var revealed = run.data.explored.has(id)
-		var t = current_tiles[id].duplicate(true)
-		t.current_day = run.data.day
-		var signature = JSON.stringify(t) if revealed else "fog"
+	for id in run.data.explored:
+		var t: Dictionary = current_tiles[id]
+		var visited: bool = run.has_visited(id)
+		var borders: Array = []
+		for next in Hex.neighbors(id, current_tiles):
+			borders.append(visible_layout.get(next, []))
+		var signature = JSON.stringify([t, borders, t.wet_until > run.data.day, visited])
 		if tile_signatures.get(id, "") != signature:
 			terrain_changed = true
 			if tile_nodes.has(id):
 				tile_nodes[id].free()
-			var node = Terrain.tile(map_root, t, revealed, hash(str(run.data.seed) + id))
+			var visual_seed = hash(str(run.data.seed) + id)
+			var node = Node3D.new()
+			map_root.add_child(node)
 			node.position = Hex.world(id)
-			if revealed:
-				if t.site != "":
-					_label(node, _site_name(t.site), Vector3(0, 1.35, 0), Color("eee0b8"))
-				if not t.enemies.is_empty():
-					_label(node, "⚔" if t.discovered_enemy else "…", Vector3(0, 0.8, 0.25), Color("e8aa86") if t.discovered_enemy else Color("b8b59e"))
+			var detail = t.duplicate()
+			detail.current_day = run.data.day
+			if not visited:
+				detail.site = ""
+			Terrain.board_details(node, detail, id, visual_seed, board_surface)
+			if detail.site != "":
+				var height = board_surface.height_at(node.position)
+				_label(node, _site_name(detail.site), Vector3(0, height + 1.03, 0), Color("eee0b8"), 0.0041)
 			tile_nodes[id] = node
 			tile_signatures[id] = signature
 	if terrain_changed: _batch_map_geometry()
 	var counts = {}
 	var visible_counts = {}
+	var visible_actor_ids: Array = []
 	var actor_ids = run.data.actors.keys()
 	actor_ids.sort_custom(func(a,b):
 		if a==b: return false
@@ -152,19 +229,20 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 		return str(a)<str(b))
 	for id in actor_ids:
 		var a = run.actor(id)
-		if a.joined or (run.data.explored.has(a.position) and current_tiles[a.position].npc==id):
-			visible_counts[a.position] = int(visible_counts.get(a.position,0))+1
-	for id in actor_ids:
-		var a = run.actor(id)
-		var visible_actor = a.joined or (run.data.explored.has(a.position) and current_tiles[a.position].npc == id)
-		if not visible_actor:
+		var show_npc = run.has_visited(a.position) and current_tiles[a.position].npc == id
+		if not a.joined and not show_npc:
 			if dolls.has(id):
 				dolls[id].visible = false
 			continue
+		visible_actor_ids.append(id)
+		visible_counts[a.position] = int(visible_counts.get(a.position, 0)) + 1
+	for id in visible_actor_ids:
+		var a = run.actor(id)
 		if not dolls.has(id):
 			var doll = Doll.new()
 			actor_root.add_child(doll)
 			doll.configure(a)
+			doll.map_height_source = board_surface
 			dolls[id] = doll
 		var model = dolls[id]
 		model.visible = true
@@ -173,8 +251,8 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 		var count = int(counts.get(a.position, 0))
 		counts[a.position] = count + 1
 		var total = int(visible_counts[a.position])
-		model.scale = Vector3.ONE*(0.32 if total>4 else 0.4 if total>1 else 0.45)
-		var offset = Vector3(0,current_tiles[a.position].height+0.1,0)
+		model.scale = Vector3.ONE * (0.19 if total > 4 else 0.22 if total > 1 else 0.24)
+		var offset = Vector3.ZERO
 		if total>1:
 			var ring_count = total-1 if total==7 else total
 			var index = count-1 if total==7 else count
@@ -182,14 +260,15 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 				var angle = TAU*float(index)/ring_count
 				offset += Vector3(cos(angle),0,sin(angle))*(0.52 if total>3 else 0.34)
 		var point = Hex.world(a.position) + offset
+		point.y = board_surface.height_at(point) + 0.025
 		if model.has_meta("cell") and model.get_meta("cell") != a.position:
 			model.move_to(point)
 		elif not model.is_moving():
 			model.position = point
 		model.set_meta("cell", a.position)
-	if selected_cell != "" and current_tiles.has(selected_cell):
-		var height = current_tiles[selected_cell].height if run.data.explored.has(selected_cell) else 0.0
-		selection_ring.position = Hex.world(selected_cell) + Vector3(0, height + 0.025, 0)
+	if relief_changed or outline_cell != selected_cell:
+		outline_cell = selected_cell
+		selection_ring.mesh = board_surface.outline(selected_cell, run.data.explored.has(selected_cell)) if current_tiles.has(selected_cell) else null
 	light.light_color = Color("d0dce0") if run.data.weather == "rain" else Color("ffe5b2")
 	light.light_energy = 0.48 if run.data.weather == "rain" else 0.68
 	rain.emitting = run.data.weather == "rain"
@@ -199,29 +278,59 @@ func _batch_map_geometry() -> void:
 	if is_instance_valid(map_batch): map_batch.free()
 	map_batch = Node3D.new()
 	map_root.add_child(map_batch)
+	canopy_batch = Node3D.new()
+	map_batch.add_child(canopy_batch)
 	var groups = {}
+	map_occluders.clear()
+	for instance in fading_occluders.keys():
+		if is_instance_valid(instance):
+			_restore_occluder(instance, fading_occluders[instance])
+	fading_occluders.clear()
 	for tile in tile_nodes.values():
 		for instance in tile.find_children("*","MeshInstance3D",true,false):
 			if instance.skin!=null: continue
+			var occluder = instance.has_meta("board_occluder")
+			if occluder:
+				map_occluders.append(instance)
 			for surface in range(instance.mesh.get_surface_count()):
 				var material = instance.get_active_material(surface)
 				var key = str(material.get_instance_id())
 				if material is StandardMaterial3D:
 					key = "%s:%s:%s:%s:%s" % [material.albedo_color.to_html(),material.shading_mode,material.metallic,material.roughness,material.albedo_texture.resource_path if material.albedo_texture else ""]
+				if occluder:
+					key += ":occluder"
 				if not groups.has(key):
 					var tool = SurfaceTool.new()
 					tool.begin(Mesh.PRIMITIVE_TRIANGLES)
-					groups[key] = {"tool":tool,"material":material}
+					groups[key] = {"tool":tool,"material":material,"occluder":occluder}
 				groups[key].tool.append_from(instance.mesh,surface,map_root.global_transform.affine_inverse()*instance.global_transform)
 			instance.visible = false
 	for group in groups.values():
 		var instance = MeshInstance3D.new()
 		instance.mesh = group.tool.commit()
 		instance.material_override = group.material
-		map_batch.add_child(instance)
+		var parent = canopy_batch if group.occluder else map_batch
+		parent.add_child(instance)
+	_sync_canopy_lod(true)
+
+func _sync_canopy_lod(force: bool = false) -> void:
+	if not is_instance_valid(canopy_batch):
+		return
+	var close_view = zoom_size <= OCCLUSION_ZOOM
+	if not force and close_view == canopy_individual:
+		return
+	canopy_individual = close_view
+	canopy_batch.visible = not close_view
+	for instance in map_occluders:
+		instance.visible = close_view
 
 func focus_cell(id: String) -> void:
+	_cancel_map_pointer()
 	focus_point = Hex.world(id)
+	_update_camera()
+
+func _pan_map(offset: Vector3) -> void:
+	focus_point = (focus_point + offset).clamp(map_min, map_max)
 	_update_camera()
 
 func _update_camera() -> void:
@@ -237,25 +346,77 @@ func _update_camera() -> void:
 		camera.look_at(focus_point)
 		camera.size = zoom_size
 		camera.h_offset = 0.3
+		_sync_canopy_lod()
+
+func set_map_input_enabled(enabled: bool) -> void:
+	set_process_unhandled_input(enabled)
+	if not enabled:
+		_cancel_map_pointer()
+
+func _cancel_map_pointer() -> void:
+	map_pointer_down = false
+	map_dragging = false
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		_cancel_map_pointer()
+
+func _map_point(screen_position: Vector2) -> Variant:
+	return MAP_PLANE.intersects_ray(camera.project_ray_origin(screen_position), camera.project_ray_normal(screen_position))
+
+func _zoom_map(screen_position: Vector2, factor: float) -> void:
+	var next_zoom = clampf(zoom_size * factor, MIN_MAP_ZOOM, MAX_MAP_ZOOM)
+	if is_equal_approx(zoom_size, next_zoom):
+		return
+	var before = _map_point(screen_position)
+	zoom_size = next_zoom
+	_update_camera()
+	var after = _map_point(screen_position)
+	if before != null and after != null:
+		_pan_map(before - after)
+
+func _drag_map_to(screen_position: Vector2) -> void:
+	if not map_dragging and map_pointer_position.distance_to(screen_position) < DRAG_THRESHOLD:
+		return
+	map_dragging = true
+	var from = _map_point(map_pointer_position)
+	var to = _map_point(screen_position)
+	if from != null and to != null:
+		_pan_map(from - to)
+	map_pointer_position = screen_position
+
+func _input(event: InputEvent) -> void:
+	# Capture a gesture started on the board, even when it ends over the HUD.
+	if not map_pointer_down:
+		return
+	if event is InputEventMouseMotion:
+		_drag_map_to(event.position)
+		if map_dragging:
+			get_viewport().set_input_as_handled()
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+		_drag_map_to(event.position)
+		var click = not map_dragging
+		_cancel_map_pointer()
+		get_viewport().set_input_as_handled()
+		if click:
+			var id = board_surface.pick(camera.project_ray_origin(map_pointer_position), camera.project_ray_normal(map_pointer_position))
+			if id != "":
+				cell_clicked.emit(id)
 
 func _unhandled_input(event: InputEvent) -> void:
-	if battle_mode:
+	if battle_mode or not (event is InputEventMouseButton and event.pressed):
 		return
-	if event is InputEventMouseButton and event.pressed:
-		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			zoom_size = maxf(8, zoom_size - 1.2)
-			_update_camera()
-		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			zoom_size = minf(30, zoom_size + 1.2)
-			_update_camera()
-		elif event.button_index == MOUSE_BUTTON_LEFT:
-			var origin = camera.project_ray_origin(event.position)
-			var normal = camera.project_ray_normal(event.position)
-			var hit = Plane(Vector3.UP, 0.05).intersects_ray(origin, normal)
-			if hit != null:
-				var id = Hex.closest(hit, current_tiles)
-				if id != "":
-					cell_clicked.emit(id)
+	match event.button_index:
+		MOUSE_BUTTON_LEFT:
+			map_pointer_down = true
+			map_pointer_position = event.position
+		MOUSE_BUTTON_WHEEL_UP:
+			_zoom_map(event.position, 1.0 / MAP_ZOOM_STEP)
+		MOUSE_BUTTON_WHEEL_DOWN:
+			_zoom_map(event.position, MAP_ZOOM_STEP)
+		_:
+			return
+	get_viewport().set_input_as_handled()
 
 func _process(delta: float) -> void:
 	clock += delta
@@ -267,7 +428,7 @@ func _process(delta: float) -> void:
 		rain.position = (Vector3.ZERO if battle_mode else focus_point) + Vector3(0, 10, 0)
 	for flame in get_tree().get_nodes_in_group("world_flames"):
 		flame.scale.y = 0.9 + sin(clock * 5.0 + flame.get_instance_id() % 11) * 0.16
-	if not battle_mode:
+	if not battle_mode and is_processing_unhandled_input() and not map_pointer_down:
 		var motion = Vector3.ZERO
 		if Input.is_physical_key_pressed(KEY_A):
 			motion.x -= 1
@@ -278,10 +439,63 @@ func _process(delta: float) -> void:
 		if Input.is_physical_key_pressed(KEY_S):
 			motion.z += 1
 		if motion != Vector3.ZERO:
-			focus_point += motion * delta * 8.0
-			_update_camera()
+			_pan_map(motion * delta * 8.0)
+	if not battle_mode:
+		_update_occlusion(delta)
+
+func _update_occlusion(delta: float) -> void:
+	var model = dolls.get(map_actor)
+	var blocked: Dictionary = {}
+	var target = Vector3.ZERO
+	var sight = -camera.global_basis.z
+	if zoom_size <= OCCLUSION_ZOOM and is_instance_valid(model) and model.visible:
+		var feet: Vector3 = model.global_position
+		target = feet + Vector3.UP * 0.20
+		var head = feet + Vector3.UP * 0.38
+		for instance in map_occluders:
+			if instance.global_position.distance_squared_to(feet) > 9.0:
+				continue
+			var bounds: AABB = (instance.global_transform * instance.get_aabb()).grow(0.025)
+			if bounds.intersects_segment(target - sight * 3.0, target) != null or bounds.intersects_segment(head - sight * 3.0, head) != null:
+				blocked[instance] = true
+				if not fading_occluders.has(instance):
+					_begin_occlusion(instance)
+	for instance in fading_occluders.keys():
+		var effect: Dictionary = fading_occluders[instance]
+		var obscures = blocked.has(instance)
+		effect.amount = move_toward(effect.amount, 1.0 if obscures else 0.0, delta * 8.0)
+		if obscures:
+			effect.target = target
+		for material in effect.materials:
+			material.set_shader_parameter("fade", effect.amount)
+			material.set_shader_parameter("target", effect.target)
+			material.set_shader_parameter("sight", sight)
+		if effect.amount == 0.0 and not obscures:
+			_restore_occluder(instance, effect)
+			fading_occluders.erase(instance)
+
+func _restore_occluder(instance: MeshInstance3D, effect: Dictionary) -> void:
+	for surface in range(effect.originals.size()):
+		instance.set_surface_override_material(surface, effect.originals[surface])
+
+func _begin_occlusion(instance: MeshInstance3D) -> void:
+	var effect = {"originals": [], "materials": [], "amount": 0.0, "target": Vector3.ZERO}
+	for surface in range(instance.mesh.get_surface_count()):
+		effect.originals.append(instance.get_surface_override_material(surface))
+		var original = instance.get_active_material(surface)
+		var material = ShaderMaterial.new()
+		material.shader = OCCLUSION
+		if original is ShaderMaterial:
+			material.set_shader_parameter("textured", true)
+			material.set_shader_parameter("atlas", original.get_shader_parameter("atlas"))
+		elif original is StandardMaterial3D:
+			material.set_shader_parameter("tint", original.albedo_color)
+		effect.materials.append(material)
+		instance.set_surface_override_material(surface, material)
+	fading_occluders[instance] = effect
 
 func begin_battle(run: RefCounted, combat: RefCounted) -> void:
+	_cancel_map_pointer()
 	presenter.cancel()
 	effects.clear()
 	display_results.clear()
@@ -314,12 +528,12 @@ func _draw_battle_stage(definition: Dictionary, day: int, position: String) -> v
 	tile.site = ""
 	tile.quantity = 0
 	tile.ground_only = true
-	var stage = Terrain.tile(battle_stage, tile, true, hash(position))
+	var stage = Terrain.tile(battle_stage, tile, hash(position))
 	stage.scale = Vector3(6.5, 1.0, 4.5)
 	tile.ground_only = false
 	# Backdrop is assembled from the actual biome; props never reveal neighboring cells.
 	for i in range(5):
-		var backdrop = Terrain.tile(battle_stage, tile, true, i + 31)
+		var backdrop = Terrain.tile(battle_stage, tile, i + 31)
 		backdrop.position = Vector3(-5 + i * 2.4, -0.2, -4.0)
 		backdrop.scale = Vector3(1.4, 1.7, 1.4)
 	if tile.burning:
@@ -435,7 +649,7 @@ func _battle_signature(tile: Dictionary) -> String:
 static func _site_name(site: String) -> String:
 	return {"start": "断桥废棚", "exit": "归航站", "inn": "白栎旧驿站", "home": "林边人家", "record": "旧调度柜", "sign": "山路旧牌", "forest": "林缘捕网", "herb": "药箱树荫", "track": "旧兽径营地", "clear": "清障营地", "water": "水文台"}.get(site, "路途")
 
-static func _label(parent: Node3D, text: String, point: Vector3, color: Color) -> void:
+static func _label(parent: Node3D, text: String, point: Vector3, color: Color, pixel_size: float = 0.006) -> void:
 	var label = Label3D.new()
 	label.text = text
 	var font = FontVariation.new()
@@ -443,7 +657,7 @@ static func _label(parent: Node3D, text: String, point: Vector3, color: Color) -
 	font.variation_opentype = {TextServerManager.get_primary_interface().name_to_tag("wght"): 600.0}
 	label.font = font
 	label.font_size = 40
-	label.pixel_size = 0.006
+	label.pixel_size = pixel_size
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.modulate = color
 	label.outline_size = 7

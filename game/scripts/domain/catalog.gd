@@ -16,6 +16,7 @@ const TERRAIN = {
 	"desert": {"name": "沙漠", "cost": 1, "color": "cfb578"},
 	"swamp": {"name": "沼泽", "cost": 2, "color": "657c72"},
 	"scorched": {"name": "焦土", "cost": 1, "color": "605951"},
+	"lake": {"name": "湖泊", "cost": 0, "color": "397d84"},
 }
 const PROFESSIONS = {
 	"wayfarer": {"name": "巡路客", "description": "善于探索和支援，行动频繁。", "hp": 95, "mp": 48, "ap": 9, "attack": 18, "defense": 5, "speed": 122, "skill": "trail_shot", "ultimate": "rally", "color": "caa76d"},

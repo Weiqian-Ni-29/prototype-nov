@@ -1,5 +1,10 @@
 # Portrait generation record
 
+## Title and profession selection additions, 2026-11-05
+
+- `waystation-ensemble.png` shows the wayfarer, all six traveling companions, and three supporting characters together at the White Oak waystation. The single blue-hour landscape leaves quiet space on the left for the menu.
+- `hero-guardian.png` and `hero-arcanist.png` use the original `hero.png` as the identity and style reference. The guardian wears a steel shoulder guard and carries a shield with a lantern emblem. The arcanist wears plum expedition robes and carries an amber-tipped staff.
+
 Generated 2026-11-04 with the built-in image_gen tool. Original character illustrations; final PNG files live in `portraits/` and are consumed by the native game UI. The prompt set below records the actual requested art direction. No external franchise images were used.
 
 ## hero

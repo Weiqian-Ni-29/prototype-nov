@@ -18,6 +18,9 @@ var pending: Dictionary = {}
 var events: Array = []
 var event_serial = 0
 
+static func can_deploy(actor: Dictionary, encounter: Dictionary) -> bool:
+	return actor.ap >= Catalog.BATTLE_AP or encounter.get("ambush", false) or encounter.get("surprise", false)
+
 func begin(expedition: RefCounted, encounter: Dictionary, formation: Array) -> Dictionary:
 	if expedition.data.status != "exploring" or formation.is_empty() or formation.size() > 4:
 		return {"ok": false, "message": "请选择一至四名同格角色。"}
@@ -27,7 +30,7 @@ func begin(expedition: RefCounted, encounter: Dictionary, formation: Array) -> D
 		var a = expedition.actor(id)
 		if unique.has(id) or a.is_empty() or not a.joined or a.position != position or a.hp <= 0:
 			return {"ok": false, "message": "出战角色须健康、同地且不重复。"}
-		if not encounter.get("ambush", false) and a.ap < Catalog.BATTLE_AP:
+		if not can_deploy(a, encounter):
 			return {"ok": false, "message": "%s 参战行动点不足。" % a.name}
 		unique[id] = true
 	run = expedition
@@ -102,7 +105,7 @@ func alive_enemies() -> Array[String]:
 func reserves() -> Array[String]:
 	var result: Array[String] = []
 	for id in run.same_cell(position, true):
-		if id not in active and (paid.has(id) or run.actor(id).ap >= Catalog.BATTLE_AP or pending.get("ambush", false)):
+		if id not in active and (paid.has(id) or can_deploy(run.actor(id), pending)):
 			result.append(id)
 	return result
 

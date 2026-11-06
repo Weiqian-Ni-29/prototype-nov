@@ -1,10 +1,11 @@
 shader_type spatial;
+#include "res://scripts/presentation/nature_pigment.gdshaderinc"
 uniform sampler2D atlas : source_color, filter_linear_mipmap, repeat_disable;
+varying vec3 world_point;
+void vertex() {
+    world_point = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+}
 void fragment() {
-    vec3 c = texture(atlas, UV).rgb;
-    float grey = dot(c,vec3(0.2126,0.7152,0.0722));
-    c = mix(vec3(grey),c,0.65);
-    if (c.g>c.r*1.12 && c.g>c.b*1.25) c *= vec3(0.65,0.76,0.87);
-    ALBEDO = c;
+    ALBEDO = painted_nature(texture(atlas, UV).rgb, world_point);
     ROUGHNESS = 0.9;
 }

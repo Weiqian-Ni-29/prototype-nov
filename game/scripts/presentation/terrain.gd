@@ -2,6 +2,7 @@ class_name TerrainArt
 extends RefCounted
 const Doll = preload("res://scripts/presentation/doll.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")
+const Hex = preload("res://scripts/domain/hex_map.gd")
 static var ground_materials: Dictionary = {}
 
 static var nature_scenes: Dictionary = {}
@@ -9,12 +10,12 @@ static var nature_bounds: Dictionary = {}
 static var land_meshes: Dictionary = {}
 static var nature_materials: Dictionary = {}
 
-static func tile(parent: Node3D, definition: Dictionary, revealed: bool, visual_seed: int) -> Node3D:
+static func tile(parent: Node3D, definition: Dictionary, visual_seed: int) -> Node3D:
 	var root = Node3D.new()
 	parent.add_child(root)
 	var terrain = str(definition.terrain)
-	var color = Color(str(Catalog.TERRAIN[terrain].color)) if revealed else Color("536c79")
-	var height = float(definition.get("height", 0.0)) if revealed else 0.0
+	var color = Color(str(Catalog.TERRAIN[terrain].color))
+	var height = float(definition.get("height", 0.0))
 	# Chamfered tabletop edges and exposed soil give each cell a crafted, physical thickness.
 	var base = Doll._cylinder(root,0.973,0.978,0.25+height,color.darkened(0.32),Vector3(0,-0.125+height*0.5,0),6)
 	var rim = Doll._cylinder(root,0.975,0.975,0.035,color.darkened(0.17),Vector3(0,-0.025+height,0),6)
@@ -22,11 +23,6 @@ static func tile(parent: Node3D, definition: Dictionary, revealed: bool, visual_
 	root.add_child(top)
 	top.mesh = _land_mesh(visual_seed%7)
 	top.position.y = height
-	if not revealed:
-		var fog_material = Doll.material(color)
-		fog_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		top.material_override = fog_material
-		return root
 	top.material_override = _ground_material(terrain)
 	if definition.get("ground_only", false): return root
 	var props = Node3D.new()
@@ -68,17 +64,130 @@ static func tile(parent: Node3D, definition: Dictionary, revealed: bool, visual_
 			_prop(props,"Tree_Bare_1_A",Vector3(-0.34,0,-0.28),0.78,turn)
 			_prop(props,"Rock_1_A",Vector3(0.4,0,-0.28),0.31,turn)
 			for i in range(3): Doll._cylinder(props,0.035,0.065,0.24,Color("4b4c42"),Vector3(-0.4+i*0.31,0.12,0.25),7)
+	_tile_features(props, definition)
+	return root
+
+static func board_details(root: Node3D, tile: Dictionary, id: String, visual_seed: int, surface: RefCounted) -> void:
+	var rng = RandomNumberGenerator.new()
+	rng.seed = visual_seed
+	var terrain: String = tile.terrain
+	var center = Hex.world(id)
+	var neighbors = Hex.neighbors(id, surface.tiles)
+	var same: Array[String] = []
+	for next in neighbors:
+		if surface.profiles.get(next, [""])[0] == terrain:
+			same.append(next)
+	match terrain:
+		"plains":
+			for i in range(9):
+				var point = _board_position(rng, i, 9, 0.35, 0.77)
+				var name = ["Grass_1_A", "Grass_2_B", "Bush_1_B", "Rock_1_F"][i % 4]
+				_board_prop(root, surface, center, name, point, rng.randf_range(0.13, 0.32), rng.randf() * TAU)
+			for next in neighbors:
+				if surface.profiles.get(next, [""])[0] == "forest":
+					var offset = (Hex.world(next) - center) * 0.36
+					_board_prop(root, surface, center, "Tree_1_C", offset, rng.randf_range(0.37, 0.58), rng.randf() * TAU)
+		"forest":
+			var count = 5 + mini(3, same.size())
+			for i in range(count):
+				var point = _board_position(rng, i, count, 0.38, 0.75)
+				var name = ["Tree_1_A", "Tree_2_B", "Tree_3_A", "Tree_1_C"][rng.randi_range(0, 3)]
+				var size = rng.randf_range(0.55, 0.98)
+				_board_prop(root, surface, center, name, point, size, rng.randf() * TAU)
+			for i in range(4):
+				_board_prop(root, surface, center, "Bush_2_C", _board_position(rng, i, 4, 0.38, 0.71), rng.randf_range(0.18, 0.32), rng.randf() * TAU)
+		"mountain":
+			for i in range(6):
+				var point = _board_position(rng, i, 6, 0.38, 0.70)
+				_board_prop(root, surface, center, ["Rock_2_C", "Rock_3_B", "Rock_1_A"][i % 3], point, rng.randf_range(0.16, 0.43), rng.randf() * TAU)
+		"ruins":
+			for next in same:
+				var edge = (Hex.world(next) - center) * 0.5
+				var edge_id = id + "/" + next if id < next else next + "/" + id
+				if absf(edge.z) < 0.01 or hash(edge_id) % 4 == 0:
+					_board_paving(root, surface, center, edge)
+			var foundation = Node3D.new()
+			root.add_child(foundation)
+			var point = Vector3(rng.randf_range(-0.23, 0.23), 0.0, rng.randf_range(-0.38, -0.19))
+			foundation.position = Vector3(point.x, surface.height_at(center + point), point.z)
+			foundation.rotation.y = TAU / 6.0 * rng.randi_range(0, 2)
+			foundation.scale = Vector3.ONE * rng.randf_range(0.67, 0.94)
+			_ruins(foundation, rng)
+			_register_occluders(foundation)
+		"desert":
+			for i in range(5):
+				var point = _board_position(rng, i, 5, 0.40, 0.72)
+				var name = "Rock_1_F" if i % 2 == 0 else "Grass_2_B"
+				_board_prop(root, surface, center, name, point, rng.randf_range(0.13, 0.30), rng.randf() * TAU)
+		"swamp", "lake":
+			for i in range(10):
+				var point = _board_position(rng, i, 10, 0.45, 0.85)
+				var sample = surface.sample(center + point)
+				if sample[3].y > 0.23:
+					continue
+				var reeds = Node3D.new()
+				root.add_child(reeds)
+				reeds.position = Vector3(point.x, sample[0].y, point.z)
+				reeds.rotation.y = rng.randf() * TAU
+				reeds.scale = Vector3.ONE * rng.randf_range(0.48, 0.75)
+				_reeds(reeds, rng)
+			if terrain == "swamp" and rng.randf() < 0.58:
+				_board_prop(root, surface, center, "Tree_Bare_1_A", _board_position(rng, 0, 1, 0.4, 0.7), rng.randf_range(0.53, 0.83), rng.randf() * TAU)
+		"scorched":
+			for i in range(5):
+				var point = _board_position(rng, i, 5, 0.36, 0.73)
+				var name = "Tree_Bare_1_A" if i % 2 == 0 else "Rock_1_F"
+				_board_prop(root, surface, center, name, point, rng.randf_range(0.27, 0.73), rng.randf() * TAU)
+	var props = Node3D.new()
+	root.add_child(props)
+	props.position.y = surface.height_at(center)
+	_tile_features(props, tile)
+	_register_occluders(props)
+
+static func _board_position(rng: RandomNumberGenerator, index: int, count: int, low: float, high: float) -> Vector3:
+	var angle = TAU * (float(index) + rng.randf_range(-0.28, 0.28)) / count
+	return Vector3(cos(angle), 0.0, sin(angle)) * rng.randf_range(low, high)
+
+static func _board_prop(root: Node3D, surface: RefCounted, center: Vector3, name: String,
+		point: Vector3, size: float, turn: float) -> void:
+	var sample = surface.sample(center + point)
+	if sample[3].y > 0.045:
+		return
+	point.y = surface.height_at(center + point) - 0.035
+	var prop = _prop(root, name, point, size, turn)
+	if size >= 0.42:
+		_register_occluders(prop)
+
+static func _register_occluders(root: Node3D) -> void:
+	for mesh in root.find_children("*", "MeshInstance3D", true, false):
+		if (mesh.transform * mesh.get_aabb()).size.y > 0.22:
+			mesh.set_meta("board_occluder", true)
+
+static func _board_paving(root: Node3D, surface: RefCounted, center: Vector3, edge: Vector3) -> void:
+	var tool = SurfaceTool.new()
+	tool.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var side = edge.cross(Vector3.UP).normalized() * 0.15
+	for i in range(5):
+		var near = edge * (i / 5.0)
+		var far = edge * ((i + 1) / 5.0)
+		for point in [near - side, far - side, far + side, near - side, far + side, near + side]:
+			point.y = surface.height_at(center + point) + 0.028
+			tool.add_vertex(point)
+	tool.generate_normals()
+	var paving = MeshInstance3D.new()
+	paving.mesh = tool.commit()
+	paving.material_override = Doll.material(Color("aaa690"))
+	paving.material_override.cull_mode = BaseMaterial3D.CULL_DISABLED
+	root.add_child(paving)
+
+static func _tile_features(props: Node3D, definition: Dictionary) -> void:
 	if definition.get("camp", false):
 		var tent = Doll._cone(props,0.34,0.42,Color("d7bd8c"),Vector3(0,0.21,0.15))
 		tent.scale.z = 0.8
 	if definition.get("site", "")!="": landmark(props,str(definition.site))
-	elif definition.get("quantity",0)>0 and definition.get("enemies",[]).is_empty():
-		var crate = Doll._box(props,Vector3(0.24,0.18,0.2),Color("aa8054"),Vector3(0.42,0.12,0.24))
-		for i in [-1,1]: Doll._box(props,Vector3(0.26,0.025,0.215),Color("d6ba7c"),Vector3(0.42,0.12+i*0.055,0.24))
 	if definition.get("burning",false): fire(props)
 	elif definition.get("wet_until",0)>definition.get("current_day",1):
 		_pool(props,Vector3(0,0.012,0.1),Vector3(0.74,1,0.45),Color("739caa"))
-	return root
 
 static func _land_mesh(variant: int) -> ArrayMesh:
 	if land_meshes.has(variant): return land_meshes[variant]
@@ -100,7 +209,7 @@ static func _land_mesh(variant: int) -> ArrayMesh:
 	land_meshes[variant] = mesh
 	return mesh
 
-static func _prop(parent: Node3D, name: String, point: Vector3, size: float, turn: float, stretch: Vector3 = Vector3.ONE) -> void:
+static func _prop(parent: Node3D, name: String, point: Vector3, size: float, turn: float, stretch: Vector3 = Vector3.ONE) -> Node3D:
 	if nature_bounds.is_empty():
 		nature_bounds = JSON.parse_string(FileAccess.get_file_as_string("res://assets/nature/bounds.json"))
 	if not nature_scenes.has(name): nature_scenes[name] = load("res://assets/nature/"+name+"_Color1.gltf")
@@ -115,6 +224,7 @@ static func _prop(parent: Node3D, name: String, point: Vector3, size: float, tur
 	node.scale = stretch*ratio
 	node.rotation.y = turn
 	node.position = point-Vector3.UP*low.y*ratio*stretch.y
+	return node
 
 static func _nature_palette(node: Node) -> void:
 	if node is MeshInstance3D:
@@ -210,8 +320,8 @@ static func landmark(parent: Node3D, site: String) -> void:
 			Doll._cylinder(parent, 0.06, 0.07, 1.15, Color("b4a070"), Vector3(0.4, 0.57, -0.2), 8)
 			Doll._sphere(parent, Vector3(0.12, 0.16, 0.12), Color("f4d995"), Vector3(0.4, 1.16, -0.2))
 	else:
-		Doll._cylinder(parent, 0.035, 0.04, 0.65, Color("7c6951"), Vector3(0.2, 0.32, 0.1), 8)
-		Doll._box(parent, Vector3(0.43, 0.18, 0.07), color, Vector3(0.2, 0.57, 0.1))
+		Doll._cylinder(parent, 0.035, 0.04, 0.65, Color("7c6951"), Vector3(0.5, 0.32, 0.28), 8)
+		Doll._box(parent, Vector3(0.38, 0.18, 0.07), color, Vector3(0.5, 0.57, 0.28))
 
 static func fire(parent: Node3D) -> void:
 	var particles = CPUParticles3D.new()

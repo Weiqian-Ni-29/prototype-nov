@@ -22,11 +22,18 @@ static func neighbors(id: String, tiles: Dictionary) -> Array[String]:
 			result.append(k)
 	return result
 
+static func is_land(tiles: Dictionary, id: String) -> bool:
+	return tiles.has(id) and tiles[id].terrain != "lake"
+
 static func world(id: String) -> Vector3:
 	var p = coord(id)
 	return Vector3(sqrt(3.0) * (p.x + p.y * 0.5), 0, 1.5 * p.y)
 
 static func closest(point: Vector3, tiles: Dictionary) -> String:
+	var id = cell_at(point)
+	return id if tiles.has(id) else ""
+
+static func cell_at(point: Vector3) -> String:
 	var r = point.z / 1.5
 	var q = point.x / sqrt(3.0) - r * 0.5
 	var cx = roundi(q)
@@ -39,11 +46,10 @@ static func closest(point: Vector3, tiles: Dictionary) -> String:
 		cx = -cy - cz
 	elif dz > dy:
 		cz = -cx - cy
-	var k = key(Vector2i(cx, cz))
-	return k if tiles.has(k) else ""
+	return key(Vector2i(cx, cz))
 
 static func path(tiles: Dictionary, start: String, goal: String, avoid_enemies: bool = false) -> Array[String]:
-	if not tiles.has(start) or not tiles.has(goal):
+	if not is_land(tiles, start) or not is_land(tiles, goal):
 		return []
 	var frontier: Array[String] = [start]
 	var costs = {start: 0}
@@ -57,7 +63,7 @@ static func path(tiles: Dictionary, start: String, goal: String, avoid_enemies: 
 		if current == goal:
 			break
 		for next in neighbors(current, tiles):
-			if avoid_enemies and not tiles[next].get("enemies", []).is_empty():
+			if not is_land(tiles, next) or (avoid_enemies and not tiles[next].get("enemies", []).is_empty()):
 				continue
 			var cost = int(costs[current]) + int(Catalog.TERRAIN[tiles[next].terrain].cost)
 			if not costs.has(next) or cost < costs[next]:
@@ -140,6 +146,7 @@ static func generate(seed_value: int) -> Dictionary:
 			tiles[k].terrain = terrain
 			occupied[k] = true
 	# Reserve a completely safe extraction path and safe approaches to every story anchor.
+	_add_lake(tiles, occupied, seed_value, start)
 	var safe = {}
 	for destination in occupied:
 		for k in path(tiles, start, destination):
@@ -147,10 +154,11 @@ static func generate(seed_value: int) -> Dictionary:
 	for k in tiles:
 		var t = tiles[k]
 		t.base_terrain = t.terrain
+		if not is_land(tiles, k):
+			continue
 		if not occupied.has(k) and not safe.has(k) and distance(coord(k), coord(start)) > 2 and rng.randf() < 0.19:
 			t.enemies = _composition(t.terrain, rng)
 			t.hidden = t.terrain in ["forest", "swamp"]
-			t.discovered_enemy = not t.hidden
 		elif not occupied.has(k) and rng.randf() < 0.38:
 			t.resource = "salve" if rng.randf() < 0.55 else "ether"
 			t.quantity = rng.randi_range(1, 2)
@@ -163,7 +171,7 @@ static func generate(seed_value: int) -> Dictionary:
 			forest_encounter = true
 	if not forest_encounter:
 		for k in tiles:
-			if not occupied.has(k) and not safe.has(k) and distance(coord(start), coord(k)) > 3:
+			if is_land(tiles, k) and not occupied.has(k) and not safe.has(k) and distance(coord(start), coord(k)) > 3:
 				tiles[k].terrain = "forest"
 				tiles[k].base_terrain = "forest"
 				tiles[k].enemies = ["boar", "apothecary"]
@@ -171,12 +179,56 @@ static func generate(seed_value: int) -> Dictionary:
 				tiles[k].discovered_enemy = false
 				break
 	for k in tiles:
-		if not occupied.has(k) and not safe.has(k) and tiles[k].enemies.is_empty() and distance(coord(start), coord(k)) > 8:
+		if is_land(tiles, k) and not occupied.has(k) and not safe.has(k) and tiles[k].enemies.is_empty() and distance(coord(start), coord(k)) > 8:
 			tiles[k].enemies = ["lamp_boss", "canal"]
 			tiles[k].hidden = false
-			tiles[k].discovered_enemy = true
 			break
 	return {"tiles": tiles, "start": start, "exit": exit_id, "rng_state": rng.state}
+
+static func _add_lake(tiles: Dictionary, occupied: Dictionary, seed_value: int, start: String) -> void:
+	var rng = RandomNumberGenerator.new()
+	rng.seed = seed_value ^ 0x3a62f
+	var candidates: Dictionary = {}
+	var counts: Dictionary = {}
+	for id in tiles:
+		var terrain: String = tiles[id].terrain
+		counts[terrain] = int(counts.get(terrain, 0)) + 1
+		if not occupied.has(id) and distance(coord(id), Vector2i.ZERO) <= 6 and distance(coord(id), coord(start)) > 2:
+			var basin = {"swamp": 0.8, "plains": 0.45, "mountain": -0.6}.get(terrain, 0.0)
+			candidates[id] = rng.randf() + basin
+	var centers = candidates.keys()
+	centers.sort_custom(func(a, b): return candidates[a] > candidates[b])
+	var target = rng.randi_range(7, 11)
+	for center in centers:
+		var shore: Array[String] = [center]
+		var changed: Dictionary = {}
+		while not shore.is_empty() and changed.size() < target:
+			shore.sort_custom(func(a, b): return candidates[a] > candidates[b])
+			var id: String = shore.pop_front()
+			var terrain: String = tiles[id].terrain
+			if counts[terrain] <= 1:
+				continue
+			changed[id] = terrain
+			counts[terrain] -= 1
+			tiles[id].terrain = "lake"
+			for next in neighbors(id, tiles):
+				if candidates.has(next) and is_land(tiles, next) and next not in shore and distance(coord(next), coord(center)) <= 2:
+					shore.append(next)
+		if changed.size() >= 5 and _connected_land(tiles, start, tiles.size() - changed.size()):
+			return
+		for id in changed:
+			tiles[id].terrain = changed[id]
+			counts[changed[id]] += 1
+
+static func _connected_land(tiles: Dictionary, start: String, expected: int) -> bool:
+	var frontier: Array[String] = [start]
+	var visited = {start: true}
+	while not frontier.is_empty():
+		for next in neighbors(frontier.pop_back(), tiles):
+			if is_land(tiles, next) and not visited.has(next):
+				visited[next] = true
+				frontier.append(next)
+	return visited.size() == expected
 
 static func _pick_free(tiles: Dictionary, occupied: Dictionary, rng: RandomNumberGenerator, minimum: int) -> String:
 	var candidates: Array[String] = []

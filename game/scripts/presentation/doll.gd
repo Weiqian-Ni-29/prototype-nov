@@ -15,6 +15,7 @@ var action = "idle"
 var move_tween: Tween
 var movement_queue: Array[Vector3] = []
 var movement_target = Vector3.INF
+var map_height_source: RefCounted
 
 func configure(character: Dictionary) -> void:
 	definition = character.duplicate(true)
@@ -72,6 +73,8 @@ func _next_movement() -> void:
 	move_tween.tween_callback(func(): rigged.animator.speed_scale=1.0; _next_movement())
 
 func _process(_delta: float) -> void:
+	if map_height_source != null and is_moving():
+		position.y = map_height_source.height_at(position) + 0.025
 	if ring: ring.material_override.albedo_color = Color("ffe2a0") if selected else Color("b99e65")
 
 static func material(color: Color) -> StandardMaterial3D:

@@ -11,6 +11,105 @@ func expect(value: bool,text: String) -> void:
 	if not value:
 		failures += 1
 		printerr("FAIL: ",text)
+
+func pointer_button(button: MouseButton, pressed: bool, point: Vector2) -> void:
+	var event = InputEventMouseButton.new()
+	event.button_index = button
+	event.pressed = pressed
+	event.position = point
+	root.push_input(event, true)
+
+func pointer_motion(point: Vector2) -> void:
+	var event = InputEventMouseMotion.new()
+	event.position = point
+	event.button_mask = MOUSE_BUTTON_MASK_LEFT
+	root.push_input(event, true)
+
+func check_camera_drag(game: Node, start: String, next: String) -> void:
+	var view = game.view
+	var normal_zoom: float = view.zoom_size
+	expect(is_equal_approx(view.camera.size, 5.5), "New expedition starts at the previous closest view")
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("user://map-camera-default.png")
+	var before = JSON.stringify(game.run.data)
+	var point = view.camera.unproject_position(Hex.world(next) + Vector3.UP * 0.05)
+	pointer_button(MOUSE_BUTTON_LEFT, true, point)
+	pointer_motion(point + Vector2(3, 0))
+	expect(game.selected_cell == start and view.focus_point.is_equal_approx(Hex.world(start)), "Short motion waits for a click release")
+	pointer_button(MOUSE_BUTTON_LEFT, false, point + Vector2(3, 0))
+	expect(game.selected_cell == next and view.focus_point.is_equal_approx(Hex.world(start)), "Click still selects its hex without moving the camera")
+	expect(game.move_preview.visible and JSON.stringify(game.run.data) == before, "First mouse click shows the route without paying or moving")
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("user://map-move-preview.png")
+
+	var screen = root.get_visible_rect().size
+	var center = screen * 0.5
+	var over_sidebar = Vector2(45, center.y + 40)
+	var held_world_point: Vector3 = view._map_point(center)
+	pointer_button(MOUSE_BUTTON_LEFT, true, center)
+	pointer_motion(over_sidebar)
+	pointer_button(MOUSE_BUTTON_LEFT, false, over_sidebar)
+	expect(view.camera.unproject_position(held_world_point).distance_to(over_sidebar) < 1.0, "Dragging tracks the cursor on the slanted map, including across the HUD")
+	expect(game.selected_cell == next and not view.map_pointer_down, "Drag release over the HUD keeps selection and ends capture")
+
+	for i in range(14):
+		pointer_button(MOUSE_BUTTON_LEFT, true, center)
+		pointer_motion(Vector2(screen.x * 0.22, center.y))
+		pointer_button(MOUSE_BUTTON_LEFT, false, Vector2(screen.x * 0.22, center.y))
+	expect(is_equal_approx(view.focus_point.x, view.map_max.x), "Repeated drags reach the far coast without losing the island")
+	var eastmost = Hex.closest(Vector3(view.map_max.x, 0.0, 0.0), game.run.data.tiles)
+	point = view.camera.unproject_position(Hex.world(eastmost) + Vector3.UP * 0.05)
+	pointer_button(MOUSE_BUTTON_LEFT, true, point)
+	pointer_button(MOUSE_BUTTON_LEFT, false, point)
+	expect(game.selected_cell == eastmost, "An unexplored hex remains selectable after panning")
+
+	var edge: Vector3 = view.focus_point
+	pointer_button(MOUSE_BUTTON_LEFT, true, center)
+	game._settings_dialog()
+	pointer_motion(over_sidebar)
+	pointer_button(MOUSE_BUTTON_LEFT, false, over_sidebar)
+	expect(view.focus_point.is_equal_approx(edge) and not view.map_pointer_down, "Opening a dialog cancels the map gesture")
+	game._close_modal()
+	for i in range(22):
+		pointer_button(MOUSE_BUTTON_WHEEL_DOWN, true, center)
+	expect(is_equal_approx(view.camera.size, 38.0), "Wheel zoom can reach the island overview")
+	var island_center = view.camera.unproject_position(Vector3.UP * 0.05)
+	pointer_button(MOUSE_BUTTON_LEFT, true, island_center)
+	pointer_motion(center)
+	pointer_button(MOUSE_BUTTON_LEFT, false, center)
+	var map_area = Rect2(Vector2(270, 110), screen - Vector2(620, 250))
+	var all_visible = true
+	for id in game.run.data.tiles:
+		if not map_area.has_point(view.camera.unproject_position(Hex.world(id))):
+			all_visible = false
+			break
+	expect(all_visible, "Panning back at overview zoom fits the island between the HUD panels")
+	expect(JSON.stringify(game.run.data) == before, "Map browsing spends no actions and does not reveal terrain")
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("user://map-camera-overview.png")
+	view.zoom_size = normal_zoom
+	game._select_actor("hero")
+	var detail_pointer = center + Vector2(90, 30)
+	var detail_anchor: Vector3 = view._map_point(detail_pointer)
+	pointer_button(MOUSE_BUTTON_WHEEL_UP, true, detail_pointer)
+	expect(view.camera.unproject_position(detail_anchor).distance_to(detail_pointer) < 1.0, "Zooming keeps the indicated ground point under the cursor")
+	for i in range(12):
+		pointer_button(MOUSE_BUTTON_WHEEL_UP, true, center)
+	expect(is_equal_approx(view.camera.size, 3.8), "Wheel zoom can move closer than the old limit")
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("user://map-camera-detail.png")
+	game._continue_run()
+	expect(is_equal_approx(view.camera.size, normal_zoom), "Continuing an expedition starts at the default view")
+	point = view.camera.unproject_position(Hex.world(next) + Vector3.UP * 0.05)
+	var before_ap = int(game.run.actor("hero").ap)
+	var cost = game.run.move_cost("hero", next)
+	for i in range(2):
+		pointer_button(MOUSE_BUTTON_LEFT, true, point)
+		pointer_button(MOUSE_BUTTON_LEFT, false, point)
+	expect(game.run.actor("hero").position == next and game.run.actor("hero").ap == before_ap - cost
+		and not game.move_preview.visible, "Clicking the same hex twice moves and charges once")
+	game._start_new()
+
 func execute() -> void:
 	var game = Main.instantiate()
 	root.add_child(game)
@@ -21,6 +120,8 @@ func execute() -> void:
 	var run = game.run
 	var start = run.actor("hero").position
 	var next = Hex.neighbors(start,run.data.tiles)[0]
+	await process_frame
+	await check_camera_drag(game, start, next)
 	var doll = game.view.dolls.hero
 	expect(run.move(["hero"],next).ok,"First legal movement")
 	game._refresh()

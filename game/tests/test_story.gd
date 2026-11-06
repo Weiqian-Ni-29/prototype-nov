@@ -203,6 +203,11 @@ func personal_paths() -> void:
 	# Ordinary NPC combat: no automatic opponent 1HP and no invitation while wounded.
 	fresh()
 	visit("ember")
+	var previous_ap = r.actor("hero").ap
+	r.actor("hero").ap = Catalog.BATTLE_AP - 1
+	expect(not s.choose("hero", "ember", "duel").ok and r.data.pending_battle.is_empty(),
+		"An unaffordable duel cannot trap the player in formation")
+	r.actor("hero").ap = previous_ap
 	choose("ember", "duel")
 	b = Combat.new()
 	expect(b.begin(r, r.data.pending_battle, ["hero"]).ok, "Ordinary NPC combat begins")
