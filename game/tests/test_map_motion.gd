@@ -100,14 +100,43 @@ func check_camera_drag(game: Node, start: String, next: String) -> void:
 	root.get_texture().get_image().save_png("user://map-camera-detail.png")
 	game._continue_run()
 	expect(is_equal_approx(view.camera.size, normal_zoom), "Continuing an expedition starts at the default view")
+	expect(view.fog_reveals.get_child_count() == 0, "Loading explored terrain does not animate fog")
 	point = view.camera.unproject_position(Hex.world(next) + Vector3.UP * 0.05)
 	var before_ap = int(game.run.actor("hero").ap)
 	var cost = game.run.move_cost("hero", next)
+	var initial_focus: Vector3 = view.focus_point
+	var far_fog = view.board_fog.get_node("Chunk_2_0")
+	var far_mesh = far_fog.mesh
 	for i in range(2):
 		pointer_button(MOUSE_BUTTON_LEFT, true, point)
 		pointer_button(MOUSE_BUTTON_LEFT, false, point)
 	expect(game.run.actor("hero").position == next and game.run.actor("hero").ap == before_ap - cost
 		and not game.move_preview.visible, "Clicking the same hex twice moves and charges once")
+	expect(view.focus_point.is_equal_approx(initial_focus), "Confirming movement does not jump the camera")
+	expect(far_fog.mesh == far_mesh, "Movement does not rebuild distant fog")
+	expect(view.fog_reveals.get_child_count() == 1, "A move starts one veil over its newly revealed hexes")
+	var veil = view.fog_reveals.get_child(0) if view.fog_reveals.get_child_count() > 0 else null
+	var material: ShaderMaterial = veil.material_override if veil != null else null
+	expect(material != null and is_zero_approx(material.get_shader_parameter("progress")), "The reveal starts fully opaque")
+	var mover = view.dolls.hero
+	var midpoint_seen = false
+	var dissolve_seen = false
+	var destination = Hex.world(next)
+	var deadline = Time.get_ticks_msec() + 3000
+	while (is_instance_valid(view.map_follow_actor) or is_instance_valid(veil)) and Time.get_ticks_msec() < deadline:
+		await process_frame
+		if mover.is_moving() and view.focus_point.distance_to(initial_focus) > 0.15 and view.focus_point.distance_to(destination) > 0.15:
+			midpoint_seen = true
+		if not dissolve_seen and is_instance_valid(veil):
+			var progress: float = material.get_shader_parameter("progress")
+			if progress > 0.3 and progress < 0.85:
+				dissolve_seen = true
+				await RenderingServer.frame_post_draw
+				root.get_texture().get_image().save_png("user://fog-reveal-mid.png")
+	expect(midpoint_seen and view.focus_point.is_equal_approx(destination), "Camera follows the walking doll and settles on arrival")
+	expect(dissolve_seen and not is_instance_valid(veil), "The reveal fades through intermediate opacity and then removes its veil")
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("user://fog-reveal-settled.png")
 	game._start_new()
 
 func execute() -> void:

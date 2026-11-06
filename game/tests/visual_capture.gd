@@ -81,7 +81,22 @@ func inspect_board() -> void:
 		game._start_new()
 		var run = game.run
 		var view = game.view
-		expect(view.board_fog.mesh != null and view.tile_nodes.size() == 7, "Unexplored cells have clouds and no exposed props")
+		expect(view.board_fog.get_child_count() > 0 and view.tile_nodes.size() == 7, "Unexplored cells have clouds and no exposed props")
+		var fringe_is_inward = view.board_fringe.get_child_count() > 0
+		for patch in view.board_fringe.get_children():
+			var arrays: Array = patch.mesh.surface_get_arrays(0)
+			for i in range(0, arrays[Mesh.ARRAY_VERTEX].size(), view.board_surface.template.size()):
+				var vertex: Vector3 = arrays[Mesh.ARRAY_VERTEX][i]
+				var local: Vector2 = arrays[Mesh.ARRAY_TEX_UV][i] * 2.0 - Vector2.ONE
+				var id = Hex.cell_at(vertex - Vector3(local.x, 0.0, local.y))
+				var mask = 0
+				for side in Hex.DIRECTIONS.size():
+					var neighbor = Hex.key(Hex.coord(id) + Hex.DIRECTIONS[side])
+					if run.data.tiles.has(neighbor) and not run.data.explored.has(neighbor):
+						mask |= 1 << side
+				fringe_is_inward = fringe_is_inward and run.data.explored.has(id) and mask != 0 \
+					and roundi(arrays[Mesh.ARRAY_TEX_UV2][i].x) == mask
+		expect(fringe_is_inward, "Soft fog edges lie on revealed hexes and only face unknown map neighbors")
 		var hidden = ""
 		for id in run.data.tiles:
 			if not run.data.explored.has(id):
@@ -124,8 +139,10 @@ func inspect_board() -> void:
 		view.zoom_size = 38.0
 		view.focus_cell("0,0")
 		game._refresh()
-		expect(view.board_fog.mesh == null and view.board_surface.triangles.size() == 217, "All revealed cells render and support surface picking")
+		expect(view.board_fog.get_child_count() == 0 and view.board_fringe.get_child_count() == 0
+			and view.board_surface.triangles.size() == 217, "All revealed cells render and support surface picking")
 		verify_seams(view.board_surface)
+		await create_timer(view.FOG_REVEAL_SECONDS + 0.1).timeout
 		await capture("terrain-island-" + seed_value)
 		game.selected_cell = shore
 		view.zoom_size = 9.2

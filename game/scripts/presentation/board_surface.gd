@@ -4,8 +4,13 @@ const Hex = preload("res://scripts/domain/hex_map.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const GROUND = preload("res://scripts/presentation/board_ground.gdshader")
 const FOG = preload("res://scripts/presentation/exploration_fog.gdshader")
+const FRINGE = preload("res://scripts/presentation/fog_fringe.gdshader")
+const REVEAL = preload("res://scripts/presentation/fog_reveal.gdshader")
+enum SurfaceLayer { GROUND, FOG, FRINGE, REVEAL }
 const WATER_LEVEL = -0.12
 const SUBDIVISIONS = 6
+const CHUNK_SIZE = 3
+const BLEND_RADIUS_SQUARED = 2.19
 const LAND_LEVELS = {
 	"plains": 0.22, "forest": 0.26, "mountain": 0.48, "ruins": 0.29,
 	"desert": 0.29, "swamp": 0.072, "scorched": 0.26,
@@ -18,10 +23,14 @@ var profiles: Dictionary
 var origins: Dictionary
 var adjacent: Dictionary
 var cached_samples: Dictionary
+var sample_cells: Dictionary
+var cached_normals: Dictionary
 var triangles: Dictionary
-var fog_mesh: ArrayMesh
 var template: PackedVector3Array
-var shore_cells: Array[String]
+var template_indices: PackedInt32Array
+var template_edges: PackedByteArray
+var chunks: Dictionary
+var cell_surfaces: Dictionary
 var seed_offset: Vector2
 var noise := FastNoiseLite.new()
 
@@ -31,50 +40,114 @@ func prepare(board: Dictionary, seed_value: int) -> void:
 	noise.frequency = 1.0
 	noise.fractal_octaves = 2
 	seed_offset = Vector2(seed_value & 255, (seed_value >> 8) & 255) * 0.017
-	shore_cells.clear()
+	chunks.clear()
+	cell_surfaces.clear()
+	triangles.clear()
+	cached_samples.clear()
+	sample_cells.clear()
 	origins.clear()
 	adjacent.clear()
-	var coast: Dictionary = {}
+	var surface_cells = tiles.duplicate()
 	for id in tiles:
 		for next in _around(id):
 			if not tiles.has(next):
-				coast[next] = true
-	shore_cells.assign(coast.keys())
+				surface_cells[next] = true
+	for id in surface_cells:
+		var chunk = chunk_for(id)
+		if not chunks.has(chunk):
+			chunks[chunk] = []
+		chunks[chunk].append(id)
 	if not template.is_empty():
 		return
+	var lookup = {}
 	for side in range(6):
 		var a = corner(side) / SUBDIVISIONS
 		var b = corner(side + 1) / SUBDIVISIONS
 		for i in range(SUBDIVISIONS):
 			for j in range(SUBDIVISIONS - i):
 				var point = a * i + b * j
-				template.append_array(PackedVector3Array([point, point + a, point + b]))
+				_add_template_face(lookup, point, point + a, point + b)
 				if i + j < SUBDIVISIONS - 1:
-					template.append_array(PackedVector3Array([point + a, point + a + b, point + b]))
+					_add_template_face(lookup, point + a, point + a + b, point + b)
 
-func rebuild(explored: Dictionary) -> ArrayMesh:
+func _add_template_face(lookup: Dictionary, a: Vector3, b: Vector3, c: Vector3) -> void:
+	for point in [a, b, c]:
+		var key = Vector2i(roundi(point.x * 10000), roundi(point.z * 10000))
+		if not lookup.has(key):
+			lookup[key] = template.size()
+			template.append(point)
+			var radius = maxf(absf(point.x) * 1.1547005, absf(point.z) + absf(point.x) * 0.5773503)
+			template_edges.append(1 if radius > 0.999 else 0)
+		template_indices.append(lookup[key])
+
+static func chunk_for(id: String) -> Vector2i:
+	var coord = Hex.coord(id)
+	return Vector2i(floori(float(coord.x) / CHUNK_SIZE), floori(float(coord.y) / CHUNK_SIZE))
+
+func rebuild(layout: Dictionary, previous: Dictionary) -> Dictionary:
 	profiles.clear()
-	cached_samples.clear()
-	triangles.clear()
-	for id in explored:
-		var terrain: String = tiles[id].terrain
+	cached_normals.clear()
+	for id in layout:
+		var terrain: String = layout[id][0]
 		profiles[id] = LAKE if terrain == "lake" else [terrain,
-			LAND_LEVELS[terrain] + clampf(float(tiles[id].height), 0.0, 0.10), Color(Catalog.TERRAIN[terrain].color)]
-	var tool = SurfaceTool.new()
-	tool.begin(Mesh.PRIMITIVE_TRIANGLES)
-	for id in explored:
-		_add_cell(tool, id, true)
-	for id in shore_cells:
-		_add_cell(tool, id, false)
-	var clouds = SurfaceTool.new()
-	clouds.begin(Mesh.PRIMITIVE_TRIANGLES)
-	for id in tiles:
-		if not explored.has(id):
-			_add_fog(clouds, id)
-	fog_mesh = null if explored.size() == tiles.size() else clouds.commit()
-	tool.index()
-	tool.generate_normals()
-	return tool.commit()
+			LAND_LEVELS[terrain] + clampf(float(layout[id][1]), 0.0, 0.10), Color(Catalog.TERRAIN[terrain].color)]
+	var dirty = {}
+	var changed_centers: Array[Vector3] = []
+	for id in layout:
+		if layout[id] != previous.get(id, []):
+			changed_centers.append(_origin(id))
+			for affected in _around(id):
+				dirty[affected] = true
+	for id in previous:
+		if not layout.has(id):
+			changed_centers.append(_origin(id))
+			for affected in _around(id):
+				dirty[affected] = true
+	_invalidate_samples(dirty, changed_centers)
+	var updates = {}
+	for chunk in chunks:
+		var changed = false
+		for id in chunks[chunk]:
+			if dirty.has(id) or not cell_surfaces.has(id):
+				cell_surfaces[id] = _build_cell(id)
+				changed = true
+		if changed:
+			var cells: Array = chunks[chunk]
+			updates[chunk] = [_build_chunk(cells, SurfaceLayer.GROUND), _build_chunk(cells, SurfaceLayer.FOG),
+				_build_chunk(cells, SurfaceLayer.FRINGE)]
+	return updates
+
+func reveal_meshes(layout: Dictionary, previous: Dictionary) -> Array[ArrayMesh]:
+	var revealed: Array = []
+	var masks = {}
+	for id in layout:
+		if previous.has(id):
+			continue
+		revealed.append(id)
+		var coord = Hex.coord(id)
+		for side in Hex.DIRECTIONS.size():
+			var neighbor = Hex.key(coord - Hex.DIRECTIONS[side])
+			if previous.has(neighbor) and layout.has(neighbor):
+				masks[neighbor] = masks.get(neighbor, 0) | (1 << side)
+	return [_build_chunk(revealed, SurfaceLayer.REVEAL), _build_chunk(masks.keys(), SurfaceLayer.FRINGE, masks)]
+
+func _invalidate_samples(dirty: Dictionary, changed_centers: Array[Vector3]) -> void:
+	for id in dirty:
+		if not sample_cells.has(id):
+			continue
+		var retained: Array[Vector2i] = []
+		for key in sample_cells[id]:
+			var point = Vector3(key.x * 0.0001, 0.0, key.y * 0.0001)
+			var stale = false
+			for center in changed_centers:
+				if point.distance_squared_to(center) <= BLEND_RADIUS_SQUARED:
+					stale = true
+					break
+			if stale:
+				cached_samples.erase(key)
+			else:
+				retained.append(key)
+		sample_cells[id] = retained
 
 static func corner(side: int) -> Vector3:
 	var angle = PI / 6.0 + TAU * (side % 6) / 6.0
@@ -110,9 +183,10 @@ func sample(point: Vector3) -> Array:
 	var lake = 0.0
 	var sea = 0.0
 	var unknown = 0.0
-	for id in _around(Hex.cell_at(point)):
+	var cell = Hex.cell_at(point)
+	for id in _around(cell):
 		var distance_sq = _origin(id).distance_squared_to(point)
-		var weight = maxf(0.0, 1.0 - distance_sq / 2.19)
+		var weight = maxf(0.0, 1.0 - distance_sq / BLEND_RADIUS_SQUARED)
 		if weight == 0.0:
 			continue
 		weight *= weight
@@ -151,6 +225,9 @@ func sample(point: Vector3) -> Array:
 	var result = [Vector3(point.x, maxf(WATER_LEVEL, height), point.z),
 		tint, Vector2(sand, stone), Vector2(marsh, WATER_LEVEL - height)]
 	cached_samples[key] = result
+	if not sample_cells.has(cell):
+		sample_cells[cell] = []
+	sample_cells[cell].append(key)
 	return result
 
 func height_at(point: Vector3) -> float:
@@ -178,32 +255,121 @@ func height_at(point: Vector3) -> float:
 		return float(sample(corner_point)[0].y) * (1.0 - u - v) + a_height * u + b_height * v
 	return float(sample(corner_point + a + b)[0].y) * (u + v - 1.0) + a_height * (1.0 - v) + b_height * (1.0 - u)
 
-func _add_cell(tool: SurfaceTool, id: String, pickable: bool) -> void:
+func _build_cell(id: String) -> Array:
 	var center = _origin(id)
+	var fog = tiles.has(id) and not profiles.has(id)
+	var fog_edge = fog and _around(id).any(func(next): return not tiles.has(next) or profiles.has(next))
 	var vertices := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var colors := PackedColorArray()
+	var uv := PackedVector2Array()
+	var uv2 := PackedVector2Array()
 	for offset in template:
-		var surface = sample(center + offset)
-		tool.set_color(surface[1])
-		tool.set_uv(surface[2])
-		tool.set_uv2(surface[3])
-		tool.add_vertex(surface[0])
-		if pickable:
-			vertices.append(surface[0])
-	if pickable:
-		triangles[id] = vertices
+		if fog:
+			var point = center + offset
+			if fog_edge:
+				point = sample(point)[0]
+			else:
+				point.y = UNKNOWN[1]
+			vertices.append(point)
+			uv.append(Vector2(offset.x, offset.z) * 0.5 + Vector2.ONE * 0.5)
+		else:
+			var surface = sample(center + offset)
+			var point: Vector3 = surface[0]
+			vertices.append(point)
+			colors.append(surface[1])
+			uv.append(surface[2])
+			uv2.append(surface[3])
+	if not fog:
+		normals = _cell_normals(vertices)
+	if profiles.has(id):
+		var faces := PackedVector3Array()
+		for index in template_indices:
+			faces.append(vertices[index])
+		triangles[id] = faces
+	else:
+		triangles.erase(id)
+	return [fog, vertices, normals, colors, uv, uv2]
 
-func _add_fog(tool: SurfaceTool, id: String) -> void:
-	var center = _origin(id)
-	var touching_known = false
-	for next in _around(id):
-		if not tiles.has(next) or profiles.has(next):
-			touching_known = true
-			break
-	for offset in template:
-		var point = center + offset
-		point.y = (float(sample(point)[0].y) if touching_known else float(UNKNOWN[1])) + 0.015
-		tool.set_uv(Vector2(offset.x, offset.z) * 0.5 + Vector2.ONE * 0.5)
-		tool.add_vertex(point)
+func _cell_normals(vertices: PackedVector3Array) -> PackedVector3Array:
+	var normals := PackedVector3Array()
+	normals.resize(vertices.size())
+	for face in range(0, template_indices.size(), 3):
+		var a = template_indices[face]
+		var b = template_indices[face + 1]
+		var c = template_indices[face + 2]
+		var normal = (vertices[c] - vertices[a]).cross(vertices[b] - vertices[a])
+		normals[a] += normal
+		normals[b] += normal
+		normals[c] += normal
+	for i in normals.size():
+		# Shared edge normals come from the common height field, independently of the chunk.
+		normals[i] = _normal_at(vertices[i]) if template_edges[i] != 0 else normals[i].normalized()
+	return normals
+
+func _normal_at(point: Vector3) -> Vector3:
+	if not cached_normals.has(point):
+		const STEP = 0.04
+		var left: Vector3 = sample(point - Vector3.RIGHT * STEP)[0]
+		var right: Vector3 = sample(point + Vector3.RIGHT * STEP)[0]
+		var near: Vector3 = sample(point - Vector3.BACK * STEP)[0]
+		var far: Vector3 = sample(point + Vector3.BACK * STEP)[0]
+		cached_normals[point] = Vector3(left.y - right.y, STEP * 2.0, near.y - far.y).normalized()
+	return cached_normals[point]
+
+func _build_chunk(ids: Array, layer: SurfaceLayer, fringe_masks: Dictionary = {}) -> ArrayMesh:
+	var vertices := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var colors := PackedColorArray()
+	var uv := PackedVector2Array()
+	var uv2 := PackedVector2Array()
+	var indices := PackedInt32Array()
+	for id in ids:
+		var cell: Array = cell_surfaces[id]
+		if cell[0] != (layer == SurfaceLayer.FOG):
+			continue
+		var mask = fringe_masks.get(id, 0)
+		if layer == SurfaceLayer.FRINGE:
+			if not profiles.has(id):
+				continue
+			if fringe_masks.is_empty():
+				var coord = Hex.coord(id)
+				for side in Hex.DIRECTIONS.size():
+					var neighbor = Hex.key(coord + Hex.DIRECTIONS[side])
+					if tiles.has(neighbor) and not profiles.has(neighbor):
+						mask |= 1 << side
+			if mask == 0:
+				continue
+		var base = vertices.size()
+		vertices.append_array(cell[1])
+		if layer == SurfaceLayer.FRINGE or layer == SurfaceLayer.REVEAL:
+			# Cloud effects sample tile-local UVs and share the ground surface at the seam.
+			for offset in template:
+				uv.append(Vector2(offset.x, offset.z) * 0.5 + Vector2.ONE * 0.5)
+				if layer == SurfaceLayer.FRINGE:
+					uv2.append(Vector2(mask, 0))
+		else:
+			normals.append_array(cell[2])
+			colors.append_array(cell[3])
+			uv.append_array(cell[4])
+			uv2.append_array(cell[5])
+		for index in template_indices:
+			indices.append(base + index)
+	if vertices.is_empty():
+		return null
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_TEX_UV] = uv
+	arrays[Mesh.ARRAY_INDEX] = indices
+	if layer == SurfaceLayer.GROUND or layer == SurfaceLayer.FRINGE:
+		arrays[Mesh.ARRAY_TEX_UV2] = uv2
+	if layer == SurfaceLayer.GROUND:
+		arrays[Mesh.ARRAY_NORMAL] = normals
+		arrays[Mesh.ARRAY_COLOR] = colors
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
 
 func pick(origin: Vector3, direction: Vector3) -> String:
 	var fog_hit = Plane(Vector3.UP, 0.16).intersects_ray(origin, direction)

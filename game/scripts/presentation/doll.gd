@@ -69,12 +69,17 @@ func _next_movement() -> void:
 	var length = rigged.animator.current_animation_length
 	rigged.animator.speed_scale = maxf(0.3,distance/maxf(0.01,duration*stride*scale.x))*length
 	move_tween = create_tween()
-	move_tween.tween_property(self,"position",point,duration).set_trans(Tween.TRANS_LINEAR)
+	if map_height_source != null:
+		move_tween.tween_method(_map_step, position, point, duration).set_trans(Tween.TRANS_LINEAR)
+	else:
+		move_tween.tween_property(self,"position",point,duration).set_trans(Tween.TRANS_LINEAR)
 	move_tween.tween_callback(func(): rigged.animator.speed_scale=1.0; _next_movement())
 
+func _map_step(point: Vector3) -> void:
+	point.y = map_height_source.height_at(point) + 0.025
+	position = point
+
 func _process(_delta: float) -> void:
-	if map_height_source != null and is_moving():
-		position.y = map_height_source.height_at(position) + 0.025
 	if ring: ring.material_override.albedo_color = Color("ffe2a0") if selected else Color("b99e65")
 
 static func material(color: Color) -> StandardMaterial3D:

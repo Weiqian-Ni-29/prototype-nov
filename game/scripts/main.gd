@@ -506,9 +506,9 @@ func _move_selected() -> void:
 	var destination = move_target
 	move_target = ""
 	var result = run.move(moving_ids, destination)
-	if result.ok and selected_id in moving_ids:
-		view.focus_cell(selected_cell)
 	_run_action(result)
+	if result.ok and selected_id in moving_ids:
+		view.follow_map_movement(selected_id)
 	if result.ok and result.get("battle", false):
 		_formation_dialog()
 
