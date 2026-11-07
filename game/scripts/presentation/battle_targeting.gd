@@ -2,6 +2,7 @@ extends Node3D
 ## World-space selection markers and forgiving hit volumes for the battle dolls.
 const FontAsset = preload("res://assets/fonts/NotoSansSC.ttf")
 const BASE_BOUNDS = AABB(Vector3(-0.56, -0.05, -0.56), Vector3(1.12, 0.16, 1.12))
+const ARROW_CLEARANCE = 0.34
 const BODY_SIZES = {
 	"humanoid": Vector3(1.05, 1.85, 1.05),
 	"quadruped": Vector3(1.08, 1.13, 1.85),
@@ -31,6 +32,7 @@ func _ready() -> void:
 	arrow.font_size = 42
 	arrow.pixel_size = 0.008
 	arrow.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	arrow.no_depth_test = true
 	arrow.modulate = Color("ffd367")
 	arrow.outline_modulate = Color("42351f")
 	arrow.outline_size = 9
@@ -73,14 +75,75 @@ func select(id: String) -> void:
 		pulse = create_tween()
 		pulse.tween_property(selected_ring, "scale", Vector3.ONE, 0.22).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 
-func update_markers(dolls: Dictionary, alive: Array[String]) -> void:
+func update_markers(camera: Camera3D, dolls: Dictionary, alive: Array[String]) -> void:
 	_place_marker(selected, dolls.get(selected_id) if selected_id in alive else null)
 	_place_marker(preview, dolls.get(hovered_id) if hovered_id in alive and hovered_id != selected_id else null)
 	if selected.visible:
 		var doll = dolls[selected_id]
-		var size: Vector3 = BODY_SIZES[doll.family]
-		arrow.position.y = size.y * doll.body.scale.y + 0.28 \
-			+ (doll.body.global_position.y - doll.global_position.y) / doll.scale.x
+		var screen_up = camera.global_basis.y
+		var origin: Vector3 = doll.body.global_position
+		var top = _silhouette_top(doll, screen_up)
+		# Move along camera-up so the entire billboard sits above the projected model.
+		arrow.global_position = origin + screen_up * (top - screen_up.dot(origin) + ARROW_CLEARANCE * doll.scale.x)
+
+func _silhouette_top(doll: Node3D, screen_up: Vector3) -> float:
+	if not doll.has_meta("target_silhouette"):
+		var pieces: Array = []
+		for mesh in doll.body.find_children("*", "MeshInstance3D", true, false):
+			if mesh.mesh == null or not mesh.is_visible_in_tree():
+				continue
+			if mesh.skin == null:
+				pieces.append([mesh, -1, mesh.get_aabb()])
+			else:
+				var bounds = _bone_bounds(mesh, doll.skeleton)
+				for bone in bounds:
+					pieces.append([mesh, bone, bounds[bone]])
+		doll.set_meta("target_silhouette", pieces)
+	var top: float = screen_up.dot(doll.body.global_position)
+	var skeleton: Skeleton3D = doll.skeleton
+	for piece in doll.get_meta("target_silhouette"):
+		var mesh: MeshInstance3D = piece[0]
+		if not mesh.is_visible_in_tree():
+			continue
+		var bone: int = piece[1]
+		var box: AABB = piece[2]
+		var pose = mesh.global_transform if bone == -1 else skeleton.global_transform * skeleton.get_bone_global_pose(bone)
+		var extent = (pose.basis.transposed() * screen_up).abs().dot(box.size * 0.5)
+		top = maxf(top, screen_up.dot(pose * box.get_center()) + extent)
+	return top
+
+func _bone_bounds(mesh: MeshInstance3D, skeleton: Skeleton3D) -> Dictionary:
+	# Cache a box per contributing bone in bind space. A weighted vertex is contained
+	# by the envelope of those boxes after the current bone poses are applied.
+	var bounds = {}
+	var skin = mesh.skin
+	var bone_ids: Array[int] = []
+	var bind_poses: Array[Transform3D] = []
+	for bind in skin.get_bind_count():
+		var name = skin.get_bind_name(bind)
+		bone_ids.append(skeleton.find_bone(name) if name != &"" else skin.get_bind_bone(bind))
+		bind_poses.append(skin.get_bind_pose(bind))
+	for surface in mesh.mesh.get_surface_count():
+		var arrays = mesh.mesh.surface_get_arrays(surface)
+		var vertices = arrays[Mesh.ARRAY_VERTEX]
+		var joints = arrays[Mesh.ARRAY_BONES]
+		var weights = arrays[Mesh.ARRAY_WEIGHTS]
+		if joints == null or weights == null or vertices.is_empty():
+			continue
+		var stride = floori(float(joints.size()) / vertices.size())
+		for i in vertices.size():
+			for j in stride:
+				var index = i * stride + j
+				if weights[index] <= 0.0:
+					continue
+				var bind = joints[index]
+				var bone = bone_ids[bind]
+				if bone < 0:
+					continue
+				var point: Vector3 = bind_poses[bind] * vertices[i]
+				var box: AABB = bounds.get(bone, AABB(point, Vector3.ZERO))
+				bounds[bone] = box.expand(point)
+	return bounds
 
 func _place_marker(marker: Node3D, doll: Node3D) -> void:
 	marker.visible = is_instance_valid(doll) and doll.is_visible_in_tree()

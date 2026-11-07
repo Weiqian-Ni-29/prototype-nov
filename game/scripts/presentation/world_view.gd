@@ -622,13 +622,13 @@ func _update_battle_targets() -> void:
 	var alive: Array[String] = []
 	if battle_mode and battle_combat != null and battle_combat.outcome.is_empty():
 		alive = battle_combat.alive_enemies()
-	battle_targeting.update_markers(battle_dolls, alive)
+	battle_targeting.update_markers(camera, battle_dolls, alive)
 
 func _clear_battle_target() -> void:
 	battle_targeting.hovered_id = ""
 	battle_targeting.select("")
 	var empty: Array[String] = []
-	battle_targeting.update_markers(battle_dolls, empty)
+	battle_targeting.update_markers(camera, battle_dolls, empty)
 
 func _update_occlusion(delta: float) -> void:
 	var model = dolls.get(map_actor)
