@@ -185,7 +185,7 @@ func movement_preview(ids: Array, destination: String) -> Dictionary:
 			return fail("只能让同格、可行动的己方角色一起移动。")
 		costs[id] = move_cost(id, destination)
 		if int(a.ap) < int(costs[id]):
-			return fail("%s 行动力不足（需要 %d）。" % [a.name, costs[id]])
+			return fail("%s 精力不足（需要 %d）。" % [a.name, costs[id]])
 	if known_encounter:
 		var available = 0
 		for id in ids:
@@ -273,7 +273,7 @@ func use_item(user_id: String, target_id: String, item: String, during_battle: b
 		return fail("请在战斗正常行动窗口使用。")
 	var definition = Catalog.ITEMS.get(item, {})
 	if int(user.inventory.get(item, 0)) <= 0 or not (definition.has("hp") or definition.has("mp")):
-		return fail("没有可用的恢复物资。")
+		return fail("没有可用的恢复道具。")
 	if definition.has("mp") and target.hp <= 0:
 		return fail("恢复魔力不能解除重伤。")
 	var healing = int(definition.get("hp", 0))
@@ -308,7 +308,7 @@ func collect(id: String) -> Dictionary:
 	var a = actor(id)
 	var t = data.tiles[a.position]
 	if t.burning or not t.enemies.is_empty() or t.quantity <= 0:
-		return fail("这里没有安全可采集的物资。")
+		return fail("这里没有安全可采集的道具。")
 	a.ap -= 1
 	var amount = int(t.quantity) + (1 if id == "cen" and t.terrain == "forest" else 0)
 	a.inventory[t.resource] = int(a.inventory.get(t.resource, 0)) + amount
@@ -465,7 +465,7 @@ func end_day() -> Dictionary:
 			a.mp = mini(int(a.mp_max), int(a.mp) + ceili(a.mp_max * Catalog.DAILY_MP))
 	data.last_day_settled = new_day - 1
 	check_global_failure()
-	note("第 %d 天，%s。可行动者恢复部分生命/魔力，行动点回到各自上限。" % [data.day, "雨" if data.weather == "rain" else "晴"])
+	note("第 %d 天，%s。可行动者恢复部分生命/魔力，精力回到各自上限。" % [data.day, "雨" if data.weather == "rain" else "晴"])
 	changed.emit()
 	return success()
 
@@ -513,7 +513,7 @@ func _map_action(id: String, cost: int) -> Dictionary:
 	if a.is_empty() or not a.joined or a.hp <= 0:
 		return fail("该角色无法行动。")
 	if a.ap < cost:
-		return fail("需要 %d AP。" % cost)
+		return fail("需要 %d 精力。" % cost)
 	return success()
 
 func save_game(path: String = "") -> Dictionary:
@@ -592,6 +592,16 @@ func _validate_save(loaded: Dictionary) -> String:
 		return "选择记录无效"
 	if not loaded.get("relics", {}) is Dictionary or not loaded.get("relic_checks", {}) is Dictionary or not loaded.get("relic_intros", []) is Array:
 		return "遗器记录无效"
+	if loaded.has("pending_victory"):
+		var result = loaded.pending_victory
+		if not result is Dictionary or not result.has_all(["enemies", "members", "revived", "salve_receiver", "relic"]) \
+				or not _whole_number(result.enemies) or result.enemies < 1 or not result.members is Array or result.members.is_empty() \
+				or not result.revived is Array or not result.salve_receiver is String or not result.relic is String:
+			return "胜利结算无效"
+		if not result.members.all(func(id): return loaded.actors.has(id)) or not result.revived.all(func(id): return id in result.members) \
+				or (result.salve_receiver != "" and result.salve_receiver not in result.members) \
+				or (result.relic != "" and not loaded.get("relics", {}).has(result.relic)):
+			return "胜利结算无效"
 	for id in loaded.get("relics", {}):
 		if not Relics.DATA.has(id) or loaded.relics[id] != true:
 			return "未知遗器"

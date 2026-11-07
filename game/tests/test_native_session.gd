@@ -22,25 +22,55 @@ func execute() -> void:
 	for id in ["cen","eve","grit"]:
 		r.actor(id).position = p
 		r.join_companion(id)
-	r.data.tiles[p].enemies = ["boar","archer"]
+	r.data.tiles[p].enemies = ["boar", "archer", "boar"]
 	var b = Combat.new()
 	expect(b.begin(r,{"position":p,"origin":p,"npc":"","movers":[],"ambush":false},["hero","cen","eve","grit"]).ok,"Native session begins with real combat values")
 	game.combat = b
 	game.view.begin_battle(r,b)
 	game._refresh()
+	await process_frame
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("user://battle-enemy-cards.png")
 	b.auto_mode = true
 	var started = Time.get_ticks_msec()
 	var observed_animation = false
 	while game.combat!=null and Time.get_ticks_msec()-started<80000:
 		await process_frame
 		observed_animation = observed_animation or game.view.is_animating()
-	expect(game.combat==null and b.outcome=="victory","Main loop drains visuals and actually returns to map after auto victory")
-	expect(observed_animation and not game.view.battle_mode,"Native auto session rendered the sequential visual queue")
+	expect(game.combat == null and b.outcome == "victory" and game.modal_layer.has_node("VictoryScreen"),
+		"Auto victory drains visual events and opens the victory screen")
+	expect(observed_animation and game.view.battle_mode and not game.view.is_animating(), "The completed battlefield remains behind the victory screen")
 	expect(r.data.tiles[p].enemies.is_empty() and not r.data.rewards.is_empty(),"Victory settles once with actual rewards")
 	var checkpoint = JSON.parse_string(FileAccess.get_file_as_string(r.save_path))
 	expect(checkpoint is Dictionary and checkpoint.get("pending_battle", {"missing": true}).is_empty()
-		and checkpoint.get("tiles", {}).get(p, {}).get("enemies") == [] and checkpoint.get("rewards") == r.data.rewards,
+		and checkpoint.get("tiles", {}).get(p, {}).get("enemies") == [] and checkpoint.get("rewards") == r.data.rewards
+		and checkpoint.get("pending_victory", {}).get("salve_receiver") == "hero",
 		"Battle settlement auto-saves the cleared encounter and the reward")
+	await create_timer(0.3).timeout
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("user://battle-victory-result.png")
+	game._continue_run()
+	var victory_screen = game.modal_layer.get_node_or_null("VictoryScreen")
+	expect(victory_screen != null, "Continuing after victory restores the pending settlement")
+	if victory_screen != null:
+		for button in victory_screen.find_children("*", "Button", true, false):
+			if button.text == "继续远征":
+				button.pressed.emit()
+				break
+	expect(not game.view.battle_mode and not r.data.has("pending_victory") and r.data.rewards == checkpoint.get("rewards"),
+		"Acknowledging the settlement returns to exploration without re-awarding loot")
+	# A relic won in this fixture may have its own introduction after settlement.
+	for page in range(2):
+		if r.relic_intro().is_empty() or not game.modal_layer.has_node("StoryScreen"):
+			break
+		for pressed in [true, false]:
+			var event = InputEventMouseButton.new()
+			event.button_index = MOUSE_BUTTON_LEFT
+			event.pressed = pressed
+			event.position = root.get_visible_rect().size * Vector2(0.76, 0.30)
+			root.push_input(event, true)
+		await process_frame
+	expect(r.relic_intro().is_empty(), "Any victory relic introduction can be completed after the results")
 	game.set_process(false)
 	# A normal NPC conflict uses the same injury state, not a cosmetic non-lethal shortcut.
 	r.actor("ember").position = p

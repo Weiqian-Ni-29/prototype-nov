@@ -751,7 +751,7 @@ func presentation_title(fallback: String) -> String:
 	var id = str(event.get("actor",""))
 	if battle_combat==null or id=="": return "演出中"
 	var skill = str(event.get("skill_id",""))
-	var title = str(Catalog.SKILLS[skill].name) if Catalog.SKILLS.has(skill) else "防守" if event.get("kind","")=="guard" else "使用物资" if event.get("kind","")=="heal" else "行动"
+	var title = str(Catalog.SKILLS[skill].name) if Catalog.SKILLS.has(skill) else "防守" if event.get("kind","")=="guard" else "使用道具" if event.get("kind","")=="heal" else "行动"
 	return str(battle_combat.unit(id).name)+" · "+title
 
 func sync_battle_states() -> void:
