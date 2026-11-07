@@ -6,6 +6,7 @@ const Doll = preload("res://scripts/presentation/doll.gd")
 const FontAsset = preload("res://assets/fonts/NotoSansSC.ttf")
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Board = preload("res://scripts/presentation/board_surface.gd")
+const BattleTargeting = preload("res://scripts/presentation/battle_targeting.gd")
 const OCCLUSION = preload("res://scripts/presentation/board_occlusion.gdshader")
 const NATURE_PALETTE = preload("res://scripts/presentation/nature_palette.gdshader")
 const MAP_PLANE = Plane(Vector3.UP, 0.05)
@@ -17,6 +18,7 @@ const MAP_ZOOM_STEP = 1.14
 const OCCLUSION_ZOOM = 9.0
 const FOG_REVEAL_SECONDS = 0.7
 signal cell_clicked(id: String)
+signal enemy_clicked(id: String)
 var camera: Camera3D
 var light: DirectionalLight3D
 var map_root: Node3D
@@ -37,6 +39,7 @@ var map_pointer_down = false
 var map_dragging = false
 var map_pointer_position = Vector2.ZERO
 var battle_mode = false
+var battle_targeting = BattleTargeting.new()
 var selection_ring: MeshInstance3D
 var clock = 0.0
 var rain: CPUParticles3D
@@ -97,6 +100,7 @@ func _ready() -> void:
 	add_child(map_root)
 	add_child(actor_root)
 	add_child(battle_root)
+	add_child(battle_targeting)
 	ocean = preload("res://scripts/presentation/ocean.gd").new()
 	add_child(ocean)
 	selection_ring = MeshInstance3D.new()
@@ -133,6 +137,7 @@ func _ready() -> void:
 
 func reset() -> void:
 	_cancel_map_pointer()
+	_clear_battle_target()
 	map_follow_actor = null
 	zoom_size = DEFAULT_MAP_ZOOM
 	presenter.cancel()
@@ -485,10 +490,12 @@ func _update_camera() -> void:
 		camera.h_offset = 0.3
 		_sync_canopy_lod()
 
-func set_map_input_enabled(enabled: bool) -> void:
+func set_world_input_enabled(enabled: bool) -> void:
 	set_process_unhandled_input(enabled)
 	if not enabled:
 		_cancel_map_pointer()
+		battle_targeting.hovered_id = ""
+		_update_battle_targets()
 
 func _cancel_map_pointer() -> void:
 	map_pointer_down = false
@@ -497,6 +504,7 @@ func _cancel_map_pointer() -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
 		_cancel_map_pointer()
+		battle_targeting.hovered_id = ""
 
 func _map_point(screen_position: Vector2) -> Variant:
 	return MAP_PLANE.intersects_ray(camera.project_ray_origin(screen_position), camera.project_ray_normal(screen_position))
@@ -526,6 +534,9 @@ func _drag_map_to(screen_position: Vector2) -> void:
 	map_pointer_position = screen_position
 
 func _input(event: InputEvent) -> void:
+	if battle_mode and event is InputEventMouseMotion:
+		# HUD controls consume motion before the world can offer a preview again.
+		battle_targeting.hovered_id = ""
 	# Capture a gesture started on the board, even when it ends over the HUD.
 	if not map_pointer_down:
 		return
@@ -546,7 +557,17 @@ func _input(event: InputEvent) -> void:
 				cell_clicked.emit(id)
 
 func _unhandled_input(event: InputEvent) -> void:
-	if battle_mode or not (event is InputEventMouseButton and event.pressed):
+	if battle_mode:
+		if battle_combat != null and battle_combat.outcome.is_empty():
+			if event is InputEventMouseMotion:
+				battle_targeting.hovered_id = _battle_enemy_at(event.position)
+			elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+				var enemy = _battle_enemy_at(event.position)
+				if not enemy.is_empty():
+					get_viewport().set_input_as_handled()
+					enemy_clicked.emit(enemy)
+		return
+	if not (event is InputEventMouseButton and event.pressed):
 		return
 	match event.button_index:
 		MOUSE_BUTTON_LEFT:
@@ -585,8 +606,29 @@ func _process(delta: float) -> void:
 			_pan_map(motion * delta * 8.0)
 		else:
 			_update_map_follow()
-	if not battle_mode:
+	if battle_mode:
+		_update_battle_targets()
+	else:
 		_update_occlusion(delta)
+
+func _battle_enemy_at(screen_position: Vector2) -> String:
+	return battle_targeting.pick(camera, screen_position, battle_dolls, battle_combat.alive_enemies())
+
+func set_battle_target(id: String) -> void:
+	battle_targeting.select(id)
+	_update_battle_targets()
+
+func _update_battle_targets() -> void:
+	var alive: Array[String] = []
+	if battle_mode and battle_combat != null and battle_combat.outcome.is_empty():
+		alive = battle_combat.alive_enemies()
+	battle_targeting.update_markers(battle_dolls, alive)
+
+func _clear_battle_target() -> void:
+	battle_targeting.hovered_id = ""
+	battle_targeting.select("")
+	var empty: Array[String] = []
+	battle_targeting.update_markers(battle_dolls, empty)
 
 func _update_occlusion(delta: float) -> void:
 	var model = dolls.get(map_actor)
@@ -641,6 +683,7 @@ func _begin_occlusion(instance: MeshInstance3D) -> void:
 
 func begin_battle(run: RefCounted, combat: RefCounted) -> void:
 	_cancel_map_pointer()
+	_clear_battle_target()
 	if is_instance_valid(map_follow_actor):
 		focus_point = Hex.world(combat.position)
 	map_follow_actor = null
@@ -774,6 +817,7 @@ func sync_event_environment(event: Dictionary) -> void:
 
 func end_battle() -> void:
 	presenter.cancel()
+	_clear_battle_target()
 	effects.clear()
 	battle_run = null
 	battle_combat = null

@@ -60,6 +60,7 @@ func _ready() -> void:
 	view = World.new()
 	add_child(view)
 	view.cell_clicked.connect(_select_cell)
+	view.enemy_clicked.connect(_select_battle_target)
 	view.presentation_changed.connect(func(): call_deferred("_refresh"))
 	view.sound_cue.connect(func(kind: String): sound.play(kind))
 	var canvas = CanvasLayer.new()
@@ -141,6 +142,7 @@ func _button(parent: Node, text: String, callback: Callable, disabled: bool = fa
 
 func _hp_bar(parent: Node, hp: float, maximum: float, enemy: bool = false) -> void:
 	var bar = ProgressBar.new()
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar.value = hp / maxf(1.0, maximum) * 100
 	bar.show_percentage = false
 	bar.custom_minimum_size.y = 6
@@ -188,7 +190,7 @@ func _refresh() -> void:
 	var world_visible = in_expedition and not modal_layer.has_node("StoryScreen")
 	view.visible = world_visible
 	view.set_process(world_visible)
-	view.set_map_input_enabled(world_visible and modal_layer.get_child_count() == 0 and run.data.status == "exploring")
+	_update_world_input()
 	move_preview.hide()
 	if screen_state == Screen.MENU:
 		_menu(screen)
@@ -561,7 +563,7 @@ func _modal(title: String, width: float = 650, height: float = 520) -> VBoxConta
 	_clear(modal_layer)
 	ui.show()
 	view.visible = screen_state == Screen.EXPEDITION
-	view.set_map_input_enabled(false)
+	view.set_world_input_enabled(false)
 	var backdrop = ColorRect.new()
 	backdrop.color = Color(0.025, 0.07, 0.065, 0.82)
 	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -578,7 +580,13 @@ func _close_modal() -> void:
 	var in_expedition = screen_state == Screen.EXPEDITION
 	view.visible = in_expedition
 	view.set_process(in_expedition)
-	view.set_map_input_enabled(in_expedition and run.data.status == "exploring")
+	_update_world_input()
+
+func _update_world_input() -> void:
+	var can_target = combat != null and combat.outcome.is_empty()
+	var can_explore = not view.battle_mode and run.data.status == "exploring"
+	view.set_world_input_enabled(screen_state == Screen.EXPEDITION and view.visible
+		and modal_layer.get_child_count() == 0 and (can_target or can_explore))
 
 func _notice(message: String) -> void:
 	var box = _modal("旅途提示", 620, 270)
@@ -764,6 +772,7 @@ func _formation_dialog() -> void:
 
 func _battle_ui(screen: Vector2) -> void:
 	view.refresh_battle(run, combat)
+	view.set_battle_target(selected_target)
 	var left_outer = _panel(ui, Rect2(20, 120, 250, screen.y - 275))
 	_text(left_outer, "出战角色", 24, gold)
 	var left = _scroll_content(left_outer)
@@ -834,16 +843,27 @@ func _enemy_card(parent: VBoxContainer, id: String, title: String) -> void:
 	var shown_hp = view.display_hp(id, int(enemy.hp))
 	var panel = PanelContainer.new()
 	panel.name = "EnemyCard_" + id
+	panel.gui_input.connect(func(event: InputEvent):
+		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			panel.accept_event()
+			_select_battle_target(id))
 	panel.add_theme_stylebox_override("panel", _style(Color("31463d") if selected else Color("203b35"),
 		gold if selected else Color("50675c"), 8))
 	parent.add_child(panel)
 	var card = VBoxContainer.new()
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card.add_theme_constant_override("separation", 4)
 	panel.add_child(card)
-	_button(card, ("◆ " if selected else "") + title, func(): selected_target = id; _refresh(), enemy.hp <= 0)
+	_button(card, ("◆ " if selected else "") + title, _select_battle_target.bind(id), enemy.hp <= 0)
 	var status = "已击败" if shown_hp <= 0 else "蓄力中！" if enemy.charged else "行动蓄积"
 	_text(card, "HP %d/%d · %s\n%s" % [shown_hp, enemy.hp_max, status, enemy.role], 14, muted)
 	_hp_bar(card, shown_hp, enemy.hp_max, true)
+
+func _select_battle_target(id: String) -> void:
+	if combat == null or combat.outcome != "" or id == selected_target or id not in combat.alive_enemies():
+		return
+	selected_target = id
+	_refresh()
 
 func _combat_skill_hint(skill_id: String, actor_id: String) -> String:
 	var hint = Catalog.skill_description(skill_id)
@@ -1002,7 +1022,7 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	ui.hide()
 	view.hide()
 	view.set_process(false)
-	view.set_map_input_enabled(false)
+	view.set_world_input_enabled(false)
 	var overlay = ColorRect.new()
 	overlay.name = "StoryScreen"
 	overlay.color = Color("10191b")
