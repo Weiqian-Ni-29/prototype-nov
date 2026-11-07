@@ -114,6 +114,52 @@ func check_battle_targeting() -> void:
 	game.view.end_battle()
 	expect(not targeting.selected.visible and not targeting.preview.visible, "Leaving battle clears the markers")
 
+func check_marker_height() -> void:
+	game._start_new()
+	var run = game.run
+	var position = run.data.start
+	run.data.tiles[position].terrain = "swamp"
+	run.data.tiles[position].enemies = ["lurker", "apothecary"]
+	var battle = Combat.new()
+	expect(battle.begin(run, {"position": position, "origin": position, "ambush": false, "movers": [], "npc": ""}, ["hero"]).ok,
+		"Marker fixture uses the reported swamp encounter")
+	battle.current = "hero"
+	game.combat = battle
+	game.selected_target = "enemy_0"
+	game.battle_timer = 0
+	var view = game.view
+	view.begin_battle(run, battle)
+	game._refresh()
+	game._select_battle_target("enemy_1")
+	await process_frame
+	var doll = view.battle_dolls.enemy_1
+	var targeting = view.battle_targeting
+	var screen_up: Vector3 = view.camera.global_basis.y
+	var first_height: float = screen_up.dot(targeting.arrow.global_position)
+	var initial_top: float = targeting._silhouette_top(doll, screen_up)
+	expect(targeting.arrow.no_depth_test and first_height - initial_top > 0.29,
+		"Apothecary arrow clears the entire silhouette")
+	if DisplayServer.get_name() != "headless":
+		await create_timer(0.26).timeout
+		await RenderingServer.frame_post_draw
+		root.get_texture().get_image().save_png("user://battle-target-marker-height.png")
+	doll.body.scale *= 1.45
+	view._update_battle_targets()
+	var taller_top: float = targeting._silhouette_top(doll, screen_up)
+	var taller_height: float = screen_up.dot(targeting.arrow.global_position)
+	expect(taller_top > initial_top + 0.30 and taller_height > first_height + 0.30,
+		"The same selected target updates its marker when its model grows")
+	var skeleton: Skeleton3D = doll.skeleton
+	var head = doll.bones.head
+	var rest_position = skeleton.get_bone_pose_position(head)
+	doll.rigged.animator.pause()
+	skeleton.set_bone_pose_position(head, rest_position + Vector3.UP * 0.8)
+	skeleton.force_update_all_bone_transforms()
+	view._update_battle_targets()
+	expect(screen_up.dot(targeting.arrow.global_position) > taller_height + 0.10,
+		"Changing a bone pose updates the selected marker independently of model scale")
+	game.view.end_battle()
+
 func execute() -> void:
 	game = Main.instantiate()
 	root.add_child(game)
@@ -186,6 +232,7 @@ func execute() -> void:
 	restored.save_path = run.save_path
 	expect(restored.load_game().ok and restored.data.pending_battle.is_empty(), "Retreat state is a stable checkpoint")
 	await check_battle_targeting()
+	await check_marker_height()
 	await create_timer(0.25).timeout
 	game.queue_free()
 	await create_timer(0.05).timeout

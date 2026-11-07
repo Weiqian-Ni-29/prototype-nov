@@ -42,6 +42,101 @@ func contains_text(parent: Node, fragment: String) -> bool:
 			return true
 	return false
 
+func consumable_row(item_name: String) -> Node:
+	for label in game.modal_layer.find_children("*", "Label", true, false):
+		if label.text.begins_with(item_name + " ×"):
+			return label.get_parent()
+	return null
+
+func use_from_backpack(item_name: String) -> void:
+	var row = consumable_row(item_name)
+	var use = find_button(row, "使用") if row != null else null
+	expect(use != null and not use.disabled, "Backpack can use " + item_name)
+	if use != null and not use.disabled:
+		use.pressed.emit()
+	await process_frame
+
+func select_consumable(item_name: String) -> void:
+	var row = consumable_row(item_name)
+	expect(row != null, "Consumable appears in the backpack: " + item_name)
+	if row != null:
+		var scroll: ScrollContainer = row.get_parent().get_parent().get_parent()
+		scroll.ensure_control_visible(row)
+		await process_frame
+		for pressed in [true, false]:
+			var event = InputEventMouseButton.new()
+			event.button_index = MOUSE_BUTTON_LEFT
+			event.pressed = pressed
+			event.position = row.get_global_rect().get_center()
+			root.push_input(event, true)
+	await process_frame
+
+func check_backpack_use() -> void:
+	game._start_new()
+	var run = game.run
+	var hero = run.actor("hero")
+	var lorne = run.actor("lorne")
+	var tide = run.actor("tide")
+	var away: String = tide.position
+	lorne.position = hero.position
+	tide.position = hero.position
+	run.join_companion("lorne")
+	run.join_companion("tide")
+	tide.position = away
+	lorne.inventory.salve = 2
+	lorne.hp = 1
+	var effort = lorne.ap
+	var hero_salves = hero.inventory.salve
+	game._select_actor("lorne")
+	await press("背包")
+	var row = consumable_row("疗伤药")
+	expect(row != null and contains_text(row, "持有者 · 洛恩") and find_button(row, "交接") != null,
+		"Consumable row labels the actual holder and retains handoff")
+	await select_consumable("疗伤药")
+	expect(row.get_parent().get_theme_stylebox("panel").border_color == game.gold
+		and contains_text(game.modal_layer, "恢复 45 HP") and lorne.inventory.salve == 2,
+		"Clicking the item row highlights it and explains its use without consuming it")
+	await select_consumable("澄露")
+	expect(row.get_parent().get_theme_stylebox("panel").border_color != game.gold
+		and contains_text(game.modal_layer, "恢复 30 MP"), "Selecting another consumable replaces the highlight and description")
+	await use_from_backpack("疗伤药")
+	var target = game.modal_layer.find_children("*", "OptionButton", true, false)[0]
+	expect(target.get_item_text(target.selected).begins_with("洛恩") and target.item_count == 2,
+		"Backpack use defaults to the holder and only offers local characters")
+	await press("确认使用 疗伤药")
+	expect(lorne.hp == 46 and lorne.inventory.salve == 1 and hero.inventory.salve == hero_salves and lorne.ap == effort,
+		"Using from Lorne's bag heals him and consumes only his item without spending effort")
+	expect(saved_run().get("actors", {}).get("lorne", {}).get("hp") == 46 and consumable_row("疗伤药") != null,
+		"Successful use auto-saves and returns to the refreshed backpack")
+	expect(contains_text(game.modal_layer, "恢复 45 HP"), "The item remains selected after using it when another remains")
+	hero.hp = 0
+	await use_from_backpack("疗伤药")
+	target = game.modal_layer.find_children("*", "OptionButton", true, false)[0]
+	for i in target.item_count:
+		if target.get_item_text(i).begins_with("旅人"):
+			target.select(i)
+			break
+	await press("确认使用 疗伤药")
+	expect(hero.hp == 45 and lorne.inventory.salve == 0, "The same backpack flow rescues a downed local ally")
+	await use_from_backpack("澄露")
+	await press("确认使用 澄露")
+	expect(contains_text(game.modal_layer, "没有可恢复的资源") and lorne.inventory.ether == 1,
+		"An ineligible target gives visible feedback and keeps the consumable")
+	await press("返回背包")
+	lorne.mp = 5
+	await use_from_backpack("澄露")
+	await press("确认使用 澄露")
+	expect(lorne.mp == 35 and lorne.inventory.ether == 0 and lorne.ap == effort,
+		"Backpack ether restores magic from the holder's inventory without spending effort")
+	await press("关闭")
+	game._select_actor("hero")
+	await press("背包")
+	await select_consumable("营地木料")
+	expect(contains_text(game.modal_layer, "两份木料可建立一处营地"), "Contextual materials also show their purpose when selected")
+	await select_consumable("旅途干粮")
+	expect(contains_text(game.modal_layer, "可用于分享与任务"), "Food can be selected and inspected like every consumable")
+	await press("关闭")
+
 func check_discovery() -> void:
 	game._start_new()
 	var run = game.run
@@ -330,6 +425,7 @@ func execute() -> void:
 	await advance_story()
 	expect(game.modal_layer.get_child_count() == 0 and find_button(game.ui, "查看结局剧情") != null, "Ending returns to the expedition record and can be replayed")
 	await check_discovery()
+	await check_backpack_use()
 	# Allow the last short audio cue to finish before testing scene teardown.
 	await create_timer(0.25).timeout
 	print("UI INTEGRATION: %d checks, %d failures (opening branches, legacy saves, movement, dialogue, recruitment, inventory, ending)" % [checks, failures.size()])

@@ -626,7 +626,7 @@ func _inventory_tab(item: String) -> int:
 		return 1
 	return 2 if Story.DOCUMENTS.has(item) else 0
 
-func _inventory_dialog(id: String, current_tab: int = 0) -> void:
+func _inventory_dialog(id: String, current_tab: int = 0, selected_consumable: String = "") -> void:
 	var a = run.actor(id)
 	var box = _modal(a.name + " · 背包与装备", 850, 670)
 	_text(box, "攻击 %d · 防御 %d · 速度 %d\n战斗外免费换装；物品只在同格交接，不刷新资源。" % [run.stat(id, "attack"), run.stat(id, "defense"), run.stat(id, "speed")], 16, muted)
@@ -644,28 +644,86 @@ func _inventory_dialog(id: String, current_tab: int = 0) -> void:
 	box.add_child(tabs)
 	var lists: Array[VBoxContainer] = []
 	for title in ["消耗品", "装备", "任务物品", "遗器"]:
-		var scroll = ScrollContainer.new()
-		scroll.name = title
-		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-		tabs.add_child(scroll)
-		var list = VBoxContainer.new()
-		list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		scroll.add_child(list)
+		var page = VBoxContainer.new()
+		page.name = title
+		tabs.add_child(page)
+		var list = _scroll_content(page)
+		list.get_parent().horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 		lists.append(list)
 	tabs.current_tab = current_tab
+	var detail_panel = PanelContainer.new()
+	detail_panel.add_theme_stylebox_override("panel", _style(Color("243b34"), Color("536456"), 6))
+	tabs.get_child(0).add_child(detail_panel)
+	var description = _text(detail_panel, "选择一件消耗品查看用途。", 16)
+	description.name = "ConsumableDescription"
+	description.custom_minimum_size.y = 48
+	var cards = {}
+	var row_style = _style(Color("20352e"), Color("465b4f"), 6)
+	row_style.content_margin_top = 4
+	row_style.content_margin_bottom = 4
+	var selected_style = row_style.duplicate()
+	selected_style.bg_color = Color("354c3e")
+	selected_style.border_color = gold
+	var select_consumable = func(item: String):
+		for key in cards:
+			cards[key].add_theme_stylebox_override("panel", selected_style if key == item else row_style)
+		var purpose = str(Catalog.ITEMS.get(item, {}).get("description", "暂无用途说明。"))
+		if item == "salve" and run.has_relic("herbal_case"):
+			purpose += " 青枝药匣使恢复量提高 25%。"
+		description.text = Catalog.item_name(item) + "\n" + purpose
 	for item in a.inventory:
 		if a.inventory[item] <= 0:
 			continue
+		var tab = _inventory_tab(item)
+		var definition = Catalog.ITEMS.get(item, {})
 		var row = HBoxContainer.new()
-		lists[_inventory_tab(item)].add_child(row)
-		_text(row, Story.DOCUMENTS.get(item, Catalog.item_name(item)) + " ×%d" % a.inventory[item], 16).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		if Catalog.ITEMS.get(item, {}).has("slot"):
+		if tab == 0:
+			var card = PanelContainer.new()
+			card.focus_mode = Control.FOCUS_ALL
+			card.add_theme_stylebox_override("panel", row_style)
+			card.focus_entered.connect(select_consumable.bind(item))
+			card.gui_input.connect(func(event: InputEvent):
+				if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+					card.accept_event()
+					card.grab_focus()
+					select_consumable.call(item))
+			cards[item] = card
+			lists[tab].add_child(card)
+			row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			card.add_child(row)
+		else:
+			lists[tab].add_child(row)
+		var item_label = _text(row, Story.DOCUMENTS.get(item, Catalog.item_name(item)) + " ×%d" % a.inventory[item], 16)
+		if tab == 0:
+			item_label.size_flags_horizontal = Control.SIZE_FILL
+			item_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			item_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+			var holder = PanelContainer.new()
+			holder.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			var tag_style = _style(Color("2a4038"), Color("64725e"), 6)
+			tag_style.content_margin_top = 3
+			tag_style.content_margin_bottom = 3
+			holder.add_theme_stylebox_override("panel", tag_style)
+			row.add_child(holder)
+			_text(holder, "持有者 · " + a.name, 13, gold).autowrap_mode = TextServer.AUTOWRAP_OFF
+			var spacer = Control.new()
+			spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			row.add_child(spacer)
+			if definition.has("hp") or definition.has("mp"):
+				_button(row, "使用", _item_dialog.bind(id, item), a.hp <= 0 or run.data.status != "exploring")
+		if definition.has("slot"):
 			_button(row, "卸下" if item in a.equipment.values() else "装备", func(): _run_action(run.equip(id, item)); _inventory_dialog(id, 1))
 		if run.same_cell(a.position).size() > 1:
 			_button(row, "交接", _transfer_dialog.bind(id, item))
 	for i in range(3):
 		if lists[i].get_child_count() == 0:
 			_text(lists[i], "暂无物品。", 16, muted)
+	if cards.is_empty():
+		detail_panel.hide()
+	elif cards.has(selected_consumable):
+		select_consumable.call(selected_consumable)
 	_text(lists[3], "全队共享 · 本局有效", 17, gold)
 	if run.data.relics.is_empty():
 		_text(lists[3], "本次远征尚未获得遗器。", 16, muted)
@@ -685,14 +743,17 @@ func _transfer_dialog(owner: String, item: String) -> void:
 				var result = run.transfer(owner, other, item, 1)
 				if result.ok:
 					_run_action(result)
-					_inventory_dialog(owner, _inventory_tab(item))
+					_inventory_dialog(owner, _inventory_tab(item), item)
 				else:
 					_text(content, result.message, 16, gold))
-	_button(box, "返回背包", _inventory_dialog.bind(owner, _inventory_tab(item)))
+	_button(box, "返回背包", _inventory_dialog.bind(owner, _inventory_tab(item), item))
 
-func _item_dialog(user_id: String) -> void:
+func _item_dialog(user_id: String, item_id: String = "") -> void:
+	var from_backpack = not item_id.is_empty()
 	var box = _modal("使用道具 · " + run.actor(user_id).name, 650, 460)
 	_text(box, "地图使用不耗精力；战斗中不占正常行动，可使用多件。", 16, muted)
+	if from_backpack:
+		_text(box, "从当前角色的背包使用「%s」，请选择同地目标。" % Catalog.item_name(item_id), 16, gold)
 	var targets: Array = []
 	if combat != null:
 		targets = combat.active.duplicate()
@@ -704,16 +765,33 @@ func _item_dialog(user_id: String) -> void:
 	var select = OptionButton.new()
 	for id in targets:
 		select.add_item("%s · HP %d/%d · MP %d/%d" % [run.actor(id).name, run.actor(id).hp, run.actor(id).hp_max, run.actor(id).mp, run.actor(id).mp_max])
+	if from_backpack and user_id in targets:
+		select.select(targets.find(user_id))
 	box.add_child(select)
-	for item in ["salve", "ether"]:
+	var feedback = _text(box, "", 16, gold)
+	feedback.hide()
+	for item in ([item_id] if from_backpack else ["salve", "ether"]):
 		var quantity = int(run.actor(user_id).inventory.get(item, 0))
-		_button(box, Catalog.item_name(item) + " ×%d" % quantity, func():
+		var name = Catalog.item_name(item)
+		var button_text = "确认使用 %s ×1" % name if from_backpack else "%s ×%d" % [name, quantity]
+		_button(box, button_text, func():
 			var target = targets[select.selected]
 			var result = combat.use_item(item, target) if combat != null else run.use_item(user_id, target, item)
+			if not result.ok:
+				feedback.text = result.message
+				feedback.show()
+				return
 			_run_action(result)
-			if combat!=null and result.ok: _after_combat_step()
-			_item_dialog(user_id), quantity <= 0 or targets.is_empty())
-	_button(box, "用完了，返回", _close_modal)
+			if combat != null:
+				_after_combat_step()
+			if from_backpack:
+				_inventory_dialog(user_id, 0, item_id)
+			else:
+				_item_dialog(user_id), quantity <= 0 or targets.is_empty())
+	if from_backpack:
+		_button(box, "返回背包", _inventory_dialog.bind(user_id, 0, item_id))
+	else:
+		_button(box, "用完了，返回", _close_modal)
 
 func _healing_dialog() -> void:
 	var box = _modal("选择同地治疗对象", 620, 500)
