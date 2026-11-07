@@ -41,6 +41,79 @@ func finish_presentation() -> void:
 	game.battle_timer = 0
 	game._refresh()
 
+func click_at(point: Vector2) -> void:
+	for pressed in [true, false]:
+		var event = InputEventMouseButton.new()
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = pressed
+		event.position = point
+		root.push_input(event, true)
+
+func check_battle_targeting() -> void:
+	game.chosen_profession = "guardian"
+	game._start_new()
+	var run = game.run
+	var position = run.data.start
+	run.data.tiles[position].terrain = "forest"
+	run.data.tiles[position].enemies = ["spider", "swarm"]
+	var battle = Combat.new()
+	expect(battle.begin(run, {"position": position, "origin": position, "ambush": false, "movers": [], "npc": ""}, ["hero"]).ok,
+		"Target selection fixture begins")
+	battle.current = "hero"
+	game.combat = battle
+	game.selected_target = "enemy_0"
+	game.battle_timer = 0
+	var view = game.view
+	view.begin_battle(run, battle)
+	game._refresh()
+	await process_frame
+	var swarm = view.battle_dolls.enemy_1
+	var spider = view.battle_dolls.enemy_0
+	var point: Vector2 = view.camera.unproject_position(swarm.body.global_position + Vector3.UP * 0.54)
+	var motion = InputEventMouseMotion.new()
+	motion.position = point
+	root.push_input(motion, true)
+	await process_frame
+	var targeting = view.battle_targeting
+	expect(targeting.hovered_id == "enemy_1" and targeting.preview.visible and game.selected_target == "enemy_0", "Hover previews the battlefield target without changing selection")
+	var old_spider: Vector3 = spider.global_position
+	spider.global_position = swarm.global_position + view.camera.project_ray_normal(point) * 1.25
+	expect(view._battle_enemy_at(point) == "enemy_1", "Overlapping enemy volumes favor the one closer to the camera")
+	spider.global_position = old_spider
+	var unchanged = JSON.stringify(battle.enemies)
+	click_at(point)
+	expect(game.selected_target == "enemy_1" and targeting.selected_id == "enemy_1" and targeting.selected.visible
+		and find_button(game.ui, "◆ 巢鸣蜂群") != null and JSON.stringify(battle.enemies) == unchanged,
+		"Clicking the enemy model selects it, synchronizes the card and does not attack")
+	var card = game.ui.find_child("EnemyCard_enemy_0", true, false)
+	await process_frame
+	var label = card.find_children("*", "Label", true, false)[0]
+	click_at(label.get_global_rect().get_center())
+	expect(game.selected_target == "enemy_0" and targeting.selected_id == "enemy_0", "Clicking the card description selects the same battlefield target")
+	click_at(root.get_visible_rect().size * Vector2(0.50, 0.25))
+	expect(game.selected_target == "enemy_0", "Clicking empty space keeps the current target")
+	game._item_dialog("hero")
+	click_at(point)
+	expect(game.selected_target == "enemy_0", "A modal blocks battlefield selection")
+	game._close_modal()
+	var base_point: Vector2 = view.camera.unproject_position(swarm.global_position + Vector3.UP * 0.035)
+	click_at(base_point)
+	expect(game.selected_target == "enemy_1", "Clicking the enemy's base also selects it")
+	if DisplayServer.get_name() != "headless":
+		await create_timer(0.26).timeout
+		await RenderingServer.frame_post_draw
+		root.get_texture().get_image().save_png("user://battle-target-selection.png")
+	var spider_hp = battle.enemies.enemy_0.hp
+	var swarm_hp = battle.enemies.enemy_1.hp
+	await press("普攻")
+	expect(battle.enemies.enemy_0.hp == spider_hp and battle.enemies.enemy_1.hp < swarm_hp,
+		"Single-target attacks damage the selected enemy")
+	battle.enemies.enemy_1.hp = 0
+	game._after_combat_step()
+	expect(game.selected_target == "enemy_0" and targeting.selected_id == "enemy_0", "Defeated targets automatically pass selection to a surviving enemy")
+	game.view.end_battle()
+	expect(not targeting.selected.visible and not targeting.preview.visible, "Leaving battle clears the markers")
+
 func execute() -> void:
 	game = Main.instantiate()
 	root.add_child(game)
@@ -112,6 +185,7 @@ func execute() -> void:
 	var restored = load("res://scripts/domain/expedition.gd").new()
 	restored.save_path = run.save_path
 	expect(restored.load_game().ok and restored.data.pending_battle.is_empty(), "Retreat state is a stable checkpoint")
+	await check_battle_targeting()
 	await create_timer(0.25).timeout
 	game.queue_free()
 	await create_timer(0.05).timeout
