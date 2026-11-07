@@ -104,6 +104,23 @@ func check_battle_drop(run: RefCounted) -> void:
 	expect(run.load_game().ok and run.data.relic_checks["battle:0,0:"] == "ranged_sight"
 		and run.roll_relic("battle:0,0:", ["lamp_badge"], 1.0, "hero", "0,0").is_empty(), "Battle settlement and reward are saved together without a reroll")
 
+func check_victory_intro(save_path: String) -> void:
+	var game = Main.instantiate()
+	root.add_child(game)
+	await process_frame
+	game.run.save_path = save_path
+	game._continue_run()
+	var result = game.modal_layer.get_node_or_null("VictoryScreen")
+	expect(result != null and not game.modal_layer.has_node("StoryScreen"), "Battle loot opens the settlement before the relic intro")
+	if result != null:
+		for button in result.find_children("*", "Button", true, false):
+			if button.text == "继续远征":
+				button.pressed.emit()
+				break
+		expect(game.modal_layer.has_node("StoryScreen") and game.run.relic_intro().get("id") == "ranged_sight",
+			"Acknowledging victory opens the earned relic introduction")
+	game.queue_free()
+
 func click_story() -> void:
 	for pressed in [true, false]:
 		var input = InputEventMouseButton.new()
@@ -178,6 +195,7 @@ func execute() -> void:
 	check_effects(run)
 	check_fixed_rewards(run)
 	check_battle_drop(run)
+	await check_victory_intro(run.save_path)
 	await check_exploration()
 	await create_timer(0.3).timeout
 	print("RELICS: %d checks, %d failures" % [checks, failures])

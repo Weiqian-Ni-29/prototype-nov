@@ -96,4 +96,4 @@ static func skill_description(id: String) -> String:
 	return " · ".join(parts)
 
 static func passive_description(id: String) -> String:
-	return {"hero": "职业决定各自的生命、魔力、机动与技能。", "cen": "未烧毁森林采集额外 +1。", "lorne": "山地移动只需 1 AP。", "eve": "同地可行动时，休整恢复额外 +10 个百分点。", "grit": "辨识附近已发现敌人；在场时令低于 35% HP 的队友减伤 20%。", "ember": "可花 1 AP / 8 MP 点燃当前干燥森林。", "tide": "可花 1 AP / 8 MP 对当前地块灭火或浸湿。"}.get(id, "")
+	return {"hero": "职业决定各自的生命、魔力、机动与技能。", "cen": "未烧毁森林采集额外 +1。", "lorne": "山地移动只需 1 精力。", "eve": "同地可行动时，休整恢复额外 +10 个百分点。", "grit": "辨识附近已发现敌人；在场时令低于 35% HP 的队友减伤 20%。", "ember": "可花 1 精力 / 8 MP 点燃当前干燥森林。", "tide": "可花 1 精力 / 8 MP 对当前地块灭火或浸湿。"}.get(id, "")

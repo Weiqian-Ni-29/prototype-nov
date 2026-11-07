@@ -81,6 +81,8 @@ func _ready() -> void:
 	theme.set_stylebox("pressed", "Button", _style(Color("53604a"), gold, 6))
 	theme.set_stylebox("disabled", "Button", _style(Color("22332f"), Color("34463d"), 6))
 	theme.set_color("font_disabled_color", "Button", Color("718077"))
+	theme.set_color("font_color", "TooltipLabel", ink)
+	theme.set_stylebox("panel", "TooltipPanel", _style(Color("19332f"), gold.darkened(0.25), 8))
 	theme.set_stylebox("panel", "PopupMenu", _style(Color("233c36"), gold, 6))
 	theme.set_stylebox("normal", "LineEdit", _style(Color("213831"), Color("647460"), 5))
 	theme.set_stylebox("background", "ProgressBar", _bar_style(Color("152d2b")))
@@ -261,7 +263,7 @@ func _profession_picker(screen: Vector2) -> void:
 	for id in Catalog.PROFESSIONS:
 		var p = Catalog.PROFESSIONS[id]
 		var selected = id == chosen_profession
-		var title = ("◆ " if selected else "◇ ") + p.name + "   HP %d · MP %d · AP %d" % [p.hp, p.mp, p.ap]
+		var title = ("◆ " if selected else "◇ ") + p.name + "   HP %d · MP %d · 精力 %d" % [p.hp, p.mp, p.ap]
 		var option = _button(options, title + "\n" + p.description, _choose_profession.bind(id))
 		option.custom_minimum_size.y = 80
 		option.alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -345,6 +347,8 @@ func _continue_run() -> void:
 	_refresh()
 	if not run.data.pending_battle.is_empty():
 		_formation_dialog()
+	elif run.data.has("pending_victory"):
+		_victory_dialog()
 	else:
 		_show_relic_intro()
 
@@ -412,7 +416,7 @@ func _crew_panel(screen: Vector2) -> void:
 		var text = ("◆ " if selected_id == id else "") + a.name + ("  重伤" if a.hp <= 0 else "")
 		var button = _button(row, text, _select_actor.bind(id))
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		_text(roster, "HP %d/%d   MP %d/%d\nAP %d/%d  ·  充能 %d%%" % [a.hp, a.hp_max, a.mp, a.mp_max, a.ap, a.ap_max, a.energy], 13, muted)
+		_text(roster, "HP %d/%d   MP %d/%d\n精力 %d/%d  ·  充能 %d%%" % [a.hp, a.hp_max, a.mp, a.mp_max, a.ap, a.ap_max, a.energy], 13, muted)
 		var bar = ProgressBar.new()
 		bar.value = float(a.hp) / a.hp_max * 100
 		bar.show_percentage = false
@@ -439,7 +443,7 @@ func _cell_actions() -> void:
 		_text(box, " / ".join(states), 16, gold)
 	if run.knows_encounter(cell):
 		_text(box, "驻守敌人 · 强度固定", 18, Color("e4ab87"))
-		_text(box, "首次上场每人 2 AP；同地最多四名角色出战。", 14, muted)
+		_text(box, "首次上场每人 2 精力；同地最多四名角色出战。", 14, muted)
 		for enemy in t.enemies:
 			_text(box, Catalog.ENEMIES[enemy].name + " · " + Catalog.ENEMIES[enemy].role, 14, muted)
 			if run.actor("grit").joined and run.actor("grit").hp > 0 and run.actor("grit").position == cell:
@@ -458,7 +462,7 @@ func _cell_actions() -> void:
 			_button(box, "与 " + run.actor(id).name + " 交谈", _talk.bind(id))
 	if t.quantity > 0:
 		_text(box, "可采集：%s ×%d" % [Catalog.item_name(t.resource), t.quantity], 16, muted)
-		_button(box, "采集 · 1 AP", func(): _close_modal(); _run_action(run.collect(selected_id)))
+		_button(box, "采集 · 1 精力", func(): _close_modal(); _run_action(run.collect(selected_id)))
 	var relic: String = run.relic_sites.get(cell, "")
 	if not relic.is_empty() and not run.has_relic(relic) and t.enemies.is_empty() and not run.data.relic_checks.has("site:" + cell):
 		_button(box, "调查" + Relics.SITES[relic][0], func():
@@ -467,15 +471,15 @@ func _cell_actions() -> void:
 			_run_action(result)
 			if result.ok and not _show_relic_intro():
 				_notice(result.message))
-	_button(box, "使用物资 / 同地救援", _item_dialog.bind(selected_id))
+	_button(box, "使用道具 / 同地救援", _item_dialog.bind(selected_id))
 	if actor.skill == "heal":
-		_button(box, "治疗队友 · 1 AP / 12 MP", _healing_dialog)
+		_button(box, "治疗队友 · 1 精力 / 12 MP", _healing_dialog)
 	if actor.skill == "ember":
-		_button(box, "点燃林地 · 1 AP / 8 MP", func(): _close_modal(); _run_action(run.environmental_skill(selected_id, "ignite")))
+		_button(box, "点燃林地 · 1 精力 / 8 MP", func(): _close_modal(); _run_action(run.environmental_skill(selected_id, "ignite")))
 	if actor.skill == "torrent":
-		_button(box, "灭火 / 浸湿 · 1 AP / 8 MP", func(): _close_modal(); _run_action(run.environmental_skill(selected_id, "wet")))
-	_button(box, "休整 · 2 AP", func(): _close_modal(); _run_action(run.rest(selected_id)))
-	_button(box, "建营 · 2 AP / 2 木料", func(): _close_modal(); _run_action(run.build_camp(selected_id)), t.camp)
+		_button(box, "灭火 / 浸湿 · 1 精力 / 8 MP", func(): _close_modal(); _run_action(run.environmental_skill(selected_id, "wet")))
+	_button(box, "休整 · 2 精力", func(): _close_modal(); _run_action(run.rest(selected_id)))
+	_button(box, "建营 · 2 精力 / 2 木料", func(): _close_modal(); _run_action(run.build_camp(selected_id)), t.camp)
 	if cell == run.data.exit and run.actor("hero").position == run.data.exit:
 		_button(box, "确认撤离 / 继续等待", _extraction_dialog)
 	_button(dialog, "关闭", _close_modal)
@@ -485,7 +489,7 @@ func _footer(screen: Vector2) -> void:
 	_text(box, toast_text if toast_text != "" else "旅途记录", 15, gold)
 	var lines: Array[String] = []
 	for line in run.data.log.slice(maxi(0, run.data.log.size() - 3)):
-		lines.append(str(line))
+		lines.append(str(line).replace(" AP", " 精力").replace("行动点", "精力"))
 	_text(box, "\n".join(lines), 14, muted)
 
 func _toggle_mover(value: bool, id: String) -> void:
@@ -591,8 +595,8 @@ func _end_day_dialog() -> void:
 	var remaining: Array[String] = []
 	for id in run.joined_ids():
 		if run.actor(id).ap > 0 and run.actor(id).hp > 0:
-			remaining.append("%s %d AP" % [run.actor(id).name, run.actor(id).ap])
-	_confirm("结束这一天？", "尚余：" + " / ".join(remaining) + "\n\n全队进入次日，HP/MP 部分恢复、AP 回各自上限；重伤不会自行站起。火势按日结算。", func(): _run_action(run.end_day()))
+			remaining.append("%s %d 精力" % [run.actor(id).name, run.actor(id).ap])
+	_confirm("结束这一天？", "尚余：" + " / ".join(remaining) + "\n\n全队进入次日，HP/MP 部分恢复、精力回各自上限；重伤不会自行站起。火势按日结算。", func(): _run_action(run.end_day()))
 
 func _extraction_dialog() -> void:
 	var preview = run.extraction_preview()
@@ -665,7 +669,7 @@ func _inventory_dialog(id: String, current_tab: int = 0) -> void:
 
 func _transfer_dialog(owner: String, item: String) -> void:
 	var box = _modal("同地交接 · " + Story.DOCUMENTS.get(item, Catalog.item_name(item)), 650, 540)
-	_text(box, "每次交接一件，不消耗行动点。已装备的物品需先卸下。", 17, muted)
+	_text(box, "每次交接一件，不消耗精力。已装备的物品需先卸下。", 17, muted)
 	var content = _scroll_content(box)
 	for other in run.same_cell(run.actor(owner).position):
 		if other != owner:
@@ -679,8 +683,8 @@ func _transfer_dialog(owner: String, item: String) -> void:
 	_button(box, "返回背包", _inventory_dialog.bind(owner, _inventory_tab(item)))
 
 func _item_dialog(user_id: String) -> void:
-	var box = _modal("使用物资 · " + run.actor(user_id).name, 650, 460)
-	_text(box, "地图使用不耗 AP；战斗中不占正常行动，可使用多件。", 16, muted)
+	var box = _modal("使用道具 · " + run.actor(user_id).name, 650, 460)
+	_text(box, "地图使用不耗精力；战斗中不占正常行动，可使用多件。", 16, muted)
 	var targets: Array = []
 	if combat != null:
 		targets = combat.active.duplicate()
@@ -723,12 +727,12 @@ func _formation_dialog() -> void:
 	var encounter = run.data.pending_battle
 	var box = _modal("选择出战阵容 · 最多四人", 700, 620)
 	var surprise = encounter.ambush or encounter.get("surprise", false)
-	_text(box, "每人本场首次上场支付 2 AP；同地候补可换入。" + ("\n突发遭遇：行动点不足仍可出战，最多扣至 0。" if surprise else ""), 17, muted)
+	_text(box, "每人本场首次上场支付 2 精力；同地候补可换入。" + ("\n突发遭遇：精力不足仍可出战，最多扣至 0。" if surprise else ""), 17, muted)
 	var chosen: Array = []
 	for id in run.same_cell(encounter.position, true):
 		var eligible = Combat.can_deploy(run.actor(id), encounter)
 		var toggle = CheckBox.new()
-		toggle.text = "%s · HP %d/%d · AP %d" % [run.actor(id).name, run.actor(id).hp, run.actor(id).hp_max, run.actor(id).ap]
+		toggle.text = "%s · HP %d/%d · 精力 %d" % [run.actor(id).name, run.actor(id).hp, run.actor(id).hp_max, run.actor(id).ap]
 		toggle.disabled = not eligible
 		if eligible and chosen.size() < 4:
 			chosen.append(id)
@@ -771,42 +775,81 @@ func _battle_ui(screen: Vector2) -> void:
 		_text(left, ("▶ " if view.presentation_actor(combat.current) == id else "") + a.name + (" · 盾%d" % shown_shield if shown_shield > 0 else ""), 19, ink if shown_hp > 0 else muted)
 		_text(left, "HP %d/%d · MP %d/%d" % [shown_hp, a.hp_max, a.mp, a.mp_max], 14, muted)
 		_hp_bar(left, shown_hp, a.hp_max)
-		_button(left, "%d%% · " % a.energy + Catalog.SKILLS[a.ultimate].name, _ultimate.bind(id), a.energy < 100 or a.hp <= 0)
+		var ultimate = _button(left, "%d%% · " % a.energy + Catalog.SKILLS[a.ultimate].name, _ultimate.bind(id), a.energy < 100 or a.hp <= 0)
+		ultimate.tooltip_text = "%s\n%s\n充能达到 100%% 时可释放，不占正常行动。" % [Catalog.SKILLS[a.ultimate].name, Catalog.skill_description(a.ultimate)]
 	var right_outer = _panel(ui, Rect2(screen.x - 330, 120, 310, screen.y - 275))
 	_text(right_outer, "敌方阵容", 24, gold)
 	var right = _scroll_content(right_outer)
-	right.add_theme_constant_override("separation", 4)
+	right.add_theme_constant_override("separation", 9)
+	var counts = {}
+	for enemy in combat.enemies.values():
+		counts[enemy.name] = int(counts.get(enemy.name, 0)) + 1
+	var display_names = {}
+	var numbers = {}
 	for id in combat.enemies:
 		var e = combat.enemies[id]
-		var shown_hp = view.display_hp(id,int(e.hp))
-		_button(right, ("◆ " if selected_target == id else "") + e.name, func(): selected_target = id; _refresh(), e.hp <= 0)
-		_text(right, "HP %d/%d · %s\n%s" % [shown_hp, e.hp_max, "蓄力中！" if e.charged else "行动蓄积", e.role], 14, muted)
-		_hp_bar(right, shown_hp, e.hp_max, true)
+		numbers[e.name] = int(numbers.get(e.name, 0)) + 1
+		var name: String = e.name + (" %d号" % numbers[e.name] if counts[e.name] > 1 else "")
+		display_names[id] = name
+		_enemy_card(right, id, name)
 	var timeline: Array[String] = []
 	for entry in combat.timeline(6):
-		timeline.append(combat.unit(entry.id).name)
-	_text(right, "行动顺序\n" + " → ".join(timeline), 14, gold)
+		timeline.append(display_names.get(entry.id, combat.unit(entry.id).name))
+	if not timeline.is_empty():
+		right_outer.add_child(HSeparator.new())
+		_text(right_outer, "行动顺序\n" + " → ".join(timeline), 14, gold)
 	var center = _panel(ui, Rect2(290, screen.y - 305, screen.x - 640, 155))
 	var is_friendly = combat.current != "" and not combat.enemies.has(combat.current) and combat.outcome == "" and battle_timer <= 0 and not view.is_animating()
 	_text(center, view.presentation_title((combat.unit(combat.current).name + " 的行动") if combat.current != "" else "战斗结算"), 20, gold)
 	var commands = HBoxContainer.new()
 	center.add_child(commands)
-	_button(commands, "普攻", func(): _combat_action("attack"), not is_friendly)
-	var skill_id = str(combat.unit(combat.current).get("skill", "attack")) if is_friendly else "attack"
-	_button(commands, Catalog.SKILLS.get(skill_id, Catalog.SKILLS.attack).name, func(): _combat_action(skill_id), not is_friendly)
-	_button(commands, "防守", func(): _combat_action("guard"), not is_friendly)
-	_button(commands, "物资", func(): _item_dialog(combat.current), not is_friendly)
-	_button(commands, "换人", _swap_dialog, not is_friendly or combat.reserves().is_empty())
-	_button(commands, "自动 ON" if combat.auto_mode else "自动 OFF", func(): combat.auto_mode = not combat.auto_mode; _refresh())
-	_button(commands, "自动可点火" if combat.allow_auto_ignite else "自动保林", func(): combat.allow_auto_ignite = not combat.allow_auto_ignite; _refresh())
-	_button(commands, "撤退", func(): _confirm("撤退？", "已付 AP 不退还；本战出战者承受 10% 最大生命损伤，敌人恢复。", func(): _run_action(combat.retreat()); _finish_battle()))
+	var actor_id = str(combat.current) if is_friendly else ""
+	var attack = _button(commands, "普攻", func(): _combat_action("attack"), not is_friendly)
+	attack.tooltip_text = "普通攻击\n" + _combat_skill_hint("attack", actor_id)
+	var skill_id = str(combat.unit(combat.current).get("skill", "attack")) if combat.current in combat.active else "attack"
+	var skill = _button(commands, Catalog.SKILLS[skill_id].name, func(): _combat_action(skill_id), not is_friendly)
+	skill.tooltip_text = Catalog.SKILLS[skill_id].name + "\n" + _combat_skill_hint(skill_id, actor_id)
+	var guard = _button(commands, "防守", func(): _combat_action("guard"), not is_friendly)
+	guard.tooltip_text = "防守\n下次正常行动前受到的伤害降低，并获得 10% 充能。"
+	var items = _button(commands, "道具", func(): _item_dialog(combat.current), not is_friendly)
+	items.tooltip_text = "使用当前角色背包中的恢复道具。\n可给在场队友使用，不占正常行动。"
+	var swap = _button(commands, "换人", _swap_dialog, not is_friendly or combat.reserves().is_empty())
+	swap.tooltip_text = "用同地候补换下当前角色，消耗本次正常行动。\n每名候补首次上场支付参战精力。"
+	var auto = _button(commands, "自动 ON" if combat.auto_mode else "自动 OFF", func(): combat.auto_mode = not combat.auto_mode; _refresh())
+	auto.tooltip_text = "切换自动战斗，由队员自动选择并执行战斗指令。"
+	var fire_policy = _button(commands, "自动可点火" if combat.allow_auto_ignite else "自动保林", func(): combat.allow_auto_ignite = not combat.allow_auto_ignite; _refresh())
+	fire_policy.tooltip_text = "切换自动战斗的点火策略，控制自动使用的技能能否引燃林地。"
+	var retreat_hint = "已付精力不退还；本战出战者承受 10% 最大生命损伤，敌人恢复。"
+	var retreat = _button(commands, "撤退", func(): _confirm("撤退？", retreat_hint, func(): _run_action(combat.retreat()); _finish_battle()))
+	retreat.tooltip_text = retreat_hint
 	var terrain = run.data.tiles[combat.position]
 	var context = "场地：" + Catalog.terrain_name(terrain.terrain) + (" · 燃烧" if terrain.burning else " · 潮湿" if terrain.wet_until > run.data.day else "")
 	if is_friendly:
-		context += "\n" + Catalog.skill_description(skill_id)
-		if selected_target in combat.alive_enemies() and Catalog.SKILLS[skill_id].target == "enemy":
-			context += " · 预计基础伤害 %d（护盾/防守等另计）" % combat.damage_preview(combat.current, selected_target, skill_id)
+		context += "\n" + _combat_skill_hint(skill_id, actor_id)
 	_text(center, context, 12, muted)
+
+func _enemy_card(parent: VBoxContainer, id: String, title: String) -> void:
+	var enemy = combat.enemies[id]
+	var selected = selected_target == id and enemy.hp > 0
+	var shown_hp = view.display_hp(id, int(enemy.hp))
+	var panel = PanelContainer.new()
+	panel.name = "EnemyCard_" + id
+	panel.add_theme_stylebox_override("panel", _style(Color("31463d") if selected else Color("203b35"),
+		gold if selected else Color("50675c"), 8))
+	parent.add_child(panel)
+	var card = VBoxContainer.new()
+	card.add_theme_constant_override("separation", 4)
+	panel.add_child(card)
+	_button(card, ("◆ " if selected else "") + title, func(): selected_target = id; _refresh(), enemy.hp <= 0)
+	var status = "已击败" if shown_hp <= 0 else "蓄力中！" if enemy.charged else "行动蓄积"
+	_text(card, "HP %d/%d · %s\n%s" % [shown_hp, enemy.hp_max, status, enemy.role], 14, muted)
+	_hp_bar(card, shown_hp, enemy.hp_max, true)
+
+func _combat_skill_hint(skill_id: String, actor_id: String) -> String:
+	var hint = Catalog.skill_description(skill_id)
+	if not actor_id.is_empty() and selected_target in combat.alive_enemies() and Catalog.SKILLS[skill_id].target == "enemy":
+		hint += " · 预计基础伤害 %d（护盾和防守另计）" % combat.damage_preview(actor_id, selected_target, skill_id)
+	return hint
 
 func _combat_action(skill_id: String) -> void:
 	if skill_id != "guard" and Catalog.SKILLS[skill_id].target == "ally":
@@ -838,7 +881,7 @@ func _ultimate(id: String) -> void:
 func _swap_dialog() -> void:
 	var box = _modal("换入同地候补", 600, 500)
 	for id in combat.reserves():
-		_button(box, run.actor(id).name + " · HP %d · AP %d" % [run.actor(id).hp, run.actor(id).ap], func(): _close_modal(); _run_action(combat.swap(id)); _after_combat_step())
+		_button(box, run.actor(id).name + " · HP %d · 精力 %d" % [run.actor(id).hp, run.actor(id).ap], func(): _close_modal(); _run_action(combat.swap(id)); _after_combat_step())
 	_button(box, "取消", _close_modal)
 
 func _after_combat_step() -> void:
@@ -853,15 +896,56 @@ func _after_combat_step() -> void:
 func _finish_battle() -> void:
 	if combat == null or combat.outcome == "":
 		return
-	if combat.outcome=="victory": sound.play("victory")
+	var victory = combat.outcome == "victory"
 	combat = null
-	view.end_battle()
 	selected_cell = run.actor(selected_id).position
+	if victory:
+		sound.play("victory")
+		_victory_dialog()
+		return
+	view.end_battle()
 	_refresh()
 	if run.data.status == "failed":
 		_ending_story()
 	else:
 		_show_relic_intro()
+
+func _victory_dialog() -> void:
+	var result: Dictionary = run.data.pending_victory
+	var box = _modal("战斗胜利", 700, 530)
+	box.get_parent().name = "VictoryScreen"
+	ui.hide()
+	var content = _scroll_content(box)
+	_text(content, "已击败 %d 名敌人" % int(result.enemies), 19, muted)
+	_text(content, "战利品", 20, gold)
+	if not result.salve_receiver.is_empty():
+		_text(content, "疗伤药 ×1 · %s 收入背包" % run.actor(result.salve_receiver).name, 17)
+	if not result.relic.is_empty():
+		_text(content, "发现遗器 · " + Relics.DATA[result.relic].name, 17, gold)
+	if result.salve_receiver.is_empty() and result.relic.is_empty():
+		_text(content, "本场没有新增战利品。", 17, muted)
+	content.add_child(HSeparator.new())
+	_text(content, "参战队员", 20, gold)
+	for id in result.members:
+		var actor = run.actor(id)
+		var recovered = " · 倒下后已恢复至 1 HP" if id in result.revived else ""
+		_text(content, "%s · HP %d/%d · MP %d/%d%s" % [actor.name, actor.hp, actor.hp_max, actor.mp, actor.mp_max, recovered], 16)
+	var save_error = _text(box, "", 15, gold)
+	save_error.hide()
+	var next = _button(box, "继续远征", func():
+		run.data.erase("pending_victory")
+		var saved = run.save_game()
+		if not saved.ok:
+			run.data.pending_victory = result
+			save_error.text = saved.message
+			save_error.show()
+			return
+		if view.battle_mode:
+			view.end_battle()
+		_close_modal()
+		_refresh()
+		_show_relic_intro())
+	next.grab_focus()
 
 func _process(delta: float) -> void:
 	if combat == null:

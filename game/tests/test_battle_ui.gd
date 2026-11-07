@@ -53,7 +53,7 @@ func execute() -> void:
 	for id in Catalog.COMPANIONS:
 		run.actor(id).position = p
 		run.join_companion(id)
-	run.data.tiles[p].enemies = ["lamp_boss"]
+	run.data.tiles[p].enemies = ["lamp_boss", "boar", "boar"]
 	var b = Combat.new()
 	expect(b.begin(run, {"position": p, "origin": p, "ambush": false, "movers": [], "npc": ""}, ["hero", "cen", "eve", "tide"]).ok, "Battle UI fixture begins")
 	game.combat = b
@@ -61,6 +61,21 @@ func execute() -> void:
 	game.view.begin_battle(run, b)
 	game._refresh()
 	expect(b.current == "hero", "Fixture begins on protagonist normal action")
+	var cards = game.ui.find_children("EnemyCard_*", "PanelContainer", true, false)
+	var card_contents_match = cards.all(func(card):
+		return (card.find_children("*", "Button", true, false).size() == 1
+			and card.find_children("*", "Label", true, false).size() == 1
+			and card.find_children("*", "ProgressBar", true, false).size() == 1))
+	expect(cards.size() == 3 and card_contents_match, "Each enemy card groups name, status, role and HP bar")
+	await press("棘背兽 2号")
+	expect(game.selected_target == "enemy_2" and find_button(game.ui, "◆ 棘背兽 2号") != null
+		and find_button(game.ui, "棘背兽 1号") != null, "Same-name enemies can be distinguished and selected")
+	for command in ["普攻", "巡路连射", "防守", "道具", "换人", "自动 OFF", "自动保林", "撤退", "0% · 归途号令"]:
+		var button = find_button(game.ui, command)
+		expect(button != null and not button.tooltip_text.is_empty(), "Command has hover help: " + command)
+	var skill = find_button(game.ui, "巡路连射")
+	expect(skill != null and "8 MP" in skill.tooltip_text and "敌方单体" in skill.tooltip_text
+		and "预计基础伤害" in skill.tooltip_text, "Skill hover help explains cost, target and damage preview")
 	# Full energy is a deliberate UI fixture. Charging itself is verified by domain checks.
 	run.actor("hero").energy = 100
 	game._refresh()
@@ -72,7 +87,7 @@ func execute() -> void:
 	game._refresh()
 	var original_item_count = run.actor("hero").inventory.salve
 	run.actor("hero").hp = 20
-	await press("物资")
+	await press("道具")
 	await press("疗伤药")
 	expect(run.actor("hero").inventory.salve == original_item_count - 1 and b.current == "hero", "Battle item button consumes item without consuming action")
 	await press("用完了，返回")

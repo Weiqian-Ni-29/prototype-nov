@@ -113,9 +113,9 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 		if run.data.story[subject].relation == "unmet":
 			run.data.story[subject].relation = "met"
 		if npc.hp <= 0:
-			var rescue_choices = [_choice("rescue", "使用个人物资救援", _has(visitor, "salve"), "需要携带疗伤药")]
+			var rescue_choices = [_choice("rescue", "使用个人道具救援", _has(visitor, "salve"), "需要携带疗伤药")]
 			if actor.skill == "heal":
-				rescue_choices.append(_choice("rescue_skill", "治疗救援 · 1 AP / 12 MP", can_investigate and actor.mp >= 12, "需要 1 AP 和 12 MP"))
+				rescue_choices.append(_choice("rescue_skill", "治疗救援 · 1 精力 / 12 MP", can_investigate and actor.mp >= 12, "需要 1 精力 和 12 MP"))
 			rescue_choices.append(_choice("leave", "暂时离开，保留回访机会"))
 			return {"ok": true, "subject": subject, "title": title, "text": "对方仍昏迷着，无法交谈。可由同地队友使用疗伤药或治疗技能救援。", "options": rescue_choices}
 		match subject:
@@ -173,7 +173,7 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 					if run.actor(ally_id).ap >= Catalog.BATTLE_AP:
 						can_deploy = true
 						break
-				var duel_reason = "弥烬已经同行。" if npc.joined else "至少一名同地队员需要 %d AP 才能参战。" % Catalog.BATTLE_AP
+				var duel_reason = "弥烬已经同行。" if npc.joined else "至少一名同地队员需要 %d 精力 才能参战。" % Catalog.BATTLE_AP
 				options.append(_choice("duel", "普通交战：承担重伤与远征失败风险", not npc.joined and can_deploy, duel_reason))
 				if flags.get("duel_won_ember", false):
 					flags["invite_ember"] = true
@@ -187,8 +187,8 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 				options.append(_choice("water_draft", "借取她实际持有的旧水文稿", _has("tide", "Q-WA"), "原稿已交给实际持有人"))
 				var at_water = run.data.tiles[run.actor(visitor).position].site == "water"
 				options.append(_choice("water_observe", "观察现场石壁与流向", at_water, "需实际到水文台"))
-				options.append(_choice("water_rubbing", "调查石匣，取得旧水位拓片 · 1 AP", at_water and can_investigate and not flags.get("taken_Q-WB", false), "原件需仍在现场，且需要 1 AP"))
-				options.append(_choice("water_maintenance", "调查背侧档案槽，取得维护页 · 1 AP", at_water and can_investigate and not flags.get("taken_Q-WC", false), "原件需仍在现场，且需要 1 AP"))
+				options.append(_choice("water_rubbing", "调查石匣，取得旧水位拓片 · 1 精力", at_water and can_investigate and not flags.get("taken_Q-WB", false), "原件需仍在现场，且需要 1 精力"))
+				options.append(_choice("water_maintenance", "调查背侧档案槽，取得维护页 · 1 精力", at_water and can_investigate and not flags.get("taken_Q-WC", false), "原件需仍在现场，且需要 1 精力"))
 				var observed = _knows(visitor, "water_wall") and _knows(visitor, "water_rubbing") and (_has(visitor, "Q-WA") or visitor == "tide" or _knows(visitor, "water_draft"))
 				options.append(_choice("annotate", "保留原稿，加注真实观测差异", observed, "需现场观测并核对旧稿"))
 				options.append(_choice("limited", "只写可证明的事实，不推断动机", observed, "需实际完成核对"))
@@ -198,7 +198,7 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 				if _has(visitor, "Q-GAUGE"):
 					options.append(_choice("return_gauge", "交还修好的水位标尺"))
 		if not npc.joined:
-			options.append(_choice("join", "邀请同行；不额外消耗行动点", flags.get("invite_" + subject, false), "先满足角色清楚说明的同行条件"))
+			options.append(_choice("join", "邀请同行；不额外消耗精力", flags.get("invite_" + subject, false), "先满足角色清楚说明的同行条件"))
 			options.append(_choice("decline", "这次不同行，但保留已经完成的帮助"))
 			options.append(_choice("later", "暂缓决定，之后再来"))
 		else:
@@ -233,13 +233,13 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 				title = "旧调度柜 · 同一批次的两种记录"
 				text = "柜里的接应回执写着：告知已送达，接应未实施。它与摘要属于同一批次，不能证明今天居民的意愿。"
 				_learn(visitor, "record_seen")
-				options.append(_choice("take_record", "实际调查并取出原始回执 · 1 AP", can_investigate and not flags.get("taken_Q-B", false), "原件需仍在现场，且需要 1 AP"))
+				options.append(_choice("take_record", "实际调查并取出原始回执 · 1 精力", can_investigate and not flags.get("taken_Q-B", false), "原件需仍在现场，且需要 1 精力"))
 			"water":
 				title = "水文台 · 现场与档案槽"
 				text = "即使澄汐已经离开，刻度、石匣与背侧档案槽仍在原处。任何角色都可以调查，不需要先掌握水魔法。"
 				options.append(_choice("water_observe", "观察现场石壁与流向"))
-				options.append(_choice("water_rubbing", "调查石匣，取得旧水位拓片 · 1 AP", can_investigate and not flags.get("taken_Q-WB", false), "原件需仍在现场，且需要 1 AP"))
-				options.append(_choice("water_maintenance", "调查背侧档案槽，取得维护页 · 1 AP", can_investigate and not flags.get("taken_Q-WC", false), "原件需仍在现场，且需要 1 AP"))
+				options.append(_choice("water_rubbing", "调查石匣，取得旧水位拓片 · 1 精力", can_investigate and not flags.get("taken_Q-WB", false), "原件需仍在现场，且需要 1 精力"))
+				options.append(_choice("water_maintenance", "调查背侧档案槽，取得维护页 · 1 精力", can_investigate and not flags.get("taken_Q-WC", false), "原件需仍在现场，且需要 1 精力"))
 				if _knows(visitor, "water_wall") and not flags.get("taken_Q-GAUGE", false):
 					options.append(_choice("repair_gauge", "按石壁刻度修复水位标尺"))
 			"track":

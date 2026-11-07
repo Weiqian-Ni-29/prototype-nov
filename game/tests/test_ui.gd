@@ -190,6 +190,7 @@ func execute() -> void:
 	expect(has_opening_choice("order"), "The commission branch is recorded on departure")
 	expect(game.run.actor("hero").hp_max == 145 and game.run.actor("hero").ap == 5, "Profession affects actual character")
 	expect(game.run.joined_ids() == ["hero"] and game.view.dolls.keys() == ["hero"], "Starting view shows only the lone protagonist")
+	expect(contains_text(game.ui, "精力 5/5") and not contains_text(game.ui, "AP "), "Roster labels the movement resource as effort")
 	expect(contains_text(game.ui, "探索度：3%") and contains_text(game.ui, "找到岛上的撤离点")
 		and not contains_text(game.ui, "明日") and not contains_text(game.ui, "揭雾") and find_button(game.ui, "保存") == null,
 		"HUD uses an exploration percentage and objective, with today's weather and no manual save")

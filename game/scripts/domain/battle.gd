@@ -32,7 +32,7 @@ func begin(expedition: RefCounted, encounter: Dictionary, formation: Array) -> D
 		if unique.has(id) or a.is_empty() or not a.joined or a.position != position or a.hp <= 0:
 			return {"ok": false, "message": "出战角色须健康、同地且不重复。"}
 		if not can_deploy(a, encounter):
-			return {"ok": false, "message": "%s 参战行动点不足。" % a.name}
+			return {"ok": false, "message": "%s 参战精力不足。" % a.name}
 		unique[id] = true
 	run = expedition
 	pending = encounter.duplicate(true)
@@ -82,7 +82,7 @@ func begin(expedition: RefCounted, encounter: Dictionary, formation: Array) -> D
 		next_time[e.id] = _delay(e.id) * (0.45 if encounter.get("ambush", false) else 1.0)
 	run.data.status = "battle"
 	run.data.battles += 1
-	run.note("战斗开始；每人仅在本场首次上场支付 %d AP。" % Catalog.BATTLE_AP)
+	run.note("战斗开始；每人仅在本场首次上场支付 %d 精力。" % Catalog.BATTLE_AP)
 	seek_next()
 	return {"ok": true}
 
@@ -255,7 +255,7 @@ func environment_multiplier(element: String, target_element: String) -> float:
 
 func use_item(item: String, target_id: String) -> Dictionary:
 	if outcome != "" or enemies.has(current) or current.is_empty() or target_id not in active:
-		return _fail("只在我方本人正常行动窗口用物资，目标须在场。")
+		return _fail("只在我方本人正常行动窗口使用道具，目标须在场。")
 	var before = _unit_view(unit(target_id))
 	var result = run.use_item(current, target_id, item, true)
 	if result.ok:
@@ -484,9 +484,13 @@ func _finish(result: String) -> void:
 			run.data.flags["duel_won_" + npc] = true
 	var reward_key = position + ":" + npc
 	if result == "victory":
+		var revived: Array[String] = []
+		var receiver = ""
+		var relic = ""
 		for id in paid:
 			if unit(id).hp <= 0:
 				unit(id).hp = 1
+				revived.append(id)
 			if not run.data.knowledge.has(id):
 				run.data.knowledge[id] = {}
 			if not run.data.knowledge[id].has("victories"):
@@ -496,7 +500,7 @@ func _finish(result: String) -> void:
 		if npc == "":
 			run.data.tiles[position].enemies = []
 		if not run.data.rewards.has(reward_key):
-			var receiver = str(paid.keys()[0])
+			receiver = str(paid.keys()[0])
 			run.actor(receiver).inventory.salve = int(run.actor(receiver).inventory.get("salve", 0)) + 1
 			run.data.rewards[reward_key] = true
 			if npc.is_empty():
@@ -504,12 +508,15 @@ func _finish(result: String) -> void:
 				var candidates = Relics.battle_rewards(types)
 				if not candidates.is_empty():
 					var elite = types.any(func(type): return type.ends_with("_elite") or type == "lamp_boss")
-					run.roll_relic("battle:" + reward_key, candidates, 0.40 if elite else 0.20, receiver, position)
-		_log("胜利。本战倒下友方恢复至 1 HP，获得一份疗伤药。")
+					relic = run.roll_relic("battle:" + reward_key, candidates, 0.40 if elite else 0.20, receiver, position)
+		run.data.pending_victory = {"enemies": enemies.size(), "members": paid.keys(), "revived": revived,
+			"salve_receiver": receiver, "relic": relic}
+		_log("战斗胜利。" + ("本战倒下的队员恢复至 1 HP。" if not revived.is_empty() else "")
+			+ ("获得一份疗伤药。" if not receiver.is_empty() else ""))
 	elif result == "retreat":
 		for id in pending.get("movers", []):
 			run.actor(id).position = pending.get("origin", position)
-		_log("撤退，不返还行动点、不发胜利奖励；未出战异地角色不受影响。")
+		_log("撤退，不返还精力、不发胜利奖励；未出战异地角色不受影响。")
 	else:
 		_log("战败。重伤者留在遭遇地点。")
 	run.data.pending_battle = {}
