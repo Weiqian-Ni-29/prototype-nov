@@ -1,0 +1,7 @@
+.godot/
+game/builds/
+*.tmp
+test-results/
+.DS_Store
+__pycache__/
+*.py[cod]

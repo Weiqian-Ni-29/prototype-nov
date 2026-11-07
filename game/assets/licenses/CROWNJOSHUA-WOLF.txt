@@ -1,0 +1,15 @@
+Wolf Low Poly (Rigged)
+Author: crownjoshua
+Source: https://opengameart.org/content/wolf-low-poly-rigged
+Author upload: https://opengameart.org/sites/default/files/Wolf_1.zip
+License explicitly attached to the author's upload: CC0 1.0 Universal.
+License: https://creativecommons.org/publicdomain/zero/1.0/
+Retrieved: 2026-11-04
+Archive SHA-256: 6cc13fea5f2a84956dd213c4ae9bc3550ee3f0aed3776968cc70132302c06798
+
+The author's description includes a low-poly wolf, rigged and non-rigged Blender versions,
+OBJ and 3DS exports; attribution is not necessary but appreciated.
+Full CC0 legal text is provided alongside this notice.
+
+Project adaptation: normalized scale, clean FK animation tracks, additional face details,
+new locomotion/combat/support/down clips. The underlying wolf mesh is crownjoshua's work.

@@ -1,0 +1,97 @@
+{
+  "acquired": "2026-11-04",
+  "license": "CC0-1.0",
+  "sources": [
+    {
+      "author": "Kay Lousberg",
+      "pack": "Adventurers 2.0",
+      "tier": "Free 2.0",
+      "page": "https://kaylousberg.itch.io/kaykit-adventurers",
+      "archive_sha256": "abe48f4763fba0896bab486ee9e6d08ca6b5b3884b9601f235c8847ae94dc479",
+      "license_file": "../licenses/KAYKIT-ADVENTURERS-2.0.txt",
+      "selected": [
+        "Characters/gltf/Knight.glb",
+        "Characters/gltf/Ranger.glb",
+        "Characters/gltf/Mage.glb",
+        "Characters/gltf/Rogue.glb",
+        "Characters/gltf/Rogue_Hooded.glb",
+        "Characters/gltf/Barbarian.glb",
+        "Assets/gltf/sword_1handed.gltf",
+        "Assets/gltf/shield_round.gltf",
+        "Assets/gltf/staff.gltf",
+        "Assets/gltf/bow_withString.gltf",
+        "Assets/gltf/arrow_bow.gltf",
+        "Assets/gltf/crossbow_2handed.gltf",
+        "Assets/gltf/arrow_crossbow.gltf"
+      ],
+      "changes": "Select required models/accessories; match identical rest poses; standardize 23 bone names; merge 19 required clips from the same author's free library; remove horizontal root motion; runtime identity palette. Original textures are unchanged."
+    },
+    {
+      "author": "Kay Lousberg",
+      "pack": "Character Animations 1.1",
+      "tier": "Free 1.1",
+      "page": "https://kaylousberg.itch.io/kaykit-character-animations",
+      "archive_sha256": "65882f31f905ad2e953819648a59287cdeab8f623908d5ef701971d3758be20f",
+      "license_file": "../licenses/KAYKIT-ANIMATIONS-1.1.txt",
+      "selected": [
+        "Rig_Medium_General.glb",
+        "Rig_Medium_MovementBasic.glb",
+        "Rig_Medium_CombatMelee.glb",
+        "Rig_Medium_CombatRanged.glb",
+        "Rig_Medium_Simulation.glb"
+      ],
+      "changes": "Only 19 mapped clips are embedded in runtime models. Full downloaded libraries and paid source files are not redistributed."
+    },
+    {
+      "author": "crownjoshua",
+      "pack": "Wolf Low Poly (Rigged)",
+      "tier": "Author's free Wolf_1.zip",
+      "page": "https://opengameart.org/content/wolf-low-poly-rigged",
+      "archive": "https://opengameart.org/sites/default/files/Wolf_1.zip",
+      "archive_sha256": "6cc13fea5f2a84956dd213c4ae9bc3550ee3f0aed3776968cc70132302c06798",
+      "license_file": "../licenses/CROWNJOSHUA-WOLF.txt",
+      "selected": [
+        "Wolf/Rigged/Wolf.blend"
+      ],
+      "changes": "Applied mirror; repaired legacy bind space; normalized top-four weights; normalized size; removed legacy external IK and drivers; baked project-authored full-body FK clips; added facial details and collar. No embedded scripts execute."
+    },
+    {
+      "author": "Kenney Vleugels",
+      "pack": "Particle Pack 1.1",
+      "tier": "Free download",
+      "page": "https://kenney.nl/assets/particle-pack",
+      "archive_sha256": "b631d4b07f7002549fdcf155f01141ad482f79f3440e4e301eed49ce5f1d8958",
+      "license_file": "../licenses/KENNEY-PARTICLES.txt",
+      "selected": [
+        "circle_01.png",
+        "fire_01.png",
+        "flame_01.png",
+        "magic_01.png",
+        "spark_01.png",
+        "star_01.png",
+        "slash_01.png",
+        "trace_01.png",
+        "smoke_01.png"
+      ],
+      "changes": "Nine unmodified transparent PNG textures; project-authored Godot effects."
+    }
+  ],
+  "rejected": [
+    {
+      "pack": "Quaternius candidates",
+      "page": "https://quaternius.com/license.html",
+      "reason": "Current QAL restricts asset redistribution; no unambiguous current CC0 package was admitted. Historical claims alone were not used."
+    },
+    {
+      "pack": "KayKit Adventurers 1.0 comparison",
+      "commit": "672074b73ba276876a19e8816ecdc5241817ab47",
+      "archive_sha256": "00777a7b9811a7c7f8dd3fda4e56604f6a93b33673d64557153f354d677b47af",
+      "reason": "Licensed CC0, but older 75-clip bundle has crossbow aiming/shooting and no dedicated bow draw/release set; superseded by same-author 2.0 + free 1.1 library. Not shipped."
+    }
+  ],
+  "project_authored": {
+    "boar/lurker/spider/swarm": "Original project meshes, skin weights, rigs and 13 clips per family; tools/build_creature_assets.py",
+    "wolf_clips": "13 original clips baked on the repaired CC0 wolf; no animation was claimed from its original archive",
+    "audio": "Original PCM synthesis; no downloaded audio or new third-party script dependencies"
+  }
+}
