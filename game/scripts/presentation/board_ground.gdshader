@@ -1,14 +1,16 @@
 shader_type spatial;
 uniform bool deep_ocean = false;
-varying vec2 world_xz;
+varying highp vec2 world_xz;
 
-float hash(vec2 p) {
-	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+highp float hash(highp vec2 point) {
+	highp vec3 p = fract(vec3(point.xyx) * vec3(0.1031, 0.1099, 0.1379));
+	p += dot(p, p.yzx + 19.19);
+	return fract((p.x + p.y) * p.z);
 }
 
-float wash(vec2 p) {
-	vec2 i = floor(p);
-	vec2 f = smoothstep(0.0, 1.0, fract(p));
+highp float wash(highp vec2 p) {
+	highp vec2 i = floor(p);
+	highp vec2 f = smoothstep(0.0, 1.0, fract(p));
 	return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x),
 		mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
 }
@@ -18,9 +20,13 @@ void vertex() {
 }
 
 void fragment() {
-	vec2 p = world_xz;
-	float grain = wash(p * 43.0) - 0.5;
-	float pigment = wash(p * 3.0) * 0.16 + wash(p * 11.0) * 0.09 + grain * 0.07 - 0.14;
+	highp vec2 p = world_xz;
+	// Offset the brush pattern continuously in world space, across hexes and chunks.
+	vec2 brush = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8)) * p;
+	brush += vec2(wash(p * 1.7 + vec2(8.2, 4.6)), wash(p * 1.7)) * 0.36;
+	float grain = wash(brush * vec2(31.0, 39.0)) - 0.5;
+	float pigment = (wash(brush * 2.7) - 0.5) * 0.17
+		+ (wash(brush * vec2(8.0, 12.0)) - 0.5) * 0.075 + grain * 0.045 - 0.01;
 	float sand = UV.x;
 	float stone = UV.y;
 	float marsh = UV2.x;
@@ -30,7 +36,9 @@ void fragment() {
 	ground += vec3(0.17, 0.12, 0.065) * winds * sand * 0.18;
 	float strata = sin(dot(p, vec2(12.0, 20.0)) + wash(p * 3.2) * 6.2);
 	float incline = 1.0 - clamp(dot(NORMAL, (VIEW_MATRIX * vec4(0, 1, 0, 0)).xyz), 0.0, 1.0);
-	ground = mix(ground, ground * (0.79 + strata * 0.15) + vec3(0.075, 0.085, 0.09), stone * incline);
+	float outcrop = smoothstep(0.09, 0.45, incline + (wash(brush * 4.0) - 0.5) * 0.11) * stone;
+	vec3 rock = ground * (0.78 + strata * 0.11) + vec3(0.11, 0.115, 0.12);
+	ground = mix(ground, rock, outcrop * 0.72);
 	float mire = smoothstep(0.34, 0.65, marsh * 0.61 + wash(p * 2.0) * 0.39) * marsh;
 	ground = mix(ground, vec3(0.24, 0.38, 0.31) + vec3(pigment * 0.7), mire * 0.72);
 

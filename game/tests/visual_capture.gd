@@ -113,6 +113,7 @@ func inspect_board() -> void:
 		var forest = ""
 		var burned = ""
 		var ridge = ""
+		var coastal_ridge = ""
 		for id in run.data.tiles:
 			run.data.explored[id] = true
 			var terrain: String = run.data.tiles[id].terrain
@@ -126,11 +127,12 @@ func inspect_board() -> void:
 					forest = id
 				elif Hex.distance(Hex.coord(id), Hex.coord(forest)) > 2:
 					burned = id
-			if terrain == "mountain" and ridge.is_empty():
-				for next in Hex.neighbors(id, run.data.tiles):
-					if run.data.tiles[next].terrain == "mountain":
-						ridge = id
-						break
+			if terrain == "mountain":
+				var neighbors = Hex.neighbors(id, run.data.tiles)
+				if ridge.is_empty() and neighbors.any(func(next): return run.data.tiles[next].terrain == "mountain"):
+					ridge = id
+				if neighbors.size() < 6 and Hex.distance(Hex.coord(id), Hex.coord(run.data.start)) <= 2:
+					coastal_ridge = id
 		if not burned.is_empty():
 			run.data.tiles[burned].terrain = "scorched"
 			for next in Hex.neighbors(burned, run.data.tiles):
@@ -142,6 +144,7 @@ func inspect_board() -> void:
 		expect(view.board_fog.get_child_count() == 0 and view.board_fringe.get_child_count() == 0
 			and view.board_surface.triangles.size() == 217, "All revealed cells render and support surface picking")
 		verify_seams(view.board_surface)
+		var rocky_mountain = verify_mountain_rocks(view)
 		await create_timer(view.FOG_REVEAL_SECONDS + 0.1).timeout
 		await capture("terrain-island-" + seed_value)
 		game.selected_cell = shore
@@ -151,10 +154,11 @@ func inspect_board() -> void:
 		await capture("terrain-lake-" + seed_value)
 		if seed_value == "20261104" and not forest.is_empty():
 			await inspect_occlusion(forest)
-			var areas = {"ridge": ridge, "scorched": burned}
+			var areas = {"ridge": ridge, "scorched": burned, "coast-close": coastal_ridge, "ridge-close": ridge, "rocks-close": rocky_mountain}
 			for detail in areas:
 				var focus: String = areas[detail]
 				if not focus.is_empty():
+					view.zoom_size = view.MIN_MAP_ZOOM if detail.ends_with("-close") else view.DEFAULT_MAP_ZOOM
 					game.selected_cell = focus
 					view.focus_cell(focus)
 					game._refresh()
@@ -179,6 +183,29 @@ func verify_seams(surface: RefCounted) -> void:
 					matched = matched and is_equal_approx(own[key], point.y)
 			matched = matched and shared.size() == surface.SUBDIVISIONS + 1
 	expect(matched, "Every internal edge shares all tessellated world vertices and heights")
+
+func verify_mountain_rocks(view: Node3D) -> String:
+	var rocky_cell = ""
+	var grounded = true
+	for id in view.board_surface.profiles:
+		if view.board_surface.profiles[id][0] != "mountain":
+			continue
+		for rock in view.tile_nodes[id].get_children():
+			if not rock.scene_file_path.get_file().begins_with("Rock_"):
+				continue
+			rocky_cell = id
+			var lowest = INF
+			var highest = -INF
+			for mesh in rock.find_children("*", "MeshInstance3D", true, false):
+				for i in mesh.mesh.get_surface_count():
+					for vertex in mesh.mesh.surface_get_arrays(i)[Mesh.ARRAY_VERTEX]:
+						var point: Vector3 = mesh.global_transform * vertex
+						var clearance: float = point.y - view.board_surface.height_at(point)
+						lowest = minf(lowest, clearance)
+						highest = maxf(highest, clearance)
+			grounded = grounded and lowest < 0.0 and highest > 0.025
+	expect(grounded and not rocky_cell.is_empty(), "Mountain rocks meet the actual ground mesh and remain partly visible")
+	return rocky_cell
 
 func inspect_occlusion(forest: String) -> void:
 	var view = game.view
@@ -245,6 +272,11 @@ func execute() -> void:
 	game._start_new()
 	await create_timer(0.5).timeout
 	await capture("02-exploration")
+	game.crew_collapsed = true
+	game._refresh()
+	await capture("02-exploration-folded")
+	game.crew_collapsed = false
+	game._refresh()
 	await capture_landmark_discovery()
 	await inspect_board()
 	# Inspect every biome through the exact same battle view used in the playable game.

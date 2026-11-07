@@ -10,6 +10,7 @@ const DOCUMENTS = {
 	"Q-L": "乔穗的旧信", "Q-M": "伊芙药箱", "Q-R": "送药接收回执",
 	"Q-G": "舒远诊疗与安葬摘录", "Q-WA": "旧水文稿", "Q-WB": "旧水位拓片",
 	"Q-WC": "调闸维护页与流向记录", "Q-TERMS": "本户通行与送药条款", "Q-BOUND": "林地使用边界意见",
+	"Q-GAUGE": "修好的水位标尺",
 }
 const PERSONAL = {
 	"cen": {"E0": "林口的问题还没有得到答复。岑枝没有把沉默当作承诺。", "E1": "边界意见已交到归航站，也已当面回告。岑枝在地图边缘添上仍有人使用的林路。", "E2": "你坚持无视林地使用情况的直线清障。岑枝收起私人路线图，旅途中留下了一道尚未弥合的分歧。"},
@@ -145,6 +146,8 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 				options.append(_choice("emergency", "说明应急分药，改写清单并实际分出一份", _has(visitor, "Q-M") and not flags.get("medicine_split", false), "需要实际携带尚未分药的药箱"))
 				options.append(_choice("conceal", "隐瞒取走一份药物", _has(visitor, "Q-M") and not flags.get("medicine_split", false), "需要实际携带尚未分药的药箱"))
 				options.append(_choice("medicine_report", "交回真实回执，核对送药结果", _has(visitor, "Q-R"), "回执需实际带到伊芙身边"))
+				if flags.get("medicine_receipt_returned", false) and not run.has_relic("life_seed"):
+					options.append(_choice("medicine_reward", "领取伊芙的送药谢礼"))
 			"grit":
 				text = "巨狼在旧营地转了一圈，把一枚扣环推到你脚边。环上刻着“舒远”。\n“他的气味到这儿就淡了。你见过他吗？”"
 				if run.data.tiles[run.actor(visitor).position].site != "track":
@@ -190,6 +193,10 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 				options.append(_choice("annotate", "保留原稿，加注真实观测差异", observed, "需现场观测并核对旧稿"))
 				options.append(_choice("limited", "只写可证明的事实，不推断动机", observed, "需实际完成核对"))
 				options.append(_choice("forge", "要求删去不利数据或伪造结论", observed, "需实际完成核对"))
+				if at_water and _knows(visitor, "water_wall") and not flags.get("taken_Q-GAUGE", false):
+					options.append(_choice("repair_gauge", "按石壁刻度修复水位标尺"))
+				if _has(visitor, "Q-GAUGE"):
+					options.append(_choice("return_gauge", "交还修好的水位标尺"))
 		if not npc.joined:
 			options.append(_choice("join", "邀请同行；不额外消耗行动点", flags.get("invite_" + subject, false), "先满足角色清楚说明的同行条件"))
 			options.append(_choice("decline", "这次不同行，但保留已经完成的帮助"))
@@ -233,6 +240,8 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 				options.append(_choice("water_observe", "观察现场石壁与流向"))
 				options.append(_choice("water_rubbing", "调查石匣，取得旧水位拓片 · 1 AP", can_investigate and not flags.get("taken_Q-WB", false), "原件需仍在现场，且需要 1 AP"))
 				options.append(_choice("water_maintenance", "调查背侧档案槽，取得维护页 · 1 AP", can_investigate and not flags.get("taken_Q-WC", false), "原件需仍在现场，且需要 1 AP"))
+				if _knows(visitor, "water_wall") and not flags.get("taken_Q-GAUGE", false):
+					options.append(_choice("repair_gauge", "按石壁刻度修复水位标尺"))
 			"track":
 				title = "旧兽径营地 · 墓记"
 				text = "墓记刻着舒远的名字与一年前的日期。需与诊疗摘录及砾牙的刻名扣环核对，才能形成有来源的结论。"
@@ -287,6 +296,12 @@ func _choose(visitor: String, subject: String, option_id: String) -> Dictionary:
 		return {"ok": false, "message": str(selected.get("reason", "当前没有这个选项。"))}
 	if option_id in ["leave", "later", "decline", "join", "share", "rescue", "rescue_skill"]:
 		return _common(visitor, subject, option_id)
+	if option_id == "repair_gauge":
+		_grant(visitor, "Q-GAUGE")
+		var repaired = "你按石壁上的旧刻度扶直标尺，把松脱的底座扣好。带回给澄汐，她可以核对修复结果。"
+		run.note(repaired)
+		run.changed.emit()
+		return {"ok": true, "response": repaired}
 	var response = ""
 	var flags = run.data.flags
 	match subject:
@@ -339,6 +354,10 @@ func _choose(visitor: String, subject: String, option_id: String) -> Dictionary:
 					_result("eve", "E3" if flags.get("medicine_concealed", false) else "E2" if flags.get("medicine_authorized", false) else "E1")
 					flags["invite_eve"] = run.data.story.eve.result != "E3"
 					response = "伊芙把乔禾签的回执贴着清单，顺着两张纸逐行核对。"
+					run.grant_relic("life_seed", visitor, run.actor(visitor).position, "eve", response)
+				"medicine_reward":
+					response = "伊芙取出先前核对过的签收回执，把药箱转向你。"
+					run.grant_relic("life_seed", visitor, run.actor(visitor).position, "eve", response)
 		"grit":
 			match option_id:
 				"share_food":
@@ -363,6 +382,10 @@ func _choose(visitor: String, subject: String, option_id: String) -> Dictionary:
 					response = PERSONAL.ember[run.data.story.ember.result]
 		"tide":
 			match option_id:
+				"return_gauge":
+					_consume(visitor, "Q-GAUGE")
+					response = "澄汐把标尺与原来的拓印并排放下，逐一对过记号。"
+					run.grant_relic("rain_bell", visitor, run.actor(visitor).position, "tide", response)
 				"water_draft":
 					_hand_over("tide", visitor, "Q-WA")
 					_learn(visitor, "water_draft")

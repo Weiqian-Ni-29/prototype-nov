@@ -37,6 +37,10 @@ func execute() -> void:
 	expect(game.combat==null and b.outcome=="victory","Main loop drains visuals and actually returns to map after auto victory")
 	expect(observed_animation and not game.view.battle_mode,"Native auto session rendered the sequential visual queue")
 	expect(r.data.tiles[p].enemies.is_empty() and not r.data.rewards.is_empty(),"Victory settles once with actual rewards")
+	var checkpoint = JSON.parse_string(FileAccess.get_file_as_string(r.save_path))
+	expect(checkpoint is Dictionary and checkpoint.get("pending_battle", {"missing": true}).is_empty()
+		and checkpoint.get("tiles", {}).get(p, {}).get("enemies") == [] and checkpoint.get("rewards") == r.data.rewards,
+		"Battle settlement auto-saves the cleared encounter and the reward")
 	game.set_process(false)
 	# A normal NPC conflict uses the same injury state, not a cosmetic non-lethal shortcut.
 	r.actor("ember").position = p

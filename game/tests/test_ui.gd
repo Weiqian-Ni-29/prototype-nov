@@ -78,13 +78,13 @@ func check_discovery() -> void:
 	game.view.cell_clicked.emit(target)
 	game.view.cell_clicked.emit(target)
 	expect(not game.move_preview.visible and game.move_target.is_empty(), "The confirmation clears the arrow and cost")
-	await press("当前地块行动")
+	await press("行动")
 	expect(run.has_visited(target) and contains_text(game.modal_layer, "药箱树荫") and contains_text(game.modal_layer, "伊芙") and contains_text(game.modal_layer, "可采集"),
 		"Real arrival reveals site, NPC and items together")
 	expect(game.view.dolls.eve.visible and game.view.tile_nodes[target].find_children("*", "Label3D", true, false).size() == 1, "Visited landmark and NPC are rendered")
 	await press("采集")
 	expect(tile.quantity == 0, "Discovered loot is collectible through the action dialog")
-	await press("当前地块行动")
+	await press("行动")
 	await press("交谈 / 个人故事")
 	expect(dialogue_contains("药瓶") and not run.data.story.eve.met, "Eve first appears in a narrated meeting")
 	for i in range(3):
@@ -112,6 +112,7 @@ func check_discovery() -> void:
 	game.view.cell_clicked.emit(target)
 	expect(run.data.pending_battle.get("surprise", false) and not run.data.pending_battle.ambush and run.actor("hero").ap == 0,
 		"Open-terrain surprise occurs on arrival without turning into an ambush")
+	expect(saved_run().get("pending_battle", {}).get("position") == target, "Surprise encounter is saved before choosing a formation")
 	await press("开始战斗")
 	expect(game.combat != null and run.actor("hero").ap == 0, "Surprise encounter can deploy at zero AP")
 	if game.combat != null:
@@ -120,6 +121,10 @@ func check_discovery() -> void:
 func has_opening_choice(id: String) -> bool:
 	return game.run.data.choices.any(func(choice):
 		return choice.get("subject") == "opening" and choice.get("option") == id)
+
+func saved_run() -> Dictionary:
+	var checkpoint = JSON.parse_string(FileAccess.get_file_as_string(game.run.save_path))
+	return checkpoint if checkpoint is Dictionary else {}
 
 func story_owns_focus() -> bool:
 	var story = game.modal_layer.get_node_or_null("StoryScreen")
@@ -185,6 +190,9 @@ func execute() -> void:
 	expect(has_opening_choice("order"), "The commission branch is recorded on departure")
 	expect(game.run.actor("hero").hp_max == 145 and game.run.actor("hero").ap == 5, "Profession affects actual character")
 	expect(game.run.joined_ids() == ["hero"] and game.view.dolls.keys() == ["hero"], "Starting view shows only the lone protagonist")
+	expect(contains_text(game.ui, "探索度：3%") and contains_text(game.ui, "找到岛上的撤离点")
+		and not contains_text(game.ui, "明日") and not contains_text(game.ui, "揭雾") and find_button(game.ui, "保存") == null,
+		"HUD uses an exploration percentage and objective, with today's weather and no manual save")
 	await press("主菜单")
 	await press("继续上次远征")
 	expect(game.view.dolls.keys() == ["hero"], "Continuing at the starting camp still shows only the protagonist")
@@ -208,14 +216,16 @@ func execute() -> void:
 		game.view.cell_clicked.emit(destination)
 		game.view.cell_clicked.emit(destination)
 	expect(game.run.actor("hero").ap == 5 - cost, "Native UI movement pays exact AP")
+	var saved_hero = saved_run().get("actors", {}).get("hero", {})
+	expect(saved_hero.get("ap") == 5 - cost and saved_hero.get("position") == path[-1], "Confirmed movement auto-saves position and AP")
 	expect(game.view.dolls.has("lorne") and game.view.dolls.lorne.visible and not game.run.actor("lorne").joined, "The courier appears as an NPC on reaching his tile")
-	await press("当前地块行动")
+	await press("行动")
 	await press("交谈 / 个人故事")
 	expect(dialogue_contains("旧路牌") and not game.run.data.story.lorne.met, "The first scene introduces the encounter without committing it")
 	expect(story_owns_focus(), "The first scene owns keyboard focus")
 	await press("结束交谈")
 	expect(not game.run.data.story.lorne.met, "Closing before the choices does not consume the introduction")
-	await press("当前地块行动")
+	await press("行动")
 	await press("交谈 / 个人故事")
 	await advance_story()
 	expect(dialogue_contains("渡桥已经断了"), "A second beat gives the visitor a line")
@@ -227,6 +237,11 @@ func execute() -> void:
 	expect(story_owns_focus(), "Courier dialogue hides the map interface and owns keyboard focus")
 	await press("暂缓决定")
 	expect(game.run.data.story.lorne.relation == "later" and dialogue_contains("继续这场谈话"), "The defer branch updates relationship and visible response")
+	var checkpoint = saved_run()
+	var saved_choices: Array = checkpoint.get("choices", [])
+	expect(checkpoint.get("story", {}).get("lorne", {}).get("relation") == "later"
+		and not saved_choices.is_empty() and saved_choices[-1].get("option") == game.run.data.choices[-1].option,
+		"The chosen story branch and its consequence are auto-saved")
 	await advance_story()
 	await press("邀请同行")
 	expect(game.run.actor("lorne").joined and game.run.actor("lorne").ap == 10, "Native UI companion joins with individual AP")
@@ -238,10 +253,35 @@ func execute() -> void:
 	await press("结束一天")
 	await press("确认")
 	expect(game.run.data.day == 2 and game.run.actor("hero").ap == 5 and game.run.actor("lorne").ap == 10, "Native UI daily settlement")
+	expect(saved_run().get("day") == 2, "Day settlement auto-saves before returning to the menu")
 	await press("主菜单")
 	await press("继续上次远征")
 	expect(game.run.data.day == 2 and game.run.actor("lorne").joined, "Native UI continue restores state")
-	await press("个人背包与装备")
+	game._select_actor("lorne")
+	game._toggle_mover(true, "hero")
+	var moving: Array = game.moving_ids.duplicate()
+	await press("收起")
+	expect(find_button(game.ui, "行动") == null and find_button(game.ui, "背包") == null and game.ui.get_child(1).size.y <= 72,
+		"Collapsed crew panel only occupies its title row")
+	var initial_focus: Vector3 = game.view.focus_point
+	var drag_start = Vector2(150, 345)
+	for pressed in [true, false]:
+		var event = InputEventMouseButton.new()
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = pressed
+		event.position = drag_start if pressed else drag_start - Vector2(95, 0)
+		if not pressed:
+			var motion = InputEventMouseMotion.new()
+			motion.button_mask = MOUSE_BUTTON_MASK_LEFT
+			motion.position = event.position
+			root.push_input(motion, true)
+		root.push_input(event, true)
+	expect(game.view.focus_point.distance_to(initial_focus) > 0.1, "The space freed by the collapsed crew panel accepts map drags")
+	game._refresh()
+	await press("展开")
+	expect(game.selected_id == "lorne" and game.moving_ids == moving, "Reopening after refresh preserves selection and the travel group")
+	game._select_actor("hero")
+	await press("背包")
 	var salves = game.run.actor("hero").inventory.salve
 	# Loaded JSON may order inventory differently; choose the visible item label, not row zero.
 	var item_button: Button
@@ -254,7 +294,17 @@ func execute() -> void:
 	expect(find_button(game.modal_layer, "交给洛恩") != null, "Same-cell inventory transfer exposed")
 	await press("交给洛恩")
 	expect(game.run.actor("hero").inventory.salve == salves - 1 and game.run.actor("lorne").inventory.salve == 2, "Native inventory handoff changes both real owners")
-	await press("关闭")
+	var save_path: String = game.run.save_path
+	game.queue_free()
+	await process_frame
+	game = Main.instantiate()
+	root.add_child(game)
+	game.run.save_path = save_path
+	await process_frame
+	await press("继续上次远征")
+	expect(game.run.data.day == 2 and game.run.actor("hero").position == path[-1]
+		and game.run.actor("hero").inventory.salve == salves - 1 and game.run.actor("lorne").inventory.salve == 2,
+		"A fresh game session resumes position, date and both inventories without a manual save")
 	await press("旅途手记")
 	expect(find_button(game.modal_layer, "合上手记") != null, "Journal opens")
 	await press("合上手记")
@@ -263,7 +313,8 @@ func execute() -> void:
 	game.run.reveal(game.run.data.exit)
 	game.selected_cell = game.run.data.exit
 	game._refresh()
-	await press("当前地块行动")
+	expect(contains_text(game.ui, "已抵达撤离点 · 等待同伴或确认撤离"), "The header objective updates on arrival and offers waiting")
+	await press("行动")
 	await press("调查与交谈")
 	await advance_story()
 	await advance_story()

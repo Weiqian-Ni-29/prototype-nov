@@ -4,6 +4,7 @@ const Catalog = preload("res://scripts/domain/catalog.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Combat = preload("res://scripts/domain/battle.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
+const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const OpeningStory = preload("res://scripts/domain/opening_story.gd")
 const StoryPortrait = preload("res://scripts/presentation/story_portrait.gdshader")
 const World = preload("res://scripts/presentation/world_view.gd")
@@ -11,6 +12,7 @@ const MapMovePreview = preload("res://scripts/presentation/map_move_preview.gd")
 const FontAsset = preload("res://assets/fonts/NotoSansSC.ttf")
 const Sound = preload("res://scripts/presentation/sound.gd")
 const TITLE_ART = preload("res://assets/portraits/waystation-ensemble.png")
+const OBJECTIVE_ICON = preload("res://assets/ui/expedition-objective.svg")
 const PROFESSION_ART = {
 	"wayfarer": preload("res://assets/portraits/hero.png"),
 	"guardian": preload("res://assets/portraits/hero-guardian.png"),
@@ -36,6 +38,7 @@ var selected_cell = ""
 var move_target = ""
 var move_preview = MapMovePreview.new()
 var moving_ids: Array = ["hero"]
+var crew_collapsed = false
 var chosen_profession = "wayfarer"
 var chosen_seed = "20261104"
 var selected_target = "enemy_0"
@@ -342,6 +345,8 @@ func _continue_run() -> void:
 	_refresh()
 	if not run.data.pending_battle.is_empty():
 		_formation_dialog()
+	else:
+		_show_relic_intro()
 
 func _header(screen: Vector2) -> void:
 	var box = _panel(ui, Rect2(20, 17, screen.x - 40, 88))
@@ -350,25 +355,43 @@ func _header(screen: Vector2) -> void:
 	box.add_child(row)
 	_text(row, "归灯之野", 29, gold).custom_minimum_size.x = 190
 	var weather = "细雨" if run.data.weather == "rain" else "晴朗"
-	var forecast = "雨" if run.next_weather() == "rain" else "晴"
-	_text(row, "第 %d 天  ·  %s\n明日%s · 揭雾 %d/217" % [run.data.day, weather, forecast, run.data.explored.size()], 16).custom_minimum_size.x = 250
-	_text(row, "归航方向  " + _exit_direction() + "\n没有撤离期限，抵达后可等待同伴。", 16, muted).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var exploration = floori(100.0 * run.data.explored.size() / run.data.tiles.size())
+	_text(row, "第 %d 天  ·  %s\n探索度：%d%%" % [run.data.day, weather, exploration], 16).custom_minimum_size.x = 168
+	var objective = HBoxContainer.new()
+	objective.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	objective.add_theme_constant_override("separation", 10)
+	row.add_child(objective)
+	var marker = TextureRect.new()
+	marker.texture = OBJECTIVE_ICON
+	marker.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	marker.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	marker.custom_minimum_size = Vector2(36, 36)
+	marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	objective.add_child(marker)
+	_text(objective, _expedition_objective(), 16, gold).vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_button(row, "设置/帮助", _settings_dialog)
 	_button(row, "旅途手记", _journal)
-	_button(row, "保存", func(): _run_action(run.save_game()), combat != null)
 	_button(row, "主菜单", _to_menu)
 
-func _exit_direction() -> String:
+func _expedition_objective() -> String:
+	if run.data.status in ["extracted", "failed"]:
+		return "远征已结束"
 	if run.actor("hero").position == run.data.exit:
-		return "已抵达"
+		return "已抵达撤离点 · 等待同伴或确认撤离"
 	if run.has_visited(run.data.exit):
-		return "已发现 · 见手记"
-	var delta = Hex.coord(run.data.exit) - Hex.coord(run.data.start)
-	return ("北" if delta.y < -2 else "南" if delta.y > 2 else "") + ("东" if delta.x + delta.y * 0.5 > 1 else "西" if delta.x + delta.y * 0.5 < -1 else "侧") + "一带"
+		return "前往撤离点 · 可从旅途手记定位"
+	return "找到岛上的撤离点"
 
 func _crew_panel(screen: Vector2) -> void:
-	var box = _panel(ui, Rect2(20, 120, 244, screen.y - 275))
-	_text(box, "远征队", 24, gold)
+	var box = _panel(ui, Rect2(20, 120, 244, 56 if crew_collapsed else screen.y - 275))
+	var heading = HBoxContainer.new()
+	box.add_child(heading)
+	_text(heading, "远征队", 24, gold).vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_button(heading, "展开" if crew_collapsed else "收起", func():
+		crew_collapsed = not crew_collapsed
+		_refresh())
+	if crew_collapsed:
+		return
 	_text(box, "点击定位 · 勾选同格同行", 13, muted)
 	var scroll = ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -395,8 +418,8 @@ func _crew_panel(screen: Vector2) -> void:
 		bar.show_percentage = false
 		bar.custom_minimum_size.y = 5
 		roster.add_child(bar)
-	_button(box, "当前地块行动", _cell_actions)
-	_button(box, "个人背包与装备", _inventory_dialog.bind(selected_id))
+	_button(box, "行动", _cell_actions)
+	_button(box, "背包", _inventory_dialog.bind(selected_id))
 	_button(box, "结束一天", _end_day_dialog)
 
 func _cell_actions() -> void:
@@ -436,6 +459,14 @@ func _cell_actions() -> void:
 	if t.quantity > 0:
 		_text(box, "可采集：%s ×%d" % [Catalog.item_name(t.resource), t.quantity], 16, muted)
 		_button(box, "采集 · 1 AP", func(): _close_modal(); _run_action(run.collect(selected_id)))
+	var relic: String = run.relic_sites.get(cell, "")
+	if not relic.is_empty() and not run.has_relic(relic) and t.enemies.is_empty() and not run.data.relic_checks.has("site:" + cell):
+		_button(box, "调查" + Relics.SITES[relic][0], func():
+			_close_modal()
+			var result = run.investigate_relic(selected_id)
+			_run_action(result)
+			if result.ok and not _show_relic_intro():
+				_notice(result.message))
 	_button(box, "使用物资 / 同地救援", _item_dialog.bind(selected_id))
 	if actor.skill == "heal":
 		_button(box, "治疗队友 · 1 AP / 12 MP", _healing_dialog)
@@ -578,7 +609,12 @@ func _extraction_dialog() -> void:
 		if result.ok:
 			_ending_story())
 
-func _inventory_dialog(id: String) -> void:
+func _inventory_tab(item: String) -> int:
+	if Catalog.ITEMS.get(item, {}).has("slot"):
+		return 1
+	return 2 if Story.DOCUMENTS.has(item) else 0
+
+func _inventory_dialog(id: String, current_tab: int = 0) -> void:
 	var a = run.actor(id)
 	var box = _modal(a.name + " · 背包与装备", 850, 670)
 	_text(box, "攻击 %d · 防御 %d · 速度 %d\n战斗外免费换装；物品只在同格交接，不刷新资源。" % [run.stat(id, "attack"), run.stat(id, "defense"), run.stat(id, "speed")], 16, muted)
@@ -590,22 +626,41 @@ func _inventory_dialog(id: String) -> void:
 	_text(box, "专长：" + Catalog.passive_description(id), 16, muted)
 	_text(box, "技能 · " + Catalog.SKILLS[a.skill].name + "\n" + Catalog.skill_description(a.skill), 16, muted)
 	_text(box, "终结技 · " + Catalog.SKILLS[a.ultimate].name + "\n" + Catalog.skill_description(a.ultimate) + "；满能量额外释放，不占正常行动。", 16, muted)
-	var scroll = ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	box.add_child(scroll)
-	var list = VBoxContainer.new()
-	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(list)
+	var tabs = TabContainer.new()
+	tabs.name = "InventoryTabs"
+	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	box.add_child(tabs)
+	var lists: Array[VBoxContainer] = []
+	for title in ["消耗品", "装备", "任务物品", "遗器"]:
+		var scroll = ScrollContainer.new()
+		scroll.name = title
+		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		tabs.add_child(scroll)
+		var list = VBoxContainer.new()
+		list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		scroll.add_child(list)
+		lists.append(list)
+	tabs.current_tab = current_tab
 	for item in a.inventory:
 		if a.inventory[item] <= 0:
 			continue
 		var row = HBoxContainer.new()
-		list.add_child(row)
+		lists[_inventory_tab(item)].add_child(row)
 		_text(row, Story.DOCUMENTS.get(item, Catalog.item_name(item)) + " ×%d" % a.inventory[item], 16).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		if Catalog.ITEMS.get(item, {}).has("slot"):
-			_button(row, "卸下" if item in a.equipment.values() else "装备", func(): _run_action(run.equip(id, item)); _inventory_dialog(id))
+			_button(row, "卸下" if item in a.equipment.values() else "装备", func(): _run_action(run.equip(id, item)); _inventory_dialog(id, 1))
 		if run.same_cell(a.position).size() > 1:
 			_button(row, "交接", _transfer_dialog.bind(id, item))
+	for i in range(3):
+		if lists[i].get_child_count() == 0:
+			_text(lists[i], "暂无物品。", 16, muted)
+	_text(lists[3], "全队共享 · 本局有效", 17, gold)
+	if run.data.relics.is_empty():
+		_text(lists[3], "本次远征尚未获得遗器。", 16, muted)
+	for relic in run.data.relics:
+		var definition = Relics.DATA[relic]
+		_text(lists[3], "%s · %s" % [definition.name, "已触发" if definition.once else "持续生效"], 17, gold)
+		_text(lists[3], definition.effect, 16)
 	_button(box, "关闭", _close_modal)
 
 func _transfer_dialog(owner: String, item: String) -> void:
@@ -618,10 +673,10 @@ func _transfer_dialog(owner: String, item: String) -> void:
 				var result = run.transfer(owner, other, item, 1)
 				if result.ok:
 					_run_action(result)
-					_inventory_dialog(owner)
+					_inventory_dialog(owner, _inventory_tab(item))
 				else:
 					_text(content, result.message, 16, gold))
-	_button(box, "返回背包", _inventory_dialog.bind(owner))
+	_button(box, "返回背包", _inventory_dialog.bind(owner, _inventory_tab(item)))
 
 func _item_dialog(user_id: String) -> void:
 	var box = _modal("使用物资 · " + run.actor(user_id).name, 650, 460)
@@ -661,6 +716,7 @@ func _healing_dialog() -> void:
 func _open_current_encounter() -> void:
 	var cell: String = run.actor(selected_id).position
 	run.data.pending_battle = {"position": cell, "ambush": false, "origin": cell, "movers": [], "npc": ""}
+	run.save_game()
 	_formation_dialog()
 
 func _formation_dialog() -> void:
@@ -804,6 +860,8 @@ func _finish_battle() -> void:
 	_refresh()
 	if run.data.status == "failed":
 		_ending_story()
+	else:
+		_show_relic_intro()
 
 func _process(delta: float) -> void:
 	if combat == null:
@@ -1014,6 +1072,11 @@ func _story_choice(option_id: String) -> void:
 		dialogue_response = result.message
 		_render_dialogue()
 		return
+	run.save_game()
+	if _show_relic_intro(func():
+		dialogue_response = ""
+		_render_dialogue()):
+		return
 	if result.get("close", false):
 		_close_modal()
 		_refresh()
@@ -1027,9 +1090,35 @@ func _story_choice(option_id: String) -> void:
 		_healing_dialog()
 	else:
 		dialogue_response = str(result.get("response", "同行状态已更新。"))
-		run.save_game()
 		_refresh()
 		_render_dialogue()
+
+func _show_relic_intro(after: Callable = Callable()) -> bool:
+	var intro = run.relic_intro()
+	if intro.is_empty():
+		return false
+	var definition = Relics.DATA[intro.id]
+	var scene = _story_scene_at(intro.position)
+	var portraits = [_story_portrait(intro.finder), _story_portrait(intro.npc) if not intro.npc.is_empty() else null]
+	var effect_page = intro.stage == 1
+	var body: String = definition.effect if effect_page else definition.story
+	if not effect_page and not intro.lead.is_empty():
+		body = intro.lead + "\n\n" + body
+	var speaker = ("已触发" if definition.once else "持续生效") if effect_page else "旁白"
+	_show_story("获得遗器 · " + definition.name, speaker, body, scene, portraits, [], func(_option: String):
+		if not effect_page:
+			intro.stage = 1
+			run.save_game()
+			_show_relic_intro(after)
+			return
+		run.data.relic_intros.pop_front()
+		run.save_game()
+		if not _show_relic_intro(after):
+			_close_modal()
+			_refresh()
+			if after.is_valid():
+				after.call(), {})
+	return true
 
 func _journal() -> void:
 	var box = _modal("旅途手记 · 亲历、文书与同行", 920, 720)
@@ -1116,7 +1205,7 @@ func _to_menu() -> void:
 		_show_opening(Screen.MENU)
 
 func _guide() -> void:
-	_notice("点击角色定位，勾选同格角色可共同移动。首次点击相邻地块查看箭头和精力，再点同一格确认前往。采集、交谈等操作在「当前地块行动」中。\n\n按住左键拖动或用 WASD 平移地图，滚轮缩放。每人精力独立，结束一天恢复个人精力以及部分 HP/MP。\n\n同地最多四人出战，候补换人占正常行动，终结技可插队。抵达归航站后可等待，只有主动确认才结束。")
+	_notice("点击角色定位，勾选同格角色可共同移动。首次点击相邻地块查看箭头和精力，再点同一格确认前往。采集、交谈等操作在「行动」中。\n\n按住左键拖动或用 WASD 平移地图，滚轮缩放。每人精力独立，结束一天恢复个人精力以及部分 HP/MP。\n\n同地最多四人出战，候补换人占正常行动，终结技可插队。抵达归航站后可等待，只有主动确认才结束。")
 
 func _settings_dialog() -> void:
 	var box = _modal("设置与操作", 650, 430)

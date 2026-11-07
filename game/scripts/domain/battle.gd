@@ -1,6 +1,7 @@
 class_name Battle
 extends RefCounted
 const Catalog = preload("res://scripts/domain/catalog.gd")
+const Relics = preload("res://scripts/domain/relic_catalog.gd")
 var run: RefCounted
 var position = ""
 var active: Array[String] = []
@@ -113,7 +114,7 @@ func _deploy(id: String) -> void:
 	var a = unit(id)
 	if not paid.has(id):
 		a.ap = maxi(0, int(a.ap) - Catalog.BATTLE_AP)
-		a.shield = 0
+		a.shield = roundi(a.hp_max * 0.12) if run.has_relic("lamp_badge") else 0
 		a.slow = 0
 		a.guard = false
 		paid[id] = true
@@ -498,6 +499,12 @@ func _finish(result: String) -> void:
 			var receiver = str(paid.keys()[0])
 			run.actor(receiver).inventory.salve = int(run.actor(receiver).inventory.get("salve", 0)) + 1
 			run.data.rewards[reward_key] = true
+			if npc.is_empty():
+				var types = enemies.values().map(func(enemy): return enemy.type)
+				var candidates = Relics.battle_rewards(types)
+				if not candidates.is_empty():
+					var elite = types.any(func(type): return type.ends_with("_elite") or type == "lamp_boss")
+					run.roll_relic("battle:" + reward_key, candidates, 0.40 if elite else 0.20, receiver, position)
 		_log("胜利。本战倒下友方恢复至 1 HP，获得一份疗伤药。")
 	elif result == "retreat":
 		for id in pending.get("movers", []):

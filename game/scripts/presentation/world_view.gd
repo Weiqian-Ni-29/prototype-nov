@@ -185,8 +185,10 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 	actor_root.visible = not battle_mode
 	selection_ring.visible = not battle_mode
 	var visible_layout: Dictionary = {}
+	var pending_sight: Array = run.relic_intro().get("new_sight", [])
 	for id in run.data.explored:
-		visible_layout[id] = [current_tiles[id].terrain, current_tiles[id].height]
+		if id not in pending_sight:
+			visible_layout[id] = [current_tiles[id].terrain, current_tiles[id].height]
 	var relief_changed = visible_layout != board_stamp
 	if relief_changed:
 		if not is_instance_valid(board_mesh):
@@ -216,7 +218,7 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 				_animate_fog_reveal(reveal[0], reveal[1])
 		board_stamp = visible_layout
 	var dirty_details = {}
-	for id in run.data.explored:
+	for id in visible_layout:
 		var t: Dictionary = current_tiles[id]
 		var visited: bool = run.has_visited(id)
 		var borders: Array = []
@@ -293,7 +295,7 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 		model.set_meta("cell", a.position)
 	if relief_changed or outline_cell != selected_cell:
 		outline_cell = selected_cell
-		selection_ring.mesh = board_surface.outline(selected_cell, run.data.explored.has(selected_cell)) if current_tiles.has(selected_cell) else null
+		selection_ring.mesh = board_surface.outline(selected_cell, visible_layout.has(selected_cell)) if current_tiles.has(selected_cell) else null
 	light.light_color = Color("d0dce0") if run.data.weather == "rain" else Color("ffe5b2")
 	light.light_energy = 0.48 if run.data.weather == "rain" else 0.68
 	rain.emitting = run.data.weather == "rain"

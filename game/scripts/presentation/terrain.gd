@@ -97,9 +97,16 @@ static func board_details(root: Node3D, tile: Dictionary, id: String, visual_see
 			for i in range(4):
 				_board_prop(root, surface, center, "Bush_2_C", _board_position(rng, i, 4, 0.38, 0.71), rng.randf_range(0.18, 0.32), rng.randf() * TAU)
 		"mountain":
-			for i in range(6):
-				var point = _board_position(rng, i, 6, 0.38, 0.70)
-				_board_prop(root, surface, center, ["Rock_2_C", "Rock_3_B", "Rock_1_A"][i % 3], point, rng.randf_range(0.16, 0.43), rng.randf() * TAU)
+			var placed: Array[Vector3] = []
+			for i in range(16):
+				var point = _board_position(rng, i, 16, 0.28, 0.71)
+				if placed.any(func(other: Vector3): return point.distance_squared_to(other) < 0.09):
+					continue
+				var name = "Rock_1_A" if i % 3 != 0 else "Rock_2_C"
+				if _seat_mountain_rock(root, surface, center, name, point, rng.randf_range(0.14, 0.20), rng.randf() * TAU):
+					placed.append(point)
+					if placed.size() == 3:
+						break
 		"ruins":
 			for next in same:
 				var edge = (Hex.world(next) - center) * 0.5
@@ -157,6 +164,36 @@ static func _board_prop(root: Node3D, surface: RefCounted, center: Vector3, name
 	var prop = _prop(root, name, point, size, turn)
 	if size >= 0.42:
 		_register_occluders(prop)
+
+static func _seat_mountain_rock(root: Node3D, surface: RefCounted, center: Vector3, name: String,
+		point: Vector3, size: float, turn: float) -> bool:
+	var anchor = center + point
+	var height: float = surface.height_at(anchor)
+	var radius = size * 0.75
+	var east = Vector3.RIGHT * radius
+	var south = Vector3.BACK * radius
+	var gradient = Vector2(
+		surface.height_at(anchor + east) - surface.height_at(anchor - east),
+		surface.height_at(anchor + south) - surface.height_at(anchor - south)) / (2.0 * radius)
+	if gradient.length_squared() > 1.25:
+		return false
+	var unevenness = 0.0
+	for i in range(8):
+		var offset = Vector2.from_angle(TAU * i / 8.0) * radius
+		var foot: float = surface.height_at(anchor + Vector3(offset.x, 0.0, offset.y))
+		if foot <= surface.WATER_LEVEL + 0.045:
+			return false
+		unevenness = maxf(unevenness, absf(foot - height - gradient.dot(offset)))
+	if unevenness > size * 0.36:
+		return false
+	# Fit the base to the local slope, with a shallow overlap to hide the join.
+	var normal = Vector3(-gradient.x, 1.0, -gradient.y).normalized()
+	var tilt = Basis(Quaternion(Vector3.UP, normal))
+	point.y = height - unevenness - size * 0.06
+	var prop = _prop(root, name, point, size, turn, Vector3(1.0, 0.74, 1.0))
+	prop.basis = tilt * prop.basis
+	prop.position = point + tilt * (prop.position - point)
+	return true
 
 static func _register_occluders(root: Node3D) -> void:
 	for mesh in root.find_children("*", "MeshInstance3D", true, false):

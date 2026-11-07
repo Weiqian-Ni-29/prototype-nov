@@ -213,10 +213,11 @@ func sample(point: Vector3) -> Array:
 	var p = Vector2(point.x, point.z) + seed_offset
 	var rolling = noise.get_noise_2dv(p * 0.68)
 	var chips = noise.get_noise_2dv(p * 3.7)
-	var ridge = pow(1.0 - absf(noise.get_noise_2dv(Vector2(p.x * 0.8 + p.y * 0.44, p.y * 1.6))), 3.0)
+	var ridge_signal = absf(noise.get_noise_2dv(Vector2(p.x * 0.8 + p.y * 0.44, p.y * 1.6)))
+	var ridge = 1.0 - smoothstep(0.0, 0.70, ridge_signal)
 	var dune = sin(p.dot(Vector2(1.35, 2.7)) + rolling * 3.3)
 	height += (rolling * 0.10 + chips * 0.035) * (1.0 - (sea + lake + unknown) / total)
-	height += mountain * mountain * (0.36 + ridge * 0.91 + chips * 0.19)
+	height += mountain * mountain * (0.30 + ridge * 0.74 + chips * 0.11)
 	height += sand * (0.065 + dune * 0.14)
 	var channels = 1.0 - absf(noise.get_noise_2dv(Vector2(p.x * 0.43 + p.y * 0.30, p.y * 0.71)))
 	height -= marsh * marsh * smoothstep(0.51, 0.97, channels) * 0.27

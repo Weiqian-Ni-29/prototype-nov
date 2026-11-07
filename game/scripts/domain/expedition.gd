@@ -3,11 +3,13 @@ extends RefCounted
 ## Authoritative state: renderers never own or regenerate resources.
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
+const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const SAVE_VERSION = 1
 signal changed
 var data: Dictionary = {}
 var rng = RandomNumberGenerator.new()
 var save_path = "user://expedition.json"
+var relic_sites: Dictionary = {}
 
 func new_run(seed_value: int, profession: String) -> void:
 	assert(Catalog.PROFESSIONS.has(profession))
@@ -32,6 +34,7 @@ func new_run(seed_value: int, profession: String) -> void:
 	data.actors.lorne.inventory["Q-L"] = 1
 	data.actors.eve.inventory["Q-M"] = 1
 	data.actors.tide.inventory["Q-WA"] = 1
+	_initialize_relics()
 	reveal(generated.start)
 	note("渡桥已塌。登记副本写着归航站的方向；沿途仍有未熄的灯。")
 
@@ -63,13 +66,85 @@ func stat(id: String, field: String) -> int:
 	for slot in a.equipment:
 		var item = Catalog.ITEMS.get(a.equipment[slot], {})
 		value += int(item.get(field, 0))
+	if field == "attack" and a.joined and has_relic("ranged_sight") and a.skill in ["trail_shot", "snare", "ember", "torrent", "heal"]:
+		value = roundi(value * 1.15)
 	return value
 
 func reveal(position: String) -> void:
 	data.visited[position] = true
+	_reveal_sight(position)
+
+func _reveal_sight(position: String) -> void:
 	data.explored[position] = true
 	for k in Hex.neighbors(position, data.tiles):
 		data.explored[k] = true
+		if has_relic("telescope"):
+			for outer in Hex.neighbors(k, data.tiles):
+				data.explored[outer] = true
+
+func _initialize_relics() -> void:
+	data.merge({"relics": {}, "relic_checks": {}, "relic_intros": []})
+	relic_sites = Relics.exploration_sites(data.tiles, int(data.seed))
+
+func has_relic(id: String) -> bool:
+	return data.relics.has(id)
+
+func relic_intro() -> Dictionary:
+	return data.relic_intros[0] if not data.relic_intros.is_empty() else {}
+
+func investigate_relic(id: String) -> Dictionary:
+	var check = _map_action(id, 0)
+	if not check.ok:
+		return check
+	var position: String = actor(id).position
+	var source = "site:" + position
+	if not relic_sites.has(position) or data.relic_checks.has(source) or not data.tiles[position].enemies.is_empty():
+		return fail("这里没有尚待调查的遗器线索。")
+	var relic = roll_relic(source, [relic_sites[position]], 0.25, id, position)
+	return {"ok": true, "relic": relic, "message": "你查看了旧物，能辨认的痕迹已经记录在路册里。"}
+
+func roll_relic(source: String, candidates: Array, chance: float, finder: String, position: String) -> String:
+	if data.relic_checks.has(source):
+		return ""
+	var available = candidates.filter(func(id): return not has_relic(id))
+	var roller = RandomNumberGenerator.new()
+	roller.seed = hash("relic:%d:%s" % [int(data.seed), source])
+	var id = ""
+	if not available.is_empty() and roller.randf() < chance:
+		id = available[roller.randi_range(0, available.size() - 1)]
+		grant_relic(id, finder, position)
+	data.relic_checks[source] = id
+	return id
+
+func grant_relic(id: String, finder: String, position: String, npc: String = "", lead: String = "") -> bool:
+	if not Relics.DATA.has(id) or has_relic(id):
+		return false
+	data.relics[id] = true
+	var new_sight: Array = []
+	if id == "telescope":
+		var previous = data.explored.duplicate()
+		for member in joined_ids():
+			if actor(member).hp > 0:
+				_reveal_sight(actor(member).position)
+		new_sight = data.explored.keys().filter(func(cell): return not previous.has(cell))
+	elif id == "life_seed":
+		for member in joined_ids():
+			var a = actor(member)
+			a.hp_max = roundi(a.hp_max * 1.20)
+	elif id == "road_hourglass" or id == "stillwater_stone":
+		for member in joined_ids():
+			var a = actor(member)
+			if a.hp <= 0:
+				continue
+			if id == "road_hourglass":
+				a.ap = mini(a.ap_max, a.ap + 2)
+			else:
+				a.mp = mini(a.mp_max, a.mp + roundi(a.mp_max * 0.40))
+	elif id == "rain_bell":
+		data.weather = "rain"
+	data.relic_intros.append({"id": id, "finder": finder, "position": position, "npc": npc, "lead": lead, "stage": 0, "new_sight": new_sight})
+	note("远征队获得遗器「%s」。" % Relics.DATA[id].name)
+	return true
 
 func has_visited(position: String) -> bool:
 	return data.visited.has(position)
@@ -82,6 +157,8 @@ func move_cost(id: String, destination: String) -> int:
 	var cost = int(Catalog.TERRAIN[data.tiles[destination].terrain].cost)
 	if id == "lorne" and data.tiles[destination].terrain == "mountain":
 		cost = 1
+	if cost > 0 and has_relic("trail_boots"):
+		cost = maxi(1, cost - 1)
 	return cost
 
 func movement_preview(ids: Array, destination: String) -> Dictionary:
@@ -153,6 +230,10 @@ func join_companion(id: String) -> Dictionary:
 	if a.joined:
 		return fail("已经同行。")
 	a.joined = true
+	if has_relic("life_seed"):
+		a.hp_max = roundi(a.hp_max * 1.20)
+	if has_relic("telescope"):
+		_reveal_sight(a.position)
 	if a.ap_initialized_day != data.day:
 		a.ap = a.ap_max
 		a.ap_initialized_day = data.day
@@ -195,7 +276,10 @@ func use_item(user_id: String, target_id: String, item: String, during_battle: b
 		return fail("没有可用的恢复物资。")
 	if definition.has("mp") and target.hp <= 0:
 		return fail("恢复魔力不能解除重伤。")
-	var hp_gain = mini(int(definition.get("hp", 0)), int(target.hp_max) - int(target.hp))
+	var healing = int(definition.get("hp", 0))
+	if has_relic("herbal_case"):
+		healing = roundi(healing * 1.25)
+	var hp_gain = mini(healing, int(target.hp_max) - int(target.hp))
 	var mp_gain = mini(int(definition.get("mp", 0)), int(target.mp_max) - int(target.mp))
 	if hp_gain <= 0 and mp_gain <= 0:
 		return fail("没有可恢复的资源，不消耗物品。")
@@ -344,7 +428,7 @@ func end_day() -> Dictionary:
 		return fail("先结束当前遭遇。")
 	var new_day = int(data.day) + 1
 	var snapshot = data.tiles.duplicate(true)
-	data.weather = "rain" if rng.randf() < 0.28 else "sun"
+	data.weather = "rain" if rng.randf() < rain_chance() else "sun"
 	data.day = new_day
 	var ignitions = {}
 	for k in snapshot:
@@ -388,7 +472,10 @@ func end_day() -> Dictionary:
 func next_weather() -> String:
 	var forecast = RandomNumberGenerator.new()
 	forecast.state = rng.state
-	return "rain" if forecast.randf() < 0.28 else "sun"
+	return "rain" if forecast.randf() < rain_chance() else "sun"
+
+func rain_chance() -> float:
+	return 0.48 if has_relic("rainstone") else 0.28
 
 func check_global_failure() -> bool:
 	for id in joined_ids():
@@ -469,6 +556,7 @@ func load_game(path: String = "") -> Dictionary:
 		_restore_legacy_visits()
 	if not data.has("choices"):
 		data.choices = []
+	_initialize_relics()
 	rng.state = int(data.rng_state)
 	changed.emit()
 	return success()
@@ -502,6 +590,21 @@ func _validate_save(loaded: Dictionary) -> String:
 		return "日期或随机状态无效"
 	if loaded.has("choices") and not loaded.choices is Array:
 		return "选择记录无效"
+	if not loaded.get("relics", {}) is Dictionary or not loaded.get("relic_checks", {}) is Dictionary or not loaded.get("relic_intros", []) is Array:
+		return "遗器记录无效"
+	for id in loaded.get("relics", {}):
+		if not Relics.DATA.has(id) or loaded.relics[id] != true:
+			return "未知遗器"
+	for entry in loaded.get("relic_intros", []):
+		if not entry is Dictionary or not entry.has_all(["id", "finder", "position", "npc", "lead", "stage", "new_sight"]):
+			return "遗器剧情无效"
+		if not loaded.get("relics", {}).has(entry.id) or not loaded.actors.has(entry.finder) or not loaded.tiles.has(entry.position) \
+				or not entry.npc is String or not entry.lead is String or not _whole_number(entry.stage) \
+				or int(entry.stage) not in [0, 1] or not entry.new_sight is Array:
+			return "遗器剧情无效"
+		for cell in entry.new_sight:
+			if not loaded.explored.has(cell) or not loaded.tiles.has(cell):
+				return "遗器视野记录无效"
 	for k in loaded.explored:
 		if not loaded.tiles.has(k):
 			return "探索记录越界"
