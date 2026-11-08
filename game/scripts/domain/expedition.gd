@@ -19,8 +19,8 @@ func new_run(seed_value: int, profession: String) -> void:
 	data = {"version": SAVE_VERSION, "seed": seed_value, "profession": profession, "day": 1, "weather": "sun", "tiles": generated.tiles, "start": generated.start, "exit": generated.exit, "actors": {}, "explored": {}, "visited": {}, "flags": {}, "knowledge": {}, "submitted": {}, "story": {}, "rewards": {}, "choices": [], "status": "exploring", "log": [], "last_day_settled": 0, "battles": 0, "transaction": 0, "pending_battle": {}}
 	var hero_def = Catalog.PROFESSIONS[profession].duplicate(true)
 	hero_def["title"] = hero_def.name
-	hero_def["name"] = "旅人"
-	hero_def["element"] = "normal"
+	hero_def["name"] = hero_def.get("hero_name", "旅人")
+	hero_def["element"] = hero_def.get("element", "normal")
 	hero_def["portrait"] = "hero"
 	data.actors["hero"] = _actor("hero", hero_def, generated.start, true)
 	data.actors.hero.inventory.merge({"Q-T": 1, "trail_food": 2, "trail_blade": 1, "padded_coat": 1, "lamp_charm": 1})

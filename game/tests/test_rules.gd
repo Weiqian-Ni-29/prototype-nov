@@ -135,6 +135,7 @@ func execute() -> void:
 	expect(r.extract().ok and r.data.status == "extracted", "Explicit extraction")
 	test_combat()
 	test_environment()
+	test_elemental_heroes()
 	print("RULE TESTS: %d checks, %d failures; %d map seeds" % [checks, failures.size(), seed_count])
 	for error in failures:
 		printerr(error)
@@ -266,3 +267,57 @@ func test_environment() -> void:
 		"Loading an old save restores the terrain and strips map fire state")
 	expect(not checkpoint.data.flags.has("player_ignitions") and not checkpoint.data.knowledge.hero.has("ignitions"),
 		"Old map ignition records are removed")
+
+func test_elemental_heroes() -> void:
+	for profession in ["frost_archer", "storm_caller", "wind_runner", "stone_guard"]:
+		var r = fresh()
+		r.new_run(20261104, profession)
+		var hero = r.actor("hero")
+		var definition = Catalog.PROFESSIONS[profession]
+		expect(hero.name == definition.hero_name and hero.element == definition.element, "Selected hero joins the expedition with the right element")
+		fixture_ally(r, "tide", hero.position)
+		var b = encounter(r, ["lamp_boss", "furnace_elite"], ["hero", "tide"])
+		var initial_damage = b.damage_preview("hero", "enemy_0", hero.skill)
+		b.current = "tide"
+		expect(b.act("torrent", "enemy_1").ok and b.wet, "Water skill supplies the battlefield interaction")
+		b.current = "hero"
+		var mp: int = hero.mp
+		var initial_hp: int = b.unit("enemy_0").hp
+		var second_hp: int = b.unit("enemy_1").hp
+		expect(b.act(hero.skill, "enemy_0").ok and hero.mp == mp - Catalog.SKILLS[hero.skill].mp,
+			"Hero's primary skill is usable and pays its magic cost: " + profession)
+		match hero.element:
+			"ice":
+				expect(b.unit("enemy_0").slow == 3 and b.unit("enemy_1").slow == 0, "Wet ice attack slows its chosen target")
+			"lightning":
+				expect(initial_hp - b.unit("enemy_0").hp > initial_damage, "Wet lightning actually deals bonus damage")
+			"wind":
+				expect(b.unit("enemy_0").hp < initial_hp and b.unit("enemy_1").hp < second_hp, "Windblade strikes every enemy")
+			"earth":
+				expect(b.unit("enemy_0").hp < initial_hp and b.unit("enemy_1").hp == second_hp, "Stone spike strikes one enemy")
+		hero.energy = 100
+		expect(b.request_ultimate("hero").ok, "Hero can queue a fully charged ultimate: " + profession)
+		b.resolve_queued()
+		expect(hero.energy == 0 and b.events[-1].skill_id == hero.ultimate, "Ultimate releases through the normal queue")
+		match hero.element:
+			"ice":
+				expect(b.unit("enemy_1").slow == 3, "Ice ultimate slows all surviving enemies")
+			"lightning":
+				expect(b.unit("enemy_1").hp < second_hp, "Thunderstorm reaches the second enemy")
+			"wind":
+				expect(b.haste_turns.get("hero") == 2 and b.haste_turns.get("tide") == 2, "Wind ultimate hastens all active allies")
+				var interval: float = 1000.0 / r.stat("hero", "speed")
+				for remaining in [1, 0]:
+					b.current = "hero"
+					var action_clock: float = b.clock
+					expect(b.act("guard").ok and is_equal_approx(b.next_time.hero, action_clock + interval / 1.25)
+						and b.haste_turns.get("hero", 0) == remaining, "Haste shortens exactly two scheduled intervals")
+				b.current = "hero"
+				var action_clock: float = b.clock
+				expect(b.act("guard").ok and is_equal_approx(b.next_time.hero, action_clock + interval), "Haste expires")
+			"earth":
+				expect(hero.shield == 42 and r.actor("tide").shield == 42, "Stonewall shields all active allies")
+		expect(b.retreat().ok, "Hero leaves the encounter")
+		var loaded = fresh(1)
+		expect(loaded.load_game(r.save_path).ok and loaded.data.profession == profession
+			and loaded.actor("hero").name == definition.hero_name, "Elemental hero survives a normal save and continue")

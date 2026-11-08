@@ -18,6 +18,10 @@ const PROFESSION_ART = {
 	"wayfarer": preload("res://assets/portraits/hero.png"),
 	"guardian": preload("res://assets/portraits/hero-guardian.png"),
 	"arcanist": preload("res://assets/portraits/hero-arcanist.png"),
+	"frost_archer": preload("res://assets/portraits/hero.png"),
+	"storm_caller": preload("res://assets/portraits/hero-arcanist.png"),
+	"wind_runner": preload("res://assets/portraits/lorne.png"),
+	"stone_guard": preload("res://assets/portraits/hero-guardian.png"),
 }
 enum Screen { MENU, PROFESSION, OPENING_STORY, EXPEDITION }
 const STORY_SITES = {
@@ -268,13 +272,20 @@ func _profession_picker(screen: Vector2) -> void:
 
 	var box = _panel(ui, Rect2(screen.x * 0.06, screen.y * 0.07, screen.x * 0.43, screen.y * 0.86))
 	_text(box, "新远征", 15, gold)
-	_text(box, "选择职业", 44, ink)
-	_text(box, "选择旅人的初始职业，准备踏上旧灯路。", 18, muted)
+	_text(box, "选择出发角色", 44, ink)
+	var elemental = Catalog.PROFESSIONS[chosen_profession].has("hero_name")
+	var categories = HBoxContainer.new()
+	box.add_child(categories)
+	_button(categories, "旅人职业", _choose_profession.bind("wayfarer"), not elemental)
+	_button(categories, "元素英雄", _choose_profession.bind("frost_archer"), elemental)
 	var options = _scroll_content(box)
 	for id in Catalog.PROFESSIONS:
 		var p = Catalog.PROFESSIONS[id]
+		if p.has("hero_name") != elemental:
+			continue
 		var selected = id == chosen_profession
-		var title = ("◆ " if selected else "◇ ") + p.name + "   HP %d · MP %d · 精力 %d" % [p.hp, p.mp, p.ap]
+		var name = "%s · %s" % [Catalog.ELEMENT_NAMES[p.element], p.hero_name] if elemental else str(p.name)
+		var title = ("◆ " if selected else "◇ ") + name + "   HP %d · MP %d · 精力 %d" % [p.hp, p.mp, p.ap]
 		var option = _button(options, title + "\n" + p.description, _choose_profession.bind(id))
 		option.custom_minimum_size.y = 80
 		option.alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -291,7 +302,10 @@ func _profession_picker(screen: Vector2) -> void:
 	seed_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	seed_edit.text_changed.connect(func(value: String): chosen_seed = value)
 	row.add_child(seed_edit)
-	_button(box, "开始远征  →", _begin_opening_story)
+	if elemental:
+		_button(box, "直接开始远征  →", _start_new)
+	else:
+		_button(box, "开始远征  →", _begin_opening_story)
 	_button(box, "返回主菜单", _show_opening.bind(Screen.MENU))
 
 func _choose_profession(id: String) -> void:
@@ -1093,7 +1107,12 @@ func _battle_ui(screen: Vector2) -> void:
 		var a = run.actor(id)
 		var shown_hp = view.display_hp(id,int(a.hp))
 		var shown_shield = view.display_shield(id,int(a.shield))
-		_text(left, ("▶ " if view.presentation_actor(combat.current) == id else "") + a.name + (" · 盾%d" % shown_shield if shown_shield > 0 else ""), 19, ink if shown_hp > 0 else muted)
+		var label = ("▶ " if view.presentation_actor(combat.current) == id else "") + a.name
+		if shown_shield > 0:
+			label += " · 盾%d" % shown_shield
+		if shown_hp > 0 and combat.haste_turns.has(id):
+			label += " · 提速"
+		_text(left, label, 19, ink if shown_hp > 0 else muted)
 		_text(left, "HP %d/%d · MP %d/%d" % [shown_hp, a.hp_max, a.mp, a.mp_max], 14, muted)
 		_hp_bar(left, shown_hp, a.hp_max)
 		var ultimate = _button(left, "%d%% · " % a.energy + Catalog.SKILLS[a.ultimate].name, _ultimate.bind(id), a.energy < 100 or a.hp <= 0)
@@ -1183,6 +1202,8 @@ func _enemy_card(parent: VBoxContainer, id: String, title: String) -> void:
 	panel.add_child(card)
 	_button(card, ("◆ " if selected else "") + title, _select_battle_target.bind(id), enemy.hp <= 0)
 	var status = "已击败" if shown_hp <= 0 else "蓄力中！" if enemy.charged else "行动蓄积"
+	if shown_hp > 0 and enemy.slow > 0:
+		status += " · 减速"
 	_text(card, "HP %d/%d · %s\n%s" % [shown_hp, enemy.hp_max, status, enemy.role], 14, muted)
 	_hp_bar(card, shown_hp, enemy.hp_max, true)
 

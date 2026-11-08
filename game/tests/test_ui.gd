@@ -321,6 +321,24 @@ func reach_opening_shelter() -> void:
 	await advance_story()
 	await advance_story(Vector2(0.25, 0.87))
 
+func check_elemental_picker() -> void:
+	game._close_modal()
+	game._show_opening(game.Screen.MENU)
+	await press("开始新远征")
+	await press("元素英雄")
+	expect(find_button(game.ui, "◆ 冰 · 霜弦") != null, "Elemental picker starts on the ice hero")
+	for choice in ["◇ 雷 · 闻霆", "◇ 风 · 岚翎", "◇ 土 · 石垣"]:
+		await press(choice)
+	await press("直接开始远征")
+	expect(game.view.visible and game.modal_layer.get_child_count() == 0 and game.run.data.choices.is_empty(),
+		"Elemental hero enters the real expedition directly")
+	expect(game.run.actor("hero").name == "石垣" and game.run.actor("hero").element == "earth",
+		"The selected hero is the actual playable protagonist")
+	await press("主菜单")
+	await press("继续上次远征")
+	expect(game.run.data.profession == "stone_guard" and game.run.actor("hero").name == "石垣",
+		"Continue restores the elemental hero")
+
 func execute() -> void:
 	game = Main.instantiate()
 	root.add_child(game)
@@ -513,6 +531,7 @@ func execute() -> void:
 	await check_discovery()
 	await check_backpack_use()
 	await check_node_dialogs()
+	await check_elemental_picker()
 	# Allow the last short audio cue to finish before testing scene teardown.
 	await create_timer(0.25).timeout
 	print("UI INTEGRATION: %d checks, %d failures (opening branches, legacy saves, movement, dialogue, recruitment, inventory, ending)" % [checks, failures.size()])

@@ -8,6 +8,7 @@ var position = ""
 var active: Array[String] = []
 var enemies: Dictionary = {}
 var paid: Dictionary = {}
+var haste_turns: Dictionary = {}
 var next_time: Dictionary = {}
 var queue: Array = []
 var clock = 0.0
@@ -46,6 +47,7 @@ func begin(expedition: RefCounted, encounter: Dictionary, formation: Array) -> D
 	active.clear()
 	enemies.clear()
 	paid.clear()
+	haste_turns.clear()
 	next_time.clear()
 	queue.clear()
 	events.clear()
@@ -121,17 +123,28 @@ func _deploy(id: String) -> void:
 		a.slow = 0
 		a.guard = false
 		paid[id] = true
-	# An incoming character always waits a full personal interval; no swap loop grants turns.
-	next_time[id] = clock + _delay(id)
+	# An incoming character always waits a personal interval; no swap loop grants turns.
+	_schedule_action(id)
 
-func _delay(id: String) -> float:
+func _schedule_action(id: String) -> void:
+	var remaining = int(haste_turns.get(id, 0))
+	next_time[id] = clock + _delay(id, remaining > 0)
+	if remaining > 1:
+		haste_turns[id] = remaining - 1
+	else:
+		haste_turns.erase(id)
+
+func _delay(id: String, hastened: bool = false) -> float:
 	var speed = float(unit(id).speed) if enemies.has(id) else float(run.stat(id, "speed"))
 	if unit(id).get("slow", 0) > 0:
 		speed *= 0.7
+	if hastened:
+		speed *= 1.25
 	return 1000.0 / maxf(1.0, speed)
 
 func timeline(limit: int = 7) -> Array:
 	var simulated = next_time.duplicate()
+	var future_haste = haste_turns.duplicate()
 	var result: Array = []
 	var eligible: Array = alive_allies() + alive_enemies()
 	for i in range(limit):
@@ -142,7 +155,10 @@ func timeline(limit: int = 7) -> Array:
 			if float(simulated[id]) < float(simulated[best]) or (is_equal_approx(simulated[id], simulated[best]) and str(id) < best):
 				best = id
 		result.append({"id": best, "time": simulated[best]})
-		simulated[best] += _delay(best)
+		var remaining = int(future_haste.get(best, 0))
+		simulated[best] += _delay(best, remaining > 0)
+		if remaining > 0:
+			future_haste[best] = remaining - 1
 	return result
 
 func seek_next() -> void:
@@ -181,6 +197,7 @@ func _cast(id: String, skill_id: String, target_id: String, ultimate: bool = fal
 	var effects: Array = []
 	if skill.get("healing",false): effects.append("heal")
 	if skill.has("shield"): effects.append("shield")
+	if skill.has("haste"): effects.append("haste")
 	if skill.has("power") and not skill.get("healing",false): effects.append("damage")
 	var caster = unit(id)
 	if caster.hp <= 0 or int(caster.mp) < int(skill.get("mp", 0)):
@@ -211,18 +228,26 @@ func _cast(id: String, skill_id: String, target_id: String, ultimate: bool = fal
 			var was_down = t.hp <= 0
 			t.hp = mini(int(t.hp_max), int(t.hp) + int(skill.power))
 			if was_down and t.hp > 0:
-				next_time[target] = clock + _delay(target)
+				_schedule_action(target)
 			_log("%s → %s：恢复 %d HP。" % [caster.name, t.name, skill.power])
 		elif skill.has("power") and t.hp > 0:
 			var damage = damage_preview(id, target, skill_id)
 			_hurt(target, damage)
 			if skill.has("slow") and t.hp > 0:
-				t.slow = skill.slow
+				var duration = int(skill.slow) + int(skill.element == "ice" and wet)
+				t.slow = maxi(int(t.slow), duration)
 			_log("%s · %s → %s：%d 伤害。" % [caster.name, skill.name, t.name, damage])
 		if skill.has("shield") and t.hp > 0:
 			t.shield = mini(60, int(t.get("shield", 0)) + int(skill.shield))
 			_log("%s 获得护盾。" % t.name)
-		results.append(_visual_result(target,before))
+		var result = _visual_result(target, before)
+		if skill.element == "ice" and skill.has("slow") and t.hp > 0:
+			result["slow"] = t.slow
+		if skill.has("haste") and t.hp > 0:
+			haste_turns[target] = maxi(int(haste_turns.get(target, 0)), int(skill.haste))
+			result["haste"] = haste_turns[target]
+			_log("%s 获得提速。" % t.name)
+		results.append(result)
 	if skill.has("environment"):
 		_apply_field_effect(skill.environment)
 	_emit_event({"actor": id, "targets": targets, "kind": "ultimate" if ultimate else "cast" if skill_id != "attack" else "attack", "element": skill.element, "skill": skill.name, "skill_id":skill_id,"effects":effects,"results":results,"environment_before":environment_before,"environment_after":field_view()})
@@ -253,6 +278,8 @@ func environment_multiplier(element: String, target_element: String) -> float:
 		multiplier *= 1.1
 	if wet and element == "fire":
 		multiplier *= 0.8
+	if wet and element == "lightning":
+		multiplier *= 1.25
 	return clampf(multiplier, 0.5, 1.5)
 
 func use_item(item: String, target_id: String) -> Dictionary:
@@ -262,7 +289,7 @@ func use_item(item: String, target_id: String) -> Dictionary:
 	var result = run.use_item(current, target_id, item, true)
 	if result.ok:
 		if unit(target_id).hp > 0 and float(next_time.get(target_id, 0.0)) < clock:
-			next_time[target_id] = clock + _delay(target_id)
+			_schedule_action(target_id)
 		_emit_event({"actor": current, "targets": [target_id], "kind": "heal", "skill_id":"item:"+item,"element": "normal","results":[_visual_result(target_id,before)]})
 	return result
 
@@ -422,7 +449,7 @@ func _hurt(id: String, damage: int) -> void:
 func _complete_action(id: String) -> void:
 	if unit(id).get("slow", 0) > 0:
 		unit(id).slow -= 1
-	next_time[id] = clock + _delay(id)
+	_schedule_action(id)
 	current = ""
 	_settle_fire()
 	if check_end():

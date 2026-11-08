@@ -24,9 +24,10 @@ func configure(character: Dictionary) -> void:
 	var skill = str(definition.get("skill", ""))
 	var type = str(definition.get("type",""))
 	if type.begins_with("npc:"): id = type.trim_prefix("npc:")
-	role = "wolf" if id == "grit" else "beast" if type in ["boar","lurker"] else "spider" if type in ["spider","hunter_elite"] else "swarm" if type=="swarm" else "crossbow" if type=="archer" else "bow" if id in ["cen", "lorne"] or skill == "trail_shot" else "magic" if skill in ["ember", "torrent", "heal", "ignite", "wet"] else "melee"
+	role = "wolf" if id == "grit" else "beast" if type in ["boar","lurker"] else "spider" if type in ["spider","hunter_elite"] else "swarm" if type=="swarm" else "crossbow" if type=="archer" else "bow" if id in ["cen", "lorne"] or skill in ["trail_shot", "frost_arrow"] else "magic" if skill in ["ember", "torrent", "heal", "ignite", "wet", "thunderbolt", "windblade"] else "melee"
 	asset_name = {"melee":"knight", "bow":"ranger", "crossbow":"rogue_hooded","magic":"mage", "wolf":"wolf","beast":type,"spider":"spider","swarm":"swarm"}[role]
 	if id=="lorne": asset_name = "rogue"
+	if skill == "windblade": asset_name = "rogue_hooded"
 	if type=="archer": asset_name = "rogue_hooded"
 	if type=="apothecary": asset_name = "rogue"
 	if type in ["furnace","canal","furnace_elite","lamp_boss"]: asset_name = "knight"
@@ -47,7 +48,7 @@ func configure(character: Dictionary) -> void:
 		_customize(scene)
 		if type not in ["furnace","canal","furnace_elite","lamp_boss"]:
 			_weapon("bow_withString" if role == "bow" else "crossbow_2handed" if role=="crossbow" else "staff" if role == "magic" else "sword_1handed", "LeftHandSocket" if role == "bow" else "RightHandSocket")
-		if skill == "guard_all": _weapon("shield_round", "LeftHandSocket")
+		if skill in ["guard_all", "stone_spike"]: _weapon("shield_round", "LeftHandSocket")
 		if id == "eve":
 			var ears = BoneAttachment3D.new()
 			ears.bone_name = "Head"
@@ -116,7 +117,7 @@ func _customize(node: Node) -> void:
 		var type = str(definition.get("type",""))
 		if type.begins_with("npc:"): id = type.trim_prefix("npc:")
 		if type in ["furnace","canal","furnace_elite","lamp_boss"] and ("Head" in node.name or "Helmet" in node.name or "Cape" in node.name or "Hat" in node.name): node.visible = false
-		if "Mage_Hat" in node.name and id in ["eve", "ember", "tide", "hero"]: node.visible = false
+		if "Mage_Hat" in node.name and id in ["eve", "ember", "tide", "hero"] and definition.get("skill") != "thunderbolt": node.visible = false
 		if true:
 			for surface in range(node.mesh.get_surface_count()):
 				var original = node.get_active_material(surface)

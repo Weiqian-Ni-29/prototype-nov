@@ -70,7 +70,7 @@ func _play_event(event: Dictionary, token: int) -> void:
 	var actor = view.battle_dolls.get(actor_id)
 	var skill = str(event.get("skill_id",""))
 	var results: Array = event.get("results",[])
-	var positive = "heal" in event.get("effects",[]) or "shield" in event.get("effects",[]) or event.kind=="heal"
+	var positive = "heal" in event.get("effects",[]) or "shield" in event.get("effects",[]) or "haste" in event.get("effects",[]) or event.kind=="heal"
 	for result in results:
 		if result.get("healing",0)>0 or result.get("shield_gain",0)>0 or result.get("mp_gain",0)>0: positive = true
 	if event.kind=="guard":
@@ -125,7 +125,7 @@ func _play_event(event: Dictionary, token: int) -> void:
 		actor.play_action("rally" if skill=="rally" else "ultimate" if event.kind=="ultimate" else "heal" if positive else "attack" if event.kind=="attack" else "cast",total_duration*0.8)
 	if not await _wait(impact_time-0.22 if not melee else impact_time,token): return
 	if event.kind=="ultimate":
-		view.sound_cue.emit({"rally":"shield","dawn_strike":"impact","arrow_rain":"bow","warmth":"heal","wolf_howl":"howl","sunfall":"fire","tide_shelter":"water"}.get(skill,"cast"))
+		view.sound_cue.emit({"rally":"shield","dawn_strike":"impact","arrow_rain":"bow","warmth":"heal","wolf_howl":"howl","sunfall":"fire","tide_shelter":"water","frostfall":"bow","thunderstorm":"cast","tailwind":"water","stonewall":"shield"}.get(skill,"cast"))
 		var points: Array = []
 		for id in event.get("targets",[]): points.append(_point(str(id)))
 		view.effects.ultimate_start(skill,_point(actor_id),points)

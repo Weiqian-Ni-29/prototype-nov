@@ -15,10 +15,15 @@ const TERRAIN = {
 	"swamp": {"name": "沼泽", "cost": 2, "color": "657c72"},
 	"lake": {"name": "湖泊", "cost": 0, "color": "397d84"},
 }
+const ELEMENT_NAMES = {"normal": "普通", "fire": "火", "water": "水", "ice": "冰", "lightning": "雷", "wind": "风", "earth": "土"}
 const PROFESSIONS = {
 	"wayfarer": {"name": "巡路客", "description": "善于探索和支援，行动频繁。", "hp": 95, "mp": 48, "ap": 9, "attack": 18, "defense": 5, "speed": 122, "skill": "trail_shot", "ultimate": "rally", "color": "caa76d"},
 	"guardian": {"name": "守灯卫", "description": "高生命与防护，机动较低。", "hp": 145, "mp": 35, "ap": 5, "attack": 24, "defense": 10, "speed": 83, "skill": "guard_all", "ultimate": "dawn_strike", "color": "799cba"},
 	"arcanist": {"name": "烛纹师", "description": "以魔力施展火焰与治疗。", "hp": 83, "mp": 85, "ap": 7, "attack": 23, "defense": 4, "speed": 101, "skill": "ember", "ultimate": "warmth", "color": "b78aac"},
+	"frost_archer": {"name": "霜弓手", "hero_name": "霜弦", "element": "ice", "description": "冰矢压慢单个敌人，终结技减速全场敌人。", "hp": 92, "mp": 64, "ap": 8, "attack": 20, "defense": 5, "speed": 108, "skill": "frost_arrow", "ultimate": "frostfall", "color": "93badd"},
+	"storm_caller": {"name": "引雷师", "hero_name": "闻霆", "element": "lightning", "description": "雷击擅长爆发，在潮湿的场地伤害更高。", "hp": 82, "mp": 76, "ap": 7, "attack": 26, "defense": 4, "speed": 102, "skill": "thunderbolt", "ultimate": "thunderstorm", "color": "9f87d7"},
+	"wind_runner": {"name": "逐风客", "hero_name": "岚翎", "element": "wind", "description": "风刃攻击全体敌人，终结技为己方提速。", "hp": 96, "mp": 56, "ap": 9, "attack": 19, "defense": 5, "speed": 124, "skill": "windblade", "ultimate": "tailwind", "color": "79bd9a"},
+	"stone_guard": {"name": "岩卫", "hero_name": "石垣", "element": "earth", "description": "以石棘打击单个敌人，终结技为全队撑起护盾。", "hp": 142, "mp": 48, "ap": 6, "attack": 23, "defense": 10, "speed": 84, "skill": "stone_spike", "ultimate": "stonewall", "color": "ba9267"},
 }
 const COMPANIONS = {
 	"cen": {"name": "岑枝", "title": "林缘猎人", "hp": 102, "mp": 34, "ap": 8, "attack": 22, "defense": 5, "speed": 113, "skill": "snare", "ultimate": "arrow_rain", "color": "77945c", "element": "normal", "terrain": "forest", "portrait": "cen"},
@@ -44,6 +49,14 @@ const SKILLS = {
 	"wolf_howl": {"name": "群山长鸣", "mp": 0, "shield": 45, "target": "all_allies", "element": "normal", "energy": 0},
 	"sunfall": {"name": "余烬落日", "mp": 0, "power": 2.6, "target": "all_enemies", "element": "fire", "energy": 0, "environment": "ignite"},
 	"tide_shelter": {"name": "澄海归潮", "mp": 0, "power": 38, "target": "all_allies", "healing": true, "shield": 25, "element": "water", "energy": 0, "environment": "wet"},
+	"frost_arrow": {"name": "凝霜矢", "mp": 9, "power": 1.35, "target": "enemy", "element": "ice", "energy": 30, "slow": 2},
+	"frostfall": {"name": "寒霜齐落", "mp": 0, "power": 1.75, "target": "all_enemies", "element": "ice", "energy": 0, "slow": 2},
+	"thunderbolt": {"name": "引雷", "mp": 12, "power": 1.75, "target": "enemy", "element": "lightning", "energy": 30},
+	"thunderstorm": {"name": "千钧雷阵", "mp": 0, "power": 2.35, "target": "all_enemies", "element": "lightning", "energy": 0},
+	"windblade": {"name": "回风刃", "mp": 9, "power": 1.15, "target": "all_enemies", "element": "wind", "energy": 30},
+	"tailwind": {"name": "扶摇", "mp": 0, "target": "all_allies", "element": "wind", "energy": 0, "haste": 2},
+	"stone_spike": {"name": "石棘", "mp": 8, "power": 1.5, "target": "enemy", "element": "earth", "energy": 30},
+	"stonewall": {"name": "磐城", "mp": 0, "shield": 42, "target": "all_allies", "element": "earth", "energy": 0},
 }
 const ITEMS = {
 	"salve": {"name": "疗伤药", "description": "恢复 45 HP，可同地救援重伤者。", "hp": 45},
@@ -77,6 +90,8 @@ static func skill_description(id: String) -> String:
 	var skill = SKILLS[id]
 	var parts: Array[String] = ["%d MP" % skill.mp]
 	parts.append({"enemy": "敌方单体", "ally": "己方单体，可救援", "all_enemies": "敌方全体", "all_allies": "己方在场全体"}[skill.target])
+	if skill.element != "normal":
+		parts.append(ELEMENT_NAMES[skill.element] + "属性")
 	if skill.get("healing", false):
 		parts.append("恢复 %d HP" % skill.power)
 	elif skill.has("power"):
@@ -84,7 +99,13 @@ static func skill_description(id: String) -> String:
 	if skill.has("shield"):
 		parts.append("护盾 +%d，上限 60" % skill.shield)
 	if skill.has("slow"):
-		parts.append("减速 2 次行动")
+		parts.append("减速 %d 次行动" % skill.slow)
+		if skill.element == "ice":
+			parts.append("潮湿时额外减速 1 次")
+	if skill.element == "lightning":
+		parts.append("潮湿时伤害 ×1.25")
+	if skill.has("haste"):
+		parts.append("行动速度提高 25%%，持续 %d 个行动间隔" % skill.haste)
 	if skill.get("environment", "") == "ignite":
 		parts.append("晴天可点燃干燥的森林战场，双方承受持续火伤")
 	elif skill.get("environment", "") == "wet":

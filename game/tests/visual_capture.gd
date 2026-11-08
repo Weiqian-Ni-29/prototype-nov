@@ -329,7 +329,9 @@ func execute() -> void:
 	await capture_node_examples()
 	# Inspect every biome through the exact same battle view used in the playable game.
 	game.set_process(false)
+	var hero_fixtures = {"forest": "frost_archer", "mountain": "stone_guard", "desert": "wind_runner", "swamp": "storm_caller"}
 	for biome in ["plains", "forest", "mountain", "ruins", "desert", "swamp"]:
+		game.chosen_profession = hero_fixtures.get(biome, "wayfarer")
 		game._start_new()
 		var run = game.run
 		var position = run.actor("hero").position
@@ -360,6 +362,20 @@ func execute() -> void:
 			battle.step_auto()
 			game._refresh()
 			await capture("battle-friendly-decision")
+		if hero_fixtures.has(biome):
+			var hero = run.actor("hero")
+			battle.current = "hero"
+			game._perform_combat(hero.skill, "enemy_0")
+			while game.view.is_animating():
+				await process_frame
+			hero.energy = 100
+			game.battle_timer = 0.0
+			game._ultimate("hero")
+			await create_timer(0.74).timeout
+			await capture("elemental-ultimate-" + str(hero.element))
+			while game.view.is_animating():
+				await process_frame
+			expect(hero.energy == 0, "Elemental ultimate plays through the real battle interface")
 		var caster = game.view.battle_dolls.ember
 		caster.play_action("cast")
 		var before_pose = caster.skeleton.get_bone_pose_rotation(caster.bones.arm_r)
