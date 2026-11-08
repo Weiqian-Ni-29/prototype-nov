@@ -71,6 +71,7 @@ var outline_cell = ""
 var map_occluders: Array[MeshInstance3D] = []
 var fading_occluders: Dictionary
 var map_actor = ""
+var map_squad: Array = []
 signal presentation_changed
 signal sound_cue(kind: String)
 
@@ -172,6 +173,7 @@ func reset() -> void:
 	map_occluders.clear()
 	chunk_occluders.clear()
 	fading_occluders.clear()
+	map_squad.clear()
 	tile_signatures.clear()
 	dolls.clear()
 	battle_dolls.clear()
@@ -189,6 +191,7 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 	if selected_id != map_actor:
 		map_follow_actor = null
 	map_actor = selected_id
+	map_squad = run.squad_members(selected_id)
 	if tile_nodes.is_empty() and not current_tiles.is_empty():
 		board_surface.prepare(current_tiles, int(run.data.seed))
 		map_min = Hex.world(current_tiles.keys()[0])
@@ -649,31 +652,37 @@ func _clear_battle_target() -> void:
 	battle_targeting.update_markers(camera, battle_dolls, empty)
 
 func _update_occlusion(delta: float) -> void:
-	var model = dolls.get(map_actor)
 	var blocked: Dictionary = {}
-	var target = Vector3.ZERO
 	var sight = -camera.global_basis.z
-	if zoom_size <= OCCLUSION_ZOOM and is_instance_valid(model) and model.visible:
-		var feet: Vector3 = model.global_position
-		target = feet + Vector3.UP * 0.20
-		var head = feet + Vector3.UP * 0.38
-		for instance in map_occluders:
-			if instance.global_position.distance_squared_to(feet) > 9.0:
+	if zoom_size <= OCCLUSION_ZOOM:
+		for id in map_squad:
+			var model = dolls.get(id)
+			if not is_instance_valid(model) or not model.visible:
 				continue
-			var bounds: AABB = (instance.global_transform * instance.get_aabb()).grow(0.025)
-			if bounds.intersects_segment(target - sight * 3.0, target) != null or bounds.intersects_segment(head - sight * 3.0, head) != null:
-				blocked[instance] = true
-				if not fading_occluders.has(instance):
-					_begin_occlusion(instance)
+			var feet: Vector3 = model.global_position
+			var target = feet + Vector3.UP * 0.20
+			var head = feet + Vector3.UP * 0.38
+			for instance in map_occluders:
+				if instance.global_position.distance_squared_to(feet) > 9.0:
+					continue
+				var bounds: AABB = (instance.global_transform * instance.get_aabb()).grow(0.025)
+				if bounds.intersects_segment(target - sight * 3.0, target) != null or bounds.intersects_segment(head - sight * 3.0, head) != null:
+					var targets: PackedVector3Array = blocked.get(instance, PackedVector3Array())
+					targets.append(target)
+					blocked[instance] = targets
+	for instance in blocked:
+		if not fading_occluders.has(instance):
+			_begin_occlusion(instance)
 	for instance in fading_occluders.keys():
 		var effect: Dictionary = fading_occluders[instance]
 		var obscures = blocked.has(instance)
 		effect.amount = move_toward(effect.amount, 1.0 if obscures else 0.0, delta * 8.0)
 		if obscures:
-			effect.target = target
+			effect.targets = blocked[instance]
 		for material in effect.materials:
 			material.set_shader_parameter("fade", effect.amount)
-			material.set_shader_parameter("target", effect.target)
+			material.set_shader_parameter("targets", effect.targets)
+			material.set_shader_parameter("target_count", effect.targets.size())
 			material.set_shader_parameter("sight", sight)
 		if effect.amount == 0.0 and not obscures:
 			_restore_occluder(instance, effect)
@@ -684,7 +693,7 @@ func _restore_occluder(instance: MeshInstance3D, effect: Dictionary) -> void:
 		instance.set_surface_override_material(surface, effect.originals[surface])
 
 func _begin_occlusion(instance: MeshInstance3D) -> void:
-	var effect = {"originals": [], "materials": [], "amount": 0.0, "target": Vector3.ZERO}
+	var effect = {"originals": [], "materials": [], "amount": 0.0, "targets": PackedVector3Array()}
 	for surface in range(instance.mesh.get_surface_count()):
 		effect.originals.append(instance.get_surface_override_material(surface))
 		var original = instance.get_active_material(surface)
