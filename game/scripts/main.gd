@@ -1002,8 +1002,9 @@ func _battle_ui(screen: Vector2) -> void:
 	skill.tooltip_text = Catalog.SKILLS[skill_id].name + "\n" + _combat_skill_hint(skill_id, actor_id)
 	var guard = _button(commands, "防守", func(): _combat_action("guard"), not is_friendly)
 	guard.tooltip_text = "防守\n下次正常行动前受到的伤害降低，并获得 10% 充能。"
-	var swap = _button(commands, "换人", _swap_dialog, not is_friendly or combat.reserves().is_empty())
-	swap.tooltip_text = "用同地候补换下当前角色，消耗本次正常行动。\n每名候补首次上场支付参战精力。"
+	if is_friendly and not combat.reserves().is_empty():
+		var swap = _button(commands, "换人", _swap_dialog)
+		swap.tooltip_text = "用同地候补换下当前角色，消耗本次正常行动。\n每名候补首次上场支付参战精力。"
 	var retreat_hint = "已付精力不退还；本战出战者承受 10% 最大生命损伤，敌人恢复。"
 	var retreat = _button(commands, "撤退", func(): _confirm("撤退？", retreat_hint, func(): _run_action(combat.retreat()); _finish_battle()))
 	retreat.tooltip_text = retreat_hint
