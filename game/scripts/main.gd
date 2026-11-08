@@ -443,6 +443,7 @@ func _cell_actions() -> void:
 		states.append("潮湿至第 %d 天" % t.wet_until)
 	if not states.is_empty():
 		_text(box, " / ".join(states), 16, gold)
+	_button(box, "使用道具", _item_dialog.bind(selected_id))
 	if run.knows_encounter(cell):
 		_text(box, "驻守敌人 · 强度固定", 18, Color("e4ab87"))
 		_text(box, "首次上场每人 2 精力；同地最多四名角色出战。", 14, muted)
@@ -473,7 +474,6 @@ func _cell_actions() -> void:
 			_run_action(result)
 			if result.ok and not _show_relic_intro():
 				_notice(result.message))
-	_button(box, "使用道具 / 同地救援", _item_dialog.bind(selected_id))
 	if actor.skill == "heal":
 		_button(box, "治疗队友 · 1 精力 / 12 MP", _healing_dialog)
 	if actor.skill == "ember":
@@ -484,7 +484,40 @@ func _cell_actions() -> void:
 	_button(box, "建营 · 2 精力 / 2 木料", func(): _close_modal(); _run_action(run.build_camp(selected_id)), t.camp)
 	if cell == run.data.exit and run.actor("hero").position == run.data.exit:
 		_button(box, "确认撤离 / 继续等待", _extraction_dialog)
+	_add_rescue_action(box, cell)
 	_button(dialog, "关闭", _close_modal)
+
+func _add_rescue_action(box: VBoxContainer, cell: String) -> void:
+	if run.data.status != "exploring" or not run.data.pending_battle.is_empty():
+		return
+	var downed = _local_targets(cell).filter(func(id): return run.actor(id).hp <= 0)
+	if downed.is_empty():
+		return
+	var local_crew = run.same_cell(cell, true)
+	var salve_users = local_crew.filter(func(id): return run.actor(id).inventory.get("salve", 0) > 0)
+	var healers = local_crew.filter(func(id):
+		var healer = run.actor(id)
+		return healer.skill == "heal" and healer.ap >= 1 and healer.mp >= 12)
+	if not salve_users.is_empty() or not healers.is_empty():
+		_button(box, "同地救援", _rescue_dialog.bind(downed, salve_users, healers))
+
+func _rescue_dialog(downed: Array, salve_users: Array, healers: Array) -> void:
+	var box = _modal("同地救援", 620, 480)
+	_text(box, "选择重伤角色，再选择施救者和救援方式。", 16, muted)
+	var target = OptionButton.new()
+	for id in downed:
+		target.add_item(run.actor(id).name + " · 重伤")
+	box.add_child(target)
+	var actions = _scroll_content(box)
+	for id in salve_users:
+		_button(actions, run.actor(id).name + " · 使用疗伤药 ×1", func():
+			_close_modal()
+			_run_action(run.use_item(id, downed[target.selected], "salve")))
+	for id in healers:
+		_button(actions, run.actor(id).name + " · 治疗 · 1 精力 / 12 MP", func():
+			_close_modal()
+			_run_action(run.heal_skill(id, downed[target.selected])))
+	_button(box, "返回行动", _cell_actions)
 
 func _footer(screen: Vector2) -> void:
 	var box = _panel(ui, Rect2(20, screen.y - 140, screen.x - 40, 122))
@@ -752,20 +785,21 @@ func _transfer_dialog(owner: String, item: String) -> void:
 					_text(content, result.message, 16, gold))
 	_button(box, "返回背包", _inventory_dialog.bind(owner, _inventory_tab(item), item))
 
+func _local_targets(cell: String) -> Array[String]:
+	var targets: Array[String] = []
+	for id in run.data.actors:
+		var actor = run.actor(id)
+		if actor.position == cell and (actor.joined or run.data.story.get(id, {}).get("met", false)):
+			targets.append(id)
+	return targets
+
 func _item_dialog(user_id: String, item_id: String = "") -> void:
 	var from_backpack = not item_id.is_empty()
 	var box = _modal("使用道具 · " + run.actor(user_id).name, 650, 460)
 	_text(box, "地图使用不耗精力；战斗中不占正常行动，可使用多件。", 16, muted)
 	if from_backpack:
 		_text(box, "从当前角色的背包使用「%s」，请选择同地目标。" % Catalog.item_name(item_id), 16, gold)
-	var targets: Array = []
-	if combat != null:
-		targets = combat.active.duplicate()
-	else:
-		for id in run.data.actors:
-			var a = run.actor(id)
-			if a.position == run.actor(user_id).position and (a.joined or run.data.story.get(id, {}).get("met", false)):
-				targets.append(id)
+	var targets: Array = combat.active.duplicate() if combat != null else _local_targets(run.actor(user_id).position)
 	var select = OptionButton.new()
 	for id in targets:
 		select.add_item("%s · HP %d/%d · MP %d/%d" % [run.actor(id).name, run.actor(id).hp, run.actor(id).hp_max, run.actor(id).mp, run.actor(id).mp_max])

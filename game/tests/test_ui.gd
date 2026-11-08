@@ -137,6 +137,58 @@ func check_backpack_use() -> void:
 	expect(contains_text(game.modal_layer, "可用于分享与任务"), "Food can be selected and inspected like every consumable")
 	await press("关闭")
 
+func check_rescue_action() -> void:
+	game._start_new()
+	var run = game.run
+	var hero = run.actor("hero")
+	var lorne = run.actor("lorne")
+	var eve = run.actor("eve")
+	var away: String = lorne.position
+	lorne.position = hero.position
+	eve.position = hero.position
+	run.join_companion("lorne")
+	run.join_companion("eve")
+	lorne.hp = 1
+	await press("行动")
+	var actions = game.modal_layer.find_children("*", "Button", true, false)
+	expect(actions[0].text == "使用道具" and find_button(game.modal_layer, "同地救援") == null,
+		"Item use comes first and a conscious injured ally does not trigger rescue")
+	await press("关闭")
+	lorne.hp = 0
+	lorne.position = away
+	await press("行动")
+	expect(find_button(game.modal_layer, "同地救援") == null, "A downed ally on another tile does not trigger rescue")
+	await press("关闭")
+	lorne.position = hero.position
+	await press("行动")
+	actions = game.modal_layer.find_children("*", "Button", true, false)
+	expect(actions[-2].text == "同地救援" and actions[-1].text == "关闭", "Rescue is the final map action")
+	await press("同地救援")
+	var target = game.modal_layer.find_children("*", "OptionButton", true, false)[0]
+	expect(target.item_count == 1 and target.get_item_text(0).begins_with("洛恩"), "Rescue only offers downed local targets")
+	var hero_effort = hero.ap
+	var hero_salves = hero.inventory.salve
+	await press("旅人 · 使用疗伤药")
+	expect(lorne.hp == 45 and hero.inventory.salve == hero_salves - 1 and hero.ap == hero_effort,
+		"The rescue action uses one salve from the chosen rescuer")
+	await press("行动")
+	expect(find_button(game.modal_layer, "同地救援") == null, "The action disappears after the last downed character is rescued")
+	await press("关闭")
+	lorne.hp = 0
+	hero.inventory.salve = 0
+	eve.inventory.salve = 0
+	eve.mp = 11
+	await press("行动")
+	expect(find_button(game.modal_layer, "同地救援") == null, "A downed ally with no available rescue method does not trigger the action")
+	await press("关闭")
+	eve.mp = 12
+	var eve_effort = eve.ap
+	await press("行动")
+	await press("同地救援")
+	await press("伊芙 · 治疗")
+	expect(lorne.hp == 38 and eve.ap == eve_effort - 1 and eve.mp == 0,
+		"A local healer can rescue the ally using the existing skill costs")
+
 func check_discovery() -> void:
 	game._start_new()
 	var run = game.run
@@ -455,6 +507,7 @@ func execute() -> void:
 	expect(game.modal_layer.get_child_count() == 0 and find_button(game.ui, "查看结局剧情") != null, "Ending returns to the expedition record and can be replayed")
 	await check_discovery()
 	await check_backpack_use()
+	await check_rescue_action()
 	# Allow the last short audio cue to finish before testing scene teardown.
 	await create_timer(0.25).timeout
 	print("UI INTEGRATION: %d checks, %d failures (opening branches, legacy saves, movement, dialogue, recruitment, inventory, ending)" % [checks, failures.size()])
