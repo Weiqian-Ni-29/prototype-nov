@@ -402,7 +402,7 @@ func build_camp(id: String) -> Dictionary:
 	changed.emit()
 	return success()
 
-func rest(id: String) -> Dictionary:
+func rest_preview(id: String) -> Dictionary:
 	var check = _map_action(id, 2)
 	if not check.ok:
 		return check
@@ -412,12 +412,20 @@ func rest(id: String) -> Dictionary:
 		return fail("危险地点不能休整。")
 	if a.hp >= a.hp_max and a.mp >= a.mp_max:
 		return fail("资源已满，无需休整。")
-	a.ap -= 2
 	var ratio = 0.3 if t.camp and t.terrain != "scorched" else 0.2
 	if t.terrain == "forest" and data.weather == "rain":
 		ratio -= 0.05
 	if "eve" in same_cell(a.position, true):
 		ratio += 0.10
+	return {"ok": true, "recovery_ratio": ratio}
+
+func rest(id: String) -> Dictionary:
+	var preview = rest_preview(id)
+	if not preview.ok:
+		return preview
+	var a = actor(id)
+	var ratio: float = preview.recovery_ratio
+	a.ap -= 2
 	a.hp = mini(int(a.hp_max), int(a.hp) + ceili(a.hp_max * ratio))
 	a.mp = mini(int(a.mp_max), int(a.mp) + ceili(a.mp_max * ratio))
 	changed.emit()
