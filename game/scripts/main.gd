@@ -351,8 +351,8 @@ func _continue_run() -> void:
 		_formation_dialog()
 	elif run.data.has("pending_victory"):
 		_victory_dialog()
-	else:
-		_show_relic_intro()
+	elif not _show_relic_intro():
+		_show_npc_encounter(selected_id)
 
 func _header(screen: Vector2) -> void:
 	var box = _panel(ui, Rect2(20, 17, screen.x - 40, 88))
@@ -544,10 +544,14 @@ func _move_selected() -> void:
 	move_target = ""
 	var result = run.move(moving_ids, destination)
 	_run_action(result)
-	if result.ok and selected_id in moving_ids:
+	if not result.ok:
+		return
+	if selected_id in moving_ids:
 		view.follow_map_movement(selected_id)
-	if result.ok and result.get("battle", false):
+	if result.get("battle", false):
 		_formation_dialog()
+	else:
+		_show_npc_encounter(selected_id if selected_id in moving_ids else moving_ids[0])
 
 func _run_action(result: Dictionary) -> void:
 	toast_text = "已完成。" if result.ok else str(result.get("message", "无法执行。"))
@@ -1065,14 +1069,32 @@ func _process(delta: float) -> void:
 	elif was_playing and battle_timer <= 0:
 		_refresh()
 
+func _show_npc_encounter(visitor: String) -> void:
+	var cell: String = run.actor(visitor).position
+	var id: String = run.data.tiles[cell].npc
+	var npc = run.actor(id)
+	if npc.is_empty() or npc.joined or npc.position != cell:
+		return
+	var intro = narrative.encounter_intro(visitor, id)
+	if not intro.ok or intro.beats.is_empty():
+		return
+	if selected_id != visitor:
+		selected_id = visitor
+		view.focus_cell(cell)
+		_refresh()
+	_begin_dialogue(id, intro.beats)
+
 func _talk(id: String) -> void:
-	dialogue_subject = id
-	dialogue_response = ""
 	var intro = narrative.encounter_intro(selected_id, id)
 	if not intro.ok:
 		_notice(intro.message)
 		return
-	_encounter_beat(intro.beats, 0)
+	_begin_dialogue(id, intro.beats)
+
+func _begin_dialogue(id: String, beats: Array) -> void:
+	dialogue_subject = id
+	dialogue_response = ""
+	_encounter_beat(beats, 0)
 
 func _encounter_beat(beats: Array, index: int) -> void:
 	if index >= beats.size():
@@ -1387,7 +1409,7 @@ func _to_menu() -> void:
 		_show_opening(Screen.MENU)
 
 func _guide() -> void:
-	_notice("点击角色定位，勾选同格角色可共同移动。首次点击相邻地块查看箭头和精力，再点同一格确认前往。采集、交谈等操作在「行动」中。\n\n按住左键拖动或用 WASD 平移地图，滚轮缩放。每人精力独立，结束一天恢复个人精力以及部分 HP/MP。\n\n同地最多四人出战，候补换人占正常行动，终结技可插队。抵达归航站后可等待，只有主动确认才结束。")
+	_notice("点击角色定位，勾选同格角色可共同移动。首次点击相邻地块查看箭头和精力，再点同一格确认前往。踏入陌生 NPC 所在地块会自动开始相遇剧情。采集和再次交谈等操作在「行动」中。\n\n按住左键拖动或用 WASD 平移地图，滚轮缩放。每人精力独立，结束一天恢复个人精力以及部分 HP/MP。\n\n同地最多四人出战，候补换人占正常行动，终结技可插队。抵达归航站后可等待，只有主动确认才结束。")
 
 func _settings_dialog() -> void:
 	var box = _modal("设置与操作", 650, 430)

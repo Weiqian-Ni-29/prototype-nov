@@ -170,9 +170,28 @@ func check_discovery() -> void:
 	expect(not game.move_preview.visible, "Opening a dialog clears the movement preview")
 	expect(find_button(game.modal_layer, "在地图上定位归航站") == null, "Revealing ferry terrain does not unlock its exact location")
 	await press("合上手记")
+	var hero = run.actor("hero")
+	var effort = hero.ap
+	hero.ap = 0
 	game.view.cell_clicked.emit(target)
+	game.view.cell_clicked.emit(target)
+	expect(hero.position == run.data.start and not run.has_visited(target) and not game.modal_layer.has_node("StoryScreen"),
+		"An unaffordable move does not trigger the encounter")
+	await press("知道了")
+	hero.ap = effort
+	var scout = run.actor("cen")
+	scout.position = run.data.start
+	expect(run.join_companion("cen").ok, "A scout can visit the NPC while the hero stays behind")
+	game._toggle_mover(true, "cen")
+	game._toggle_mover(false, "hero")
+	game.view.cell_clicked.emit(target)
+	expect(not game.modal_layer.has_node("StoryScreen"), "Previewing movement does not trigger the encounter")
 	game.view.cell_clicked.emit(target)
 	expect(not game.move_preview.visible and game.move_target.is_empty(), "The confirmation clears the arrow and cost")
+	expect(dialogue_contains("药瓶") and not run.data.story.eve.met and game.selected_id == "cen"
+		and scout.position == target and hero.position == run.data.start and hero.ap == effort,
+		"Actual arrival opens Eve's introduction for the scout who entered")
+	await press("结束交谈")
 	await press("行动")
 	expect(run.has_visited(target) and contains_text(game.modal_layer, "药箱树荫") and contains_text(game.modal_layer, "伊芙") and contains_text(game.modal_layer, "可采集"),
 		"Real arrival reveals site, NPC and items together")
@@ -193,6 +212,13 @@ func check_discovery() -> void:
 	choices = game.modal_layer.get_node("StoryScreen/StoryChoices")
 	expect(find_button(choices, "接取药箱") == null and find_button(choices, "说明应急分药") != null,
 		"Response ends before newly available choices appear")
+	expect(scout.inventory.get("Q-M", 0) == 1, "The encounter choices use the scout's inventory")
+	await press("结束交谈")
+	game.view.cell_clicked.emit(run.data.start)
+	game.view.cell_clicked.emit(run.data.start)
+	game.view.cell_clicked.emit(target)
+	game.view.cell_clicked.emit(target)
+	expect(scout.position == target and game.modal_layer.get_child_count() == 0, "Returning to a known NPC does not replay the encounter")
 
 	game._start_new()
 	tile = run.data.tiles[target]
@@ -315,12 +341,15 @@ func execute() -> void:
 	var saved_hero = saved_run().get("actors", {}).get("hero", {})
 	expect(saved_hero.get("ap") == 5 - cost and saved_hero.get("position") == path[-1], "Confirmed movement auto-saves position and AP")
 	expect(game.view.dolls.has("lorne") and game.view.dolls.lorne.visible and not game.run.actor("lorne").joined, "The courier appears as an NPC on reaching his tile")
-	await press("行动")
-	await press("交谈 / 个人故事")
-	expect(dialogue_contains("旧路牌") and not game.run.data.story.lorne.met, "The first scene introduces the encounter without committing it")
+	expect(dialogue_contains("旧路牌") and not game.run.data.story.lorne.met, "Arrival opens the first scene without committing the meeting")
 	expect(story_owns_focus(), "The first scene owns keyboard focus")
 	await press("结束交谈")
 	expect(not game.run.data.story.lorne.met, "Closing before the choices does not consume the introduction")
+	await press("主菜单")
+	await press("继续上次远征")
+	expect(dialogue_contains("旧路牌") and game.run.actor("hero").ap == 5 - cost,
+		"Continuing at an unmet NPC restores the introduction without charging for movement again")
+	await press("结束交谈")
 	await press("行动")
 	await press("交谈 / 个人故事")
 	await advance_story()
