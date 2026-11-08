@@ -487,7 +487,6 @@ func _cell_actions() -> void:
 		rest_button.tooltip_text = "在当前地块休整，恢复相当于上限 %d%% 的生命值和魔力。" % percentage
 	else:
 		rest_button.tooltip_text = rest_preview.message
-	_button(box, "建营 · 2 精力 / 2 木料", func(): _close_modal(); _run_action(run.build_camp(selected_id)), t.camp)
 	if cell == run.data.exit and run.actor("hero").position == run.data.exit:
 		_button(box, "确认撤离 / 继续等待", _extraction_dialog)
 	_button(dialog, "关闭", _close_modal)

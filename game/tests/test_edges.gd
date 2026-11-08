@@ -52,10 +52,11 @@ func checkpoint_edges() -> void:
 	var r = fresh()
 	expect(r.save_game().ok, "Valid edge checkpoint")
 	var valid = JSON.parse_string(FileAccess.get_file_as_string(r.save_path))
-	for issue in ["version", "day", "name", "speed", "energy", "maximum", "fractional", "equipment", "choices", "explored"]:
+	for issue in ["version", "old_version", "day", "name", "speed", "energy", "maximum", "fractional", "equipment", "choices", "explored"]:
 		var broken = valid.duplicate(true)
 		match issue:
 			"version": broken.version = {}
+			"old_version": broken.version = 1
 			"day": broken.day = []
 			"name": broken.actors.hero.erase("name")
 			"speed": broken.actors.hero.speed = 0

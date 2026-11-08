@@ -84,20 +84,18 @@ func check_rest_tooltip() -> void:
 	expect(rest_button != null and "20%" in rest_button.tooltip_text,
 		"Rest hover explains the current tile's base recovery")
 	var items = find_button(game.modal_layer, "使用道具")
-	var camp = find_button(game.modal_layer, "建营")
-	expect(items != null and items.tooltip_text.is_empty() and camp != null and camp.tooltip_text.is_empty(),
-		"Item and camp buttons have no hover help")
+	expect(items != null and items.tooltip_text.is_empty(), "The item button has no rest tooltip")
+	expect(find_button(game.modal_layer, "建营") == null, "The action menu has no camp construction")
 	await press("关闭")
 
 	tile.terrain = "forest"
-	tile.camp = true
 	run.data.weather = "rain"
 	await press("行动")
 	rest_button = find_button(game.modal_layer, "休整")
-	expect(rest_button != null and "25%" in rest_button.tooltip_text,
-		"Rest hover includes the camp bonus and rain penalty")
+	expect(rest_button != null and "15%" in rest_button.tooltip_text,
+		"Rest hover includes the rainy forest penalty")
 	await press("休整")
-	expect(hero.hp == 1 + ceili(hero.hp_max * 0.25) and hero.mp == ceili(hero.mp_max * 0.25),
+	expect(hero.hp == 1 + ceili(hero.hp_max * 0.15) and hero.mp == ceili(hero.mp_max * 0.15),
 		"Rest applies the previewed recovery")
 
 func check_backpack_use() -> void:
@@ -160,8 +158,7 @@ func check_backpack_use() -> void:
 	await press("关闭")
 	game._select_actor("hero")
 	await press("背包")
-	await select_consumable("营地木料")
-	expect(contains_text(game.modal_layer, "两份木料可建立一处营地"), "Contextual materials also show their purpose when selected")
+	expect(consumable_row("营地木料") == null, "New expeditions have no construction material")
 	await select_consumable("旅途干粮")
 	expect(contains_text(game.modal_layer, "可用于分享与任务"), "Food can be selected and inspected like every consumable")
 	await press("关闭")
@@ -346,7 +343,7 @@ func execute() -> void:
 		"HUD uses an exploration percentage and objective, with today's weather and no manual save")
 	await press("主菜单")
 	await press("继续上次远征")
-	expect(game.view.dolls.keys() == ["hero"], "Continuing at the starting camp still shows only the protagonist")
+	expect(game.view.dolls.keys() == ["hero"], "Continuing at the starting shelter still shows only the protagonist")
 	expect(has_opening_choice("order") and game.modal_layer.get_child_count() == 0, "Continue loads the choice without replaying the opening")
 	await press("主菜单")
 	await press("开始新远征")

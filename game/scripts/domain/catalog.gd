@@ -51,7 +51,6 @@ const SKILLS = {
 const ITEMS = {
 	"salve": {"name": "疗伤药", "description": "恢复 45 HP，可同地救援重伤者。", "hp": 45},
 	"ether": {"name": "澄露", "description": "恢复 30 MP。", "mp": 30},
-	"timber": {"name": "营地木料", "description": "两份木料可建立一处营地。"},
 	"trail_food": {"name": "旅途干粮", "description": "可用于分享与任务；不设每日强制消耗。"},
 	"trail_blade": {"name": "巡路短刃", "slot": "weapon", "attack": 4},
 	"padded_coat": {"name": "夹棉旅衣", "slot": "armor", "defense": 3},

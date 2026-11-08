@@ -218,9 +218,6 @@ static func _board_paving(root: Node3D, surface: RefCounted, center: Vector3, ed
 	root.add_child(paving)
 
 static func _tile_features(props: Node3D, definition: Dictionary) -> void:
-	if definition.get("camp", false):
-		var tent = Doll._cone(props,0.34,0.42,Color("d7bd8c"),Vector3(0,0.21,0.15))
-		tent.scale.z = 0.8
 	if definition.get("burning",false): fire(props)
 	elif definition.get("wet_until",0)>definition.get("current_day",1):
 		_pool(props,Vector3(0,0.012,0.1),Vector3(0.74,1,0.45),Color("739caa"))
