@@ -25,6 +25,59 @@ func pointer_motion(point: Vector2) -> void:
 	event.button_mask = MOUSE_BUTTON_MASK_LEFT
 	root.push_input(event, true)
 
+func click_map_cell(game: Node, cell: String) -> void:
+	var center = Hex.world(cell)
+	center.y = game.view.board_surface.height_at(center)
+	var point: Vector2 = game.view.camera.unproject_position(center)
+	pointer_button(MOUSE_BUTTON_LEFT, true, point)
+	pointer_button(MOUSE_BUTTON_LEFT, false, point)
+
+func check_map_squad_selection(game: Node) -> void:
+	game._start_new()
+	var run = game.run
+	var hero = run.actor("hero")
+	var lorne = run.actor("lorne")
+	var grit = run.actor("grit")
+	var start: String = hero.position
+	var distant: String = grit.position
+	var adjacent: String = Hex.neighbors(start, run.data.tiles).filter(func(id):
+		var tile = run.data.tiles[id]
+		return Hex.is_land(run.data.tiles, id) and tile.npc.is_empty() and tile.enemies.is_empty())[0]
+	for id in ["lorne", "grit"]:
+		run.actor(id).position = start
+		run.join_companion(id)
+	lorne.position = adjacent
+	grit.position = distant
+	run.reveal(adjacent)
+	run.reveal(distant)
+	game._refresh()
+	await process_frame
+
+	var before = JSON.stringify(run.data)
+	game.view.focus_cell(distant)
+	click_map_cell(game, distant)
+	expect(game.selected_id == "grit" and game.moving_ids == ["grit"] and not game.move_preview.visible,
+		"Clicking a distant squad selects it without previewing a move")
+	game.view.focus_cell(start)
+	click_map_cell(game, start)
+	var focus: Vector3 = game.view.focus_point
+	click_map_cell(game, adjacent)
+	expect(game.selected_id == "lorne" and game.selected_cell == adjacent and game.moving_ids == ["lorne"]
+		and game.view.focus_point == focus and not game.move_preview.visible and JSON.stringify(run.data) == before,
+		"One click switches to an adjacent squad without panning or spending effort")
+	click_map_cell(game, start)
+	click_map_cell(game, start)
+	click_map_cell(game, adjacent)
+	expect(game.selected_id == "hero" and game.move_preview.visible and JSON.stringify(run.data) == before,
+		"Clicking the current squad first previews movement onto an ally's hex")
+	var hero_ap: int = hero.ap
+	var ally_ap: int = lorne.ap
+	var cost: int = run.move_cost("hero", adjacent)
+	click_map_cell(game, adjacent)
+	expect(game.selected_id == "hero" and hero.position == adjacent and hero.ap == hero_ap - cost
+		and lorne.position == adjacent and lorne.ap == ally_ap and not game.move_preview.visible,
+		"Confirming the preview moves and charges only the current squad")
+
 func check_camera_drag(game: Node, start: String, next: String) -> void:
 	var view = game.view
 	var normal_zoom: float = view.zoom_size
@@ -181,6 +234,7 @@ func execute() -> void:
 			expect(game.view.dolls[ids[i]].position.distance_to(game.view.dolls[ids[j]].position)>0.45,"Crowded cell separates actor bases")
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("user://map-seven-actors.png")
+	await check_map_squad_selection(game)
 	game.queue_free()
 	await create_timer(0.1).timeout
 	print("MAP MOTION: %d checks, %d failures" % [checks,failures])
