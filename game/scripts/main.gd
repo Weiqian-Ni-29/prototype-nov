@@ -363,7 +363,17 @@ func _header(screen: Vector2) -> void:
 	_text(row, "归灯之野", 29, gold).custom_minimum_size.x = 190
 	var weather = "细雨" if run.data.weather == "rain" else "晴朗"
 	var exploration = floori(100.0 * run.data.explored.size() / run.data.tiles.size())
-	_text(row, "第 %d 天  ·  %s\n探索度：%d%%" % [run.data.day, weather, exploration], 16).custom_minimum_size.x = 168
+	var conditions = HBoxContainer.new()
+	conditions.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	conditions.add_theme_constant_override("separation", 20)
+	row.add_child(conditions)
+	_text(conditions, "第 %d 天  ·  %s\n探索度：%d%%" % [run.data.day, weather, exploration], 16).custom_minimum_size.x = 168
+	if combat == null and run.data.status == "exploring":
+		var tile = run.data.tiles[run.actor(selected_id).position]
+		var terrain = _text(conditions, Catalog.terrain_name(tile.terrain), 18)
+		terrain.autowrap_mode = TextServer.AUTOWRAP_OFF
+		terrain.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		terrain.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	var objective = HBoxContainer.new()
 	objective.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	objective.add_theme_constant_override("separation", 10)

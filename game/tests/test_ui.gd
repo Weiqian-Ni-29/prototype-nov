@@ -179,6 +179,8 @@ func check_discovery() -> void:
 	run.data.explored[run.data.exit] = true
 	game.view.cell_clicked.emit(target)
 	expect(run.data.explored.has(target) and not run.has_visited(target) and game.view.tile_nodes.has(target), "Revealed neighbor renders terrain before arrival")
+	expect(contains_text(game.ui, "平原") and not contains_text(game.ui, "森林"),
+		"The header shows the selected squad's terrain while previewing a different tile")
 	expect(game.ui.get_child_count() == 2 and game.move_preview.visible and game.move_preview.costs == ["1 精力"],
 		"First click previews only the map arrow and the effort label")
 	expect(not contains_text(game.ui, "药箱树荫") and not contains_text(game.ui, "伊芙") and not contains_text(game.ui, "可采集"),
@@ -218,6 +220,11 @@ func check_discovery() -> void:
 		and scout.position == target and hero.position == run.data.start and hero.ap == effort,
 		"Actual arrival opens Eve's introduction for the scout who entered")
 	await press("结束交谈")
+	expect(contains_text(game.ui, "森林"), "The header updates to the terrain of the arriving squad")
+	game.view.cell_clicked.emit(run.data.start)
+	expect(game.selected_id == "hero" and contains_text(game.ui, "平原") and not contains_text(game.ui, "森林"),
+		"Selecting another squad on the map updates the header to its terrain")
+	await press("岑枝")
 	await press("行动")
 	expect(run.has_visited(target) and contains_text(game.modal_layer, "药箱树荫") and contains_text(game.modal_layer, "伊芙") and contains_text(game.modal_layer, "可采集"),
 		"Real arrival reveals site, NPC and items together")
