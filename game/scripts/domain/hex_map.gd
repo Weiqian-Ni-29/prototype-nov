@@ -99,7 +99,7 @@ static func generate(seed_value: int) -> Dictionary:
 				if score < best:
 					best = score
 					terrain = biomes[i]
-			tiles[key(p)] = {"terrain": terrain, "base_terrain": terrain, "burning": false, "fuel": 3, "wet_until": 0, "resource": "", "quantity": 0, "enemies": [], "hidden": false, "discovered_enemy": false, "site": "", "npc": "", "camp": false, "height": rng.randf_range(0.0, 0.08)}
+			tiles[key(p)] = {"terrain": terrain, "base_terrain": terrain, "burning": false, "fuel": 3, "wet_until": 0, "resource": "", "quantity": 0, "enemies": [], "hidden": false, "discovered_enemy": false, "site": "", "npc": "", "height": rng.randf_range(0.0, 0.08)}
 	var start = "-7,0"
 	# Pick the exit from far boundary cells, never relaxing geometric distance.
 	var exits: Array[String] = []

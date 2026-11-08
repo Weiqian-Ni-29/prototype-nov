@@ -230,7 +230,7 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 		for next in Hex.neighbors(id, current_tiles):
 			borders.append(visible_layout.get(next, []))
 		var site: String = t.site if visited else ""
-		var signature = JSON.stringify([visible_layout[id], borders, t.wet_until > run.data.day, site, t.camp, t.burning])
+		var signature = JSON.stringify([visible_layout[id], borders, t.wet_until > run.data.day, site, t.burning])
 		if tile_signatures.get(id, "") != signature:
 			dirty_details[Board.chunk_for(id)] = true
 			if tile_nodes.has(id):

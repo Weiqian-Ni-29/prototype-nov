@@ -4,7 +4,7 @@ extends RefCounted
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
-const SAVE_VERSION = 1
+const SAVE_VERSION = 2
 signal changed
 var data: Dictionary = {}
 var rng = RandomNumberGenerator.new()
@@ -22,7 +22,7 @@ func new_run(seed_value: int, profession: String) -> void:
 	hero_def["element"] = "normal"
 	hero_def["portrait"] = "hero"
 	data.actors["hero"] = _actor("hero", hero_def, generated.start, true)
-	data.actors.hero.inventory.merge({"Q-T": 1, "timber": 2, "trail_food": 2, "trail_blade": 1, "padded_coat": 1, "lamp_charm": 1})
+	data.actors.hero.inventory.merge({"Q-T": 1, "trail_food": 2, "trail_blade": 1, "padded_coat": 1, "lamp_charm": 1})
 	data.actors.hero.equipment = {"weapon": "trail_blade", "armor": "padded_coat", "accessory": "lamp_charm"}
 	for id in Catalog.COMPANIONS:
 		var location = ""
@@ -382,26 +382,6 @@ func heal_skill(user_id: String, target_id: String) -> Dictionary:
 	changed.emit()
 	return success()
 
-func build_camp(id: String) -> Dictionary:
-	var check = _map_action(id, 2)
-	if not check.ok:
-		return check
-	var a = actor(id)
-	var t = data.tiles[a.position]
-	var camps = 0
-	for k in data.tiles:
-		if data.tiles[k].camp:
-			camps += 1
-	if t.camp or t.burning or t.terrain == "scorched" or not t.enemies.is_empty() or camps >= 2:
-		return fail("无法在这里建营地；每局至多两处。")
-	if int(a.inventory.get("timber", 0)) < 2:
-		return fail("需要个人持有两份营地木料。")
-	a.ap -= 2
-	a.inventory.timber -= 2
-	t.camp = true
-	changed.emit()
-	return success()
-
 func rest_preview(id: String) -> Dictionary:
 	var check = _map_action(id, 2)
 	if not check.ok:
@@ -412,7 +392,7 @@ func rest_preview(id: String) -> Dictionary:
 		return fail("危险地点不能休整。")
 	if a.hp >= a.hp_max and a.mp >= a.mp_max:
 		return fail("资源已满，无需休整。")
-	var ratio = 0.3 if t.camp and t.terrain != "scorched" else 0.2
+	var ratio = 0.2
 	if t.terrain == "forest" and data.weather == "rain":
 		ratio -= 0.05
 	if "eve" in same_cell(a.position, true):
@@ -638,11 +618,11 @@ func _validate_save(loaded: Dictionary) -> String:
 		if coordinate.search(str(k)) == null or Hex.distance(Hex.coord(k), Vector2i.ZERO) > 8:
 			return "六边形坐标无效"
 		var tile = loaded.tiles[k]
-		if not tile is Dictionary or not tile.has_all(["terrain", "base_terrain", "burning", "fuel", "wet_until", "enemies", "site", "npc", "resource", "quantity", "height", "camp", "hidden", "discovered_enemy"]):
+		if not tile is Dictionary or not tile.has_all(["terrain", "base_terrain", "burning", "fuel", "wet_until", "enemies", "site", "npc", "resource", "quantity", "height", "hidden", "discovered_enemy"]):
 			return "地块字段不完整"
 		if not Catalog.TERRAIN.has(tile.terrain) or not tile.enemies is Array:
 			return "地形或遭遇无效"
-		if tile.terrain == "lake" and (tile.site != "" or tile.npc != "" or tile.camp or not tile.enemies.is_empty() or tile.quantity > 0 or loaded.get("visited", {}).has(k)):
+		if tile.terrain == "lake" and (tile.site != "" or tile.npc != "" or not tile.enemies.is_empty() or tile.quantity > 0 or loaded.get("visited", {}).has(k)):
 			return "湖面包含陆地事件"
 		for enemy in tile.enemies:
 			if not Catalog.ENEMIES.has(enemy):
