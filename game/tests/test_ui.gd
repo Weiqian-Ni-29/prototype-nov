@@ -71,32 +71,51 @@ func select_consumable(item_name: String) -> void:
 			root.push_input(event, true)
 	await process_frame
 
-func check_rest_tooltip() -> void:
+func check_node_dialogs() -> void:
 	game._start_new()
 	var run = game.run
 	var hero = run.actor("hero")
-	var tile = run.data.tiles[hero.position]
-	tile.terrain = "desert"
 	hero.hp = 1
 	hero.mp = 0
 	await press("行动")
-	var rest_button = find_button(game.modal_layer, "休整")
-	expect(rest_button != null and "20%" in rest_button.tooltip_text,
-		"Rest hover explains the current tile's base recovery")
-	var items = find_button(game.modal_layer, "使用道具")
-	expect(items != null and items.tooltip_text.is_empty(), "The item button has no rest tooltip")
-	expect(find_button(game.modal_layer, "建营") == null, "The action menu has no camp construction")
+	expect(find_button(game.modal_layer, "休整") == null, "Ordinary tiles have no general rest command")
 	await press("关闭")
 
-	tile.terrain = "forest"
-	run.data.weather = "rain"
+	var rest_cells = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "rest")
+	var shop_cells = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "trade")
+	expect(not rest_cells.is_empty() and not shop_cells.is_empty(), "This seed has rest and trade nodes")
+	if rest_cells.is_empty() or shop_cells.is_empty():
+		return
+	var rest_cell: String = rest_cells[0]
+	hero.position = rest_cell
+	run.reveal(rest_cell)
+	game._select_actor("hero")
 	await press("行动")
-	rest_button = find_button(game.modal_layer, "休整")
-	expect(rest_button != null and "15%" in rest_button.tooltip_text,
-		"Rest hover includes the rainy forest penalty")
-	await press("休整")
-	expect(hero.hp == 1 + ceili(hero.hp_max * 0.15) and hero.mp == ceili(hero.mp_max * 0.15),
-		"Rest applies the previewed recovery")
+	await press("查看节点剧情")
+	var stage = game.modal_layer.get_node("StoryScreen")
+	var scene: TextureRect = stage.get_child(0)
+	expect(scene.texture.resource_path.ends_with("/" + game._story_scene_at(rest_cell) + ".png"),
+		"The node story uses the occupied tile's terrain art")
+	await press("在此休整")
+	expect(hero.hp == 1 + ceili(hero.hp_max * 0.25) and hero.mp == 0,
+		"The node recovers the chosen resource")
+	expect(find_button(game.modal_layer, "在此调息") == null and find_button(game.modal_layer, "带走一份") == null,
+		"The other uses disappear after the shared supplies are spent")
+	await press("返回地图")
+
+	var shop_cell: String = shop_cells[0]
+	hero.position = shop_cell
+	run.reveal(shop_cell)
+	game._select_actor("hero")
+	var salves: int = int(hero.inventory.salve)
+	await press("行动")
+	await press("查看节点剧情")
+	await press("查看货物")
+	await press("疗伤药 · 6 灯铢")
+	expect(run.data.lamp_coins == 2 and hero.inventory.salve == salves + 1, "The shop UI buys into the trader's inventory")
+	expect(saved_run().get("lamp_coins") == 2, "The shop UI saves the transaction")
+	await press("返回节点")
+	await press("返回地图")
 
 func check_backpack_use() -> void:
 	game._start_new()
@@ -493,7 +512,7 @@ func execute() -> void:
 	expect(game.modal_layer.get_child_count() == 0 and find_button(game.ui, "查看结局剧情") != null, "Ending returns to the expedition record and can be replayed")
 	await check_discovery()
 	await check_backpack_use()
-	await check_rest_tooltip()
+	await check_node_dialogs()
 	# Allow the last short audio cue to finish before testing scene teardown.
 	await create_timer(0.25).timeout
 	print("UI INTEGRATION: %d checks, %d failures (opening branches, legacy saves, movement, dialogue, recruitment, inventory, ending)" % [checks, failures.size()])

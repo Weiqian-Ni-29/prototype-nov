@@ -2,6 +2,7 @@ class_name Battle
 extends RefCounted
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
+const Nodes = preload("res://scripts/domain/map_nodes.gd")
 var run: RefCounted
 var position = ""
 var active: Array[String] = []
@@ -479,6 +480,7 @@ func _finish(result: String) -> void:
 		var revived: Array[String] = []
 		var receiver = ""
 		var relic = ""
+		var coins = 0
 		for id in paid:
 			if unit(id).hp <= 0:
 				unit(id).hp = 1
@@ -497,14 +499,17 @@ func _finish(result: String) -> void:
 			run.data.rewards[reward_key] = true
 			if npc.is_empty():
 				var types = enemies.values().map(func(enemy): return enemy.type)
+				var elite = Nodes.is_elite(types)
+				coins = Nodes.battle_coins(int(run.data.seed), position, elite)
+				run.data.lamp_coins += coins
 				var candidates = Relics.battle_rewards(types)
 				if not candidates.is_empty():
-					var elite = types.any(func(type): return type.ends_with("_elite") or type == "lamp_boss")
 					relic = run.roll_relic("battle:" + reward_key, candidates, 0.40 if elite else 0.20, receiver, position)
 		run.data.pending_victory = {"enemies": enemies.size(), "members": paid.keys(), "revived": revived,
-			"salve_receiver": receiver, "relic": relic}
+			"salve_receiver": receiver, "relic": relic, "coins": coins}
 		_log("战斗胜利。" + ("本战倒下的队员恢复至 1 HP。" if not revived.is_empty() else "")
-			+ ("获得一份疗伤药。" if not receiver.is_empty() else ""))
+			+ ("获得一份疗伤药。" if not receiver.is_empty() else "")
+			+ ("获得 %d 灯铢。" % coins if coins > 0 else ""))
 	elif result == "retreat":
 		run.retreat_squad(pending.get("movers", []), pending.get("origin", position))
 		_log("撤退，不返还精力、不发胜利奖励；未出战异地角色不受影响。")

@@ -4,6 +4,7 @@ extends RefCounted
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
+const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const SAVE_VERSION = 2
 signal changed
 var data: Dictionary = {}
@@ -35,6 +36,7 @@ func new_run(seed_value: int, profession: String) -> void:
 	data.actors.eve.inventory["Q-M"] = 1
 	data.actors.tide.inventory["Q-WA"] = 1
 	_initialize_relics()
+	_initialize_nodes()
 	_ensure_squads()
 	reveal(generated.start)
 	note("渡桥已塌。登记副本写着归航站的方向；沿途仍有未熄的灯。")
@@ -193,6 +195,117 @@ func _reveal_sight(position: String) -> void:
 func _initialize_relics() -> void:
 	data.merge({"relics": {}, "relic_checks": {}, "relic_intros": []})
 	relic_sites = Relics.exploration_sites(data.tiles, int(data.seed))
+
+func _initialize_nodes() -> void:
+	data.merge({"lamp_coins": Nodes.STARTING_COINS})
+	if not data.has("nodes"):
+		data.nodes = Nodes.generate(data.tiles, int(data.seed), relic_sites, data.rewards, data.relic_checks)
+
+func node_at(cell: String) -> Dictionary:
+	return data.nodes.get(cell, {})
+
+func _node_access(id: String, cost: int) -> Dictionary:
+	var check = _map_action(id, cost)
+	if not check.ok:
+		return check
+	var tile = data.tiles[actor(id).position]
+	if tile.burning or not tile.enemies.is_empty():
+		return fail("需要先处理这个地块的危险。")
+	return success()
+
+func trade(id: String, item: String, buying: bool) -> Dictionary:
+	var check = _node_access(id, 0)
+	if not check.ok:
+		return check
+	var trader = actor(id)
+	var node = node_at(trader.position)
+	if node.get("kind") != "trade" or (data.tiles[trader.position].terrain == "scorched" and not Nodes.survives_fire(node)):
+		return fail("这里的商摊无法交易。")
+	if not Nodes.PRICES.has(item):
+		return fail("商摊只收普通补给和装备。")
+	var price: int = Nodes.PRICES[item]
+	var owned = int(trader.inventory.get(item, 0))
+	if buying:
+		if int(node.stock.get(item, 0)) <= 0:
+			return fail("这件货已经售完。")
+		if data.lamp_coins < price:
+			return fail("灯铢不足。")
+		node.stock[item] -= 1
+		trader.inventory[item] = owned + 1
+		data.lamp_coins -= price
+	else:
+		if owned <= int(item in trader.equipment.values()):
+			return fail("没有可出售的物品。")
+		price = floori(price / 2.0)
+		trader.inventory[item] = owned - 1
+		data.lamp_coins += price
+	var message = "%s%s「%s」，%s %d 灯铢。" % [
+		trader.name, "买下" if buying else "卖出", Catalog.item_name(item), "花费" if buying else "获得", price]
+	note(message)
+	changed.emit()
+	return {"ok": true, "message": message}
+
+func recovery_percent(cell: String, resource: String) -> int:
+	var percent = Nodes.REST_HP if resource == "hp" else Nodes.REST_MP
+	if data.tiles[cell].terrain == "forest" and data.weather == "rain":
+		percent -= 5
+	if "eve" in same_cell(cell, true):
+		percent += 10
+	return percent
+
+func use_node(id: String, option: String) -> Dictionary:
+	var cost = 1 if option in ["work", "search"] else 0
+	var check = _node_access(id, cost)
+	if not check.ok:
+		return check
+	var visitor = actor(id)
+	var cell: String = visitor.position
+	var node = node_at(cell)
+	if node.is_empty() or not node.result.is_empty():
+		return fail("这里的事件已经处理完毕。")
+	var message = ""
+	match [node.kind, option]:
+		["supply", "collect"]:
+			return collect(id)
+		["rest", "hp"], ["rest", "mp"]:
+			if data.tiles[cell].terrain == "scorched":
+				return fail("火烧过这里，只能查看还有什么可以带走。")
+			var maximum = option + "_max"
+			var percent = recovery_percent(cell, option)
+			var recovered: Array[String] = []
+			for member in same_cell(cell, true):
+				var target = actor(member)
+				var gain = mini(int(target[maximum] - target[option]), ceili(target[maximum] * percent / 100.0))
+				if gain > 0:
+					target[option] += gain
+					recovered.append("%s +%d" % [target.name, gain])
+			if recovered.is_empty():
+				return fail("在场可行动的队员已经全满，可以留待下次。")
+			message = "%s恢复 · %s" % ["生命" if option == "hp" else "魔力", "、".join(recovered)]
+		["rest", "pack"], ["cache", "search"]:
+			var relic = ""
+			if option == "search" and relic_sites.has(cell) and data.tiles[cell].terrain != "scorched":
+				relic = str(investigate_relic(id).get("relic", ""))
+			if relic.is_empty():
+				var item: String = node.item
+				visitor.inventory[item] = int(visitor.inventory.get(item, 0)) + 1
+				message = "%s 取得%s ×1。" % [visitor.name, Catalog.item_name(item)]
+			else:
+				message = "发现遗器「%s」。" % Relics.DATA[relic].name
+		["choice", "work"]:
+			if data.tiles[cell].terrain == "scorched" and not Nodes.survives_fire(node):
+				return fail("原来的委托已无法完成。")
+			data.lamp_coins += int(node.coins)
+			message = "%s 完成委托，得到 %d 灯铢。" % [visitor.name, node.coins]
+		["clue", "record"]:
+			message = "已将此处见闻写进旅途手记。"
+		_:
+			return fail("当前节点没有这个选项。")
+	visitor.ap -= cost
+	node.result = option
+	note(message)
+	changed.emit()
+	return {"ok": true, "message": message}
 
 func has_relic(id: String) -> bool:
 	return data.relics.has(id)
@@ -426,9 +539,10 @@ func collect(id: String) -> Dictionary:
 	var amount = int(t.quantity) + (1 if id == "cen" and t.terrain == "forest" else 0)
 	a.inventory[t.resource] = int(a.inventory.get(t.resource, 0)) + amount
 	t.quantity = 0
-	note("%s 收集了%s ×%d；终结技能量不变。" % [a.name, Catalog.item_name(t.resource), amount])
+	var message = "%s 收集了%s ×%d。" % [a.name, Catalog.item_name(t.resource), amount]
+	note(message)
 	changed.emit()
-	return success()
+	return {"ok": true, "message": message}
 
 func environmental_skill(id: String, effect: String) -> Dictionary:
 	var check = _map_action(id, 1)
@@ -495,35 +609,6 @@ func heal_skill(user_id: String, target_id: String) -> Dictionary:
 	changed.emit()
 	return success()
 
-func rest_preview(id: String) -> Dictionary:
-	var check = _map_action(id, 2)
-	if not check.ok:
-		return check
-	var a = actor(id)
-	var t = data.tiles[a.position]
-	if t.burning or not t.enemies.is_empty():
-		return fail("危险地点不能休整。")
-	if a.hp >= a.hp_max and a.mp >= a.mp_max:
-		return fail("资源已满，无需休整。")
-	var ratio = 0.2
-	if t.terrain == "forest" and data.weather == "rain":
-		ratio -= 0.05
-	if "eve" in same_cell(a.position, true):
-		ratio += 0.10
-	return {"ok": true, "recovery_ratio": ratio}
-
-func rest(id: String) -> Dictionary:
-	var preview = rest_preview(id)
-	if not preview.ok:
-		return preview
-	var a = actor(id)
-	var ratio: float = preview.recovery_ratio
-	a.ap -= 2
-	a.hp = mini(int(a.hp_max), int(a.hp) + ceili(a.hp_max * ratio))
-	a.mp = mini(int(a.mp_max), int(a.mp) + ceili(a.mp_max * ratio))
-	changed.emit()
-	return success()
-
 func end_day() -> Dictionary:
 	if data.status != "exploring" or not data.pending_battle.is_empty():
 		return fail("先结束当前遭遇。")
@@ -561,12 +646,9 @@ func end_day() -> Dictionary:
 			continue
 		if snapshot[a.position].burning and data.weather != "rain":
 			a.hp = maxi(0, int(a.hp) - ceili(a.hp_max * 0.1))
-		if a.hp > 0:
-			a.hp = mini(int(a.hp_max), int(a.hp) + ceili(a.hp_max * Catalog.DAILY_HP))
-			a.mp = mini(int(a.mp_max), int(a.mp) + ceili(a.mp_max * Catalog.DAILY_MP))
 	data.last_day_settled = new_day - 1
 	check_global_failure()
-	note("第 %d 天，%s。可行动者恢复部分生命/魔力，精力回到各自上限。" % [data.day, "雨" if data.weather == "rain" else "晴"])
+	note("第 %d 天，%s。精力回到各自上限。" % [data.day, "雨" if data.weather == "rain" else "晴"])
 	changed.emit()
 	return success()
 
@@ -660,6 +742,7 @@ func load_game(path: String = "") -> Dictionary:
 	if not data.has("choices"):
 		data.choices = []
 	_initialize_relics()
+	_initialize_nodes()
 	rng.state = int(data.rng_state)
 	changed.emit()
 	return success()
@@ -693,6 +776,8 @@ func _validate_save(loaded: Dictionary) -> String:
 		return "日期或随机状态无效"
 	if loaded.has("choices") and not loaded.choices is Array:
 		return "选择记录无效"
+	if loaded.has("lamp_coins") and (not _whole_number(loaded.lamp_coins) or loaded.lamp_coins < 0):
+		return "灯铢记录无效"
 	if not loaded.get("relics", {}) is Dictionary or not loaded.get("relic_checks", {}) is Dictionary or not loaded.get("relic_intros", []) is Array:
 		return "遗器记录无效"
 	if loaded.has("pending_victory"):
@@ -705,6 +790,8 @@ func _validate_save(loaded: Dictionary) -> String:
 				or (result.salve_receiver != "" and result.salve_receiver not in result.members) \
 				or (result.relic != "" and not loaded.get("relics", {}).has(result.relic)):
 			return "胜利结算无效"
+		if result.has("coins") and (not _whole_number(result.coins) or result.coins < 0):
+			return "胜利报酬无效"
 	for id in loaded.get("relics", {}):
 		if not Relics.DATA.has(id) or loaded.relics[id] != true:
 			return "未知遗器"
@@ -735,13 +822,15 @@ func _validate_save(loaded: Dictionary) -> String:
 		var tile = loaded.tiles[k]
 		if not tile is Dictionary or not tile.has_all(["terrain", "base_terrain", "burning", "fuel", "wet_until", "enemies", "site", "npc", "resource", "quantity", "height", "hidden", "discovered_enemy"]):
 			return "地块字段不完整"
-		if not Catalog.TERRAIN.has(tile.terrain) or not tile.enemies is Array:
+		if not Catalog.TERRAIN.has(tile.terrain) or not Catalog.TERRAIN.has(tile.base_terrain) or not tile.enemies is Array:
 			return "地形或遭遇无效"
 		if tile.terrain == "lake" and (tile.site != "" or tile.npc != "" or not tile.enemies.is_empty() or tile.quantity > 0 or loaded.get("visited", {}).has(k)):
 			return "湖面包含陆地事件"
 		for enemy in tile.enemies:
 			if not Catalog.ENEMIES.has(enemy):
 				return "未知敌人"
+	if loaded.has("nodes") and not _valid_nodes(loaded):
+		return "节点记录无效"
 	for id in ["hero"] + Catalog.COMPANIONS.keys():
 		if not loaded.actors.has(id) or not loaded.actors[id] is Dictionary:
 			return "角色缺失"
@@ -794,6 +883,32 @@ func _validate_save(loaded: Dictionary) -> String:
 			if not loaded.actors.has(id):
 				return "遭遇角色无效"
 	return ""
+
+func _valid_nodes(loaded: Dictionary) -> bool:
+	if not loaded.nodes is Dictionary or not loaded.has("lamp_coins"):
+		return false
+	for cell in loaded.tiles:
+		if Hex.is_land(loaded.tiles, cell) != loaded.nodes.has(cell):
+			return false
+	for cell in loaded.nodes:
+		var node = loaded.nodes[cell]
+		if not loaded.tiles.has(cell) or not node is Dictionary or not node.has_all(["kind", "event", "result"]):
+			return false
+		if not Nodes.LABELS.has(node.kind) or not node.event is String or not node.result is String:
+			return false
+		if node.kind != "story" and Nodes.story(node).is_empty():
+			return false
+		if node.kind == "trade":
+			if not node.get("stock") is Dictionary:
+				return false
+			for item in node.stock:
+				if not Nodes.PRICES.has(item) or not _whole_number(node.stock[item]) or node.stock[item] < 0:
+					return false
+		if node.kind in ["rest", "cache"] and not Nodes.PRICES.has(node.get("item")):
+			return false
+		if node.kind in ["choice", "battle", "elite"] and (not _whole_number(node.get("coins")) or node.coins <= 0):
+			return false
+	return true
 
 static func _whole_number(value: Variant) -> bool:
 	return (value is int or value is float) and is_finite(float(value)) and float(value) == floor(float(value))
