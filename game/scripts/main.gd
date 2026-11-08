@@ -36,6 +36,7 @@ var combat: RefCounted
 var selected_id = "hero"
 var selected_cell = ""
 var move_target = ""
+var move_from_current_cell = false
 var move_preview = MapMovePreview.new()
 var moving_ids: Array = ["hero"]
 var crew_collapsed = false
@@ -319,7 +320,7 @@ func _start_new(opening_decision: String = "") -> void:
 	if not opening_decision.is_empty():
 		run.data.choices.append({"day": 1, "visitor": "hero", "subject": "opening", "option": opening_decision})
 	combat = null
-	move_target = ""
+	_clear_map_move()
 	view.reset()
 	selected_id = "hero"
 	moving_ids = ["hero"]
@@ -337,7 +338,7 @@ func _continue_run() -> void:
 		_notice(result.message)
 		return
 	combat = null
-	move_target = ""
+	_clear_map_move()
 	toast_text = ""
 	view.reset()
 	selected_id = "hero"
@@ -398,7 +399,7 @@ func _crew_panel(screen: Vector2) -> void:
 		_refresh())
 	if crew_collapsed:
 		return
-	_text(box, "点击定位 · 勾选同格同行", 13, muted)
+	_text(box, "点相邻格预览 · 再点确认" if move_from_current_cell else "点地图切换小队 · 勾选同行", 13, muted)
 	var scroll = ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(scroll)
@@ -499,8 +500,12 @@ func _footer(screen: Vector2) -> void:
 		lines.append(str(line).replace(" AP", " 精力").replace("行动点", "精力"))
 	_text(box, "\n".join(lines), 14, muted)
 
-func _toggle_mover(value: bool, id: String) -> void:
+func _clear_map_move() -> void:
 	move_target = ""
+	move_from_current_cell = false
+
+func _toggle_mover(value: bool, id: String) -> void:
+	_clear_map_move()
 	if value:
 		if run.actor(id).position != run.actor(selected_id).position:
 			selected_id = id
@@ -515,12 +520,13 @@ func _toggle_mover(value: bool, id: String) -> void:
 			moving_ids = [selected_id]
 	_refresh()
 
-func _select_actor(id: String) -> void:
-	move_target = ""
+func _select_actor(id: String, center_camera: bool = true) -> void:
+	_clear_map_move()
 	selected_id = id
 	selected_cell = run.actor(id).position
 	moving_ids = [id]
-	view.focus_cell(selected_cell)
+	if center_camera:
+		view.focus_cell(selected_cell)
 	_refresh()
 
 func _select_cell(id: String) -> void:
@@ -529,9 +535,18 @@ func _select_cell(id: String) -> void:
 	if id == move_target and not id.is_empty():
 		_move_selected()
 		return
-	selected_cell = id
 	var source: String = run.actor(moving_ids[0]).position
-	move_target = id if Hex.is_land(run.data.tiles, id) and id in Hex.neighbors(source, run.data.tiles) else ""
+	var adjacent = Hex.is_land(run.data.tiles, id) and id in Hex.neighbors(source, run.data.tiles)
+	if id != source and not (move_from_current_cell and adjacent):
+		var candidates = run.same_cell(id, true)
+		if candidates.is_empty():
+			candidates = run.same_cell(id)
+		if not candidates.is_empty():
+			_select_actor(candidates[0], false)
+			return
+	selected_cell = id
+	move_from_current_cell = id == source
+	move_target = id if adjacent else ""
 	_refresh()
 
 func _show_move_preview() -> void:
@@ -546,7 +561,7 @@ func _show_move_preview() -> void:
 
 func _move_selected() -> void:
 	var destination = move_target
-	move_target = ""
+	_clear_map_move()
 	var result = run.move(moving_ids, destination)
 	_run_action(result)
 	if not result.ok:
@@ -567,7 +582,7 @@ func _run_action(result: Dictionary) -> void:
 		_notice(toast_text)
 
 func _modal(title: String, width: float = 650, height: float = 520) -> VBoxContainer:
-	move_target = ""
+	_clear_map_move()
 	move_preview.hide()
 	_clear(modal_layer)
 	ui.show()
@@ -1128,7 +1143,7 @@ func _story_region(control: Control, left: float, top: float, right: float, bott
 
 func _show_story(title: String, speaker: String, body: String, scene: String,
 		portraits: Array, options: Array, on_choice: Callable, actions: Dictionary) -> void:
-	move_target = ""
+	_clear_map_move()
 	move_preview.hide()
 	_clear(modal_layer)
 	ui.hide()
@@ -1421,7 +1436,7 @@ func _to_menu() -> void:
 		_show_opening(Screen.MENU)
 
 func _guide() -> void:
-	_notice("点击角色定位，勾选同格角色可共同移动。首次点击相邻地块查看箭头和精力，再点同一格确认前往。踏入陌生 NPC 所在地块会自动开始相遇剧情。采集和再次交谈等操作在「行动」中。\n\n按住左键拖动或用 WASD 平移地图，滚轮缩放。每人精力独立，结束一天恢复个人精力以及部分 HP/MP。\n\n同地最多四人出战，候补换人占正常行动，终结技可插队。抵达归航站后可等待，只有主动确认才结束。")
+	_notice("点队友所在格切换小队。移动时点相邻格预览精力，再点一次确认。要走到队友所在格，先点当前小队所在格。左栏可勾选同格角色同行。\n\n拖动地图或用 WASD 平移，滚轮缩放。踏入陌生 NPC 所在格会开始相遇剧情。采集和再次交谈在「行动」中。结束一天恢复精力及部分 HP/MP。\n\n同地最多四人出战，候补换人占正常行动，终结技可插队。抵达归航站后可等待，只有主动确认才结束。")
 
 func _settings_dialog() -> void:
 	var box = _modal("设置与操作", 650, 430)
@@ -1433,7 +1448,7 @@ func _settings_dialog() -> void:
 	slider.value = sound.volume
 	slider.value_changed.connect(func(value: float): sound.set_volume(value))
 	box.add_child(slider)
-	_text(box, "按住左键拖动地图 · WASD 平移 · 滚轮缩放\n点击角色定位，勾选同格成员同行。\n战场右上角可切换自动战斗和使用道具。", 18, muted)
+	_text(box, "按住左键拖动地图 · WASD 平移 · 滚轮缩放\n点地图切换小队，左侧可勾选同格成员同行。\n战场右上角可切换自动战斗和使用道具。", 18, muted)
 	_button(box, "查看完整操作指南", _guide)
 	_button(box, "制作与许可", _credits_dialog)
 	if screen_state == Screen.EXPEDITION and combat == null and run.data.status == "exploring":

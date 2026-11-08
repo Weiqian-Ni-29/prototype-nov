@@ -174,6 +174,8 @@ func reset() -> void:
 
 func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> void:
 	current_tiles = run.data.tiles
+	if selected_id != map_actor:
+		map_follow_actor = null
 	map_actor = selected_id
 	if tile_nodes.is_empty() and not current_tiles.is_empty():
 		board_surface.prepare(current_tiles, int(run.data.seed))
