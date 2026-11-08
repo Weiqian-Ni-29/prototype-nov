@@ -61,10 +61,12 @@ func _ready() -> void:
 	view = World.new()
 	add_child(view)
 	view.cell_clicked.connect(_select_cell)
+	view.squad_clicked.connect(_select_actor)
 	view.enemy_clicked.connect(_select_battle_target)
 	view.presentation_changed.connect(func(): call_deferred("_refresh"))
 	view.sound_cue.connect(func(kind: String): sound.play(kind))
 	var canvas = CanvasLayer.new()
+	canvas.layer = 2
 	add_child(canvas)
 	ui = Control.new()
 	ui.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -342,7 +344,7 @@ func _continue_run() -> void:
 	toast_text = ""
 	view.reset()
 	selected_id = "hero"
-	moving_ids = ["hero"]
+	moving_ids = _squad_movers("hero")
 	selected_cell = run.actor("hero").position
 	screen_state = Screen.EXPEDITION
 	view.refresh(run, selected_id, selected_cell)
@@ -417,24 +419,40 @@ func _crew_panel(screen: Vector2) -> void:
 	roster.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	roster.add_theme_constant_override("separation", 10)
 	scroll.add_child(roster)
-	for id in run.joined_ids():
-		var a = run.actor(id)
-		var row = HBoxContainer.new()
-		roster.add_child(row)
-		var toggle = CheckBox.new()
-		toggle.button_pressed = id in moving_ids
-		toggle.disabled = a.hp <= 0
-		toggle.toggled.connect(_toggle_mover.bind(id))
-		row.add_child(toggle)
-		var text = ("◆ " if selected_id == id else "") + a.name + ("  重伤" if a.hp <= 0 else "")
-		var button = _button(row, text, _select_actor.bind(id))
-		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		_text(roster, "HP %d/%d   MP %d/%d\n精力 %d/%d  ·  充能 %d%%" % [a.hp, a.hp_max, a.mp, a.mp_max, a.ap, a.ap_max, a.energy], 13, muted)
-		var bar = ProgressBar.new()
-		bar.value = float(a.hp) / a.hp_max * 100
-		bar.show_percentage = false
-		bar.custom_minimum_size.y = 5
-		roster.add_child(bar)
+	for squad in run.squad_groups():
+		var frame = PanelContainer.new()
+		frame.name = "SquadFrame_" + str(squad.id)
+		var color: Color = view.squad_markers.color_for_actor(squad.members[0])
+		var style = _style(Color("294039") if selected_id in squad.members else Color("20352e"), color, 7)
+		style.set_border_width_all(3 if selected_id in squad.members else 2)
+		frame.add_theme_stylebox_override("panel", style)
+		roster.add_child(frame)
+		var member_box = VBoxContainer.new()
+		frame.add_child(member_box)
+		for id in squad.members:
+			var a = run.actor(id)
+			var row = HBoxContainer.new()
+			member_box.add_child(row)
+			var squad_color: Color = view.squad_markers.color_for_actor(id)
+			var swatch = _text(row, "▼", 19, squad_color)
+			swatch.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			swatch.tooltip_text = "同色箭头与边框标记同一小队"
+			var toggle = CheckBox.new()
+			toggle.button_pressed = id in moving_ids
+			toggle.disabled = a.hp <= 0
+			toggle.toggled.connect(_toggle_mover.bind(id))
+			row.add_child(toggle)
+			var text = ("◆ " if selected_id == id else "") + a.name + ("  重伤" if a.hp <= 0 else "")
+			var button = _button(row, text, _select_actor.bind(id))
+			button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			if selected_id in squad.members:
+				button.add_theme_stylebox_override("normal", _style(Color("354f48"), squad_color, 6))
+			_text(member_box, "HP %d/%d   MP %d/%d\n精力 %d/%d  ·  充能 %d%%" % [a.hp, a.hp_max, a.mp, a.mp_max, a.ap, a.ap_max, a.energy], 13, muted)
+			var bar = ProgressBar.new()
+			bar.value = float(a.hp) / a.hp_max * 100
+			bar.show_percentage = false
+			bar.custom_minimum_size.y = 5
+			member_box.add_child(bar)
 	_button(box, "行动", _cell_actions)
 	_button(box, "背包", _inventory_dialog.bind(selected_id))
 	_button(box, "结束一天", _end_day_dialog)
@@ -491,6 +509,7 @@ func _cell_actions() -> void:
 		_button(box, "点燃林地 · 1 精力 / 8 MP", func(): _close_modal(); _run_action(run.environmental_skill(selected_id, "ignite")))
 	if actor.skill == "torrent":
 		_button(box, "灭火 / 浸湿 · 1 精力 / 8 MP", func(): _close_modal(); _run_action(run.environmental_skill(selected_id, "wet")))
+	_button(box, "拆分小队", _split_squad_dialog).disabled = run.squad_members(selected_id).size() < 2
 	var rest_button = _button(box, "休整 · 2 精力", func(): _close_modal(); _run_action(run.rest(selected_id)))
 	var rest_preview = run.rest_preview(selected_id)
 	if rest_preview.ok:
@@ -501,6 +520,31 @@ func _cell_actions() -> void:
 	if cell == run.data.exit and run.actor("hero").position == run.data.exit:
 		_button(box, "确认撤离 / 继续等待", _extraction_dialog)
 	_button(dialog, "关闭", _close_modal)
+
+func _split_squad_dialog() -> void:
+	var members: Array = run.squad_members(selected_id)
+	var dialog = _modal("拆分小队", 570, 520)
+	_text(dialog, "勾选要组成新小队的角色。拆分不消耗精力；两队留在原地，抵达其他小队所在格时自动合队。", 16, muted)
+	var list = _scroll_content(dialog)
+	var chosen: Array = []
+	var confirm = _button(dialog, "组成新小队", func():
+		var result = run.split_squad(chosen)
+		if result.ok:
+			selected_id = chosen[0]
+			moving_ids = _squad_movers(selected_id)
+			_close_modal()
+		_run_action(result))
+	confirm.disabled = true
+	for id in members:
+		var toggle = CheckBox.new()
+		toggle.text = run.actor(id).name
+		toggle.name = "SplitMember_" + id
+		list.add_child(toggle)
+		toggle.toggled.connect(func(checked: bool):
+			if checked: chosen.append(id)
+			else: chosen.erase(id)
+			confirm.disabled = chosen.is_empty() or chosen.size() == members.size())
+	_button(dialog, "取消", _cell_actions)
 
 func _footer(screen: Vector2) -> void:
 	var box = _panel(ui, Rect2(20, screen.y - 140, screen.x - 40, 122))
@@ -530,11 +574,16 @@ func _toggle_mover(value: bool, id: String) -> void:
 			moving_ids = [selected_id]
 	_refresh()
 
+func _squad_movers(id: String) -> Array:
+	var healthy = run.squad_members(id).filter(func(member): return run.actor(member).hp > 0)
+	# Keep a non-empty selection so movement preview can explain an all-down squad.
+	return healthy if not healthy.is_empty() else [id]
+
 func _select_actor(id: String, center_camera: bool = true) -> void:
 	_clear_map_move()
 	selected_id = id
 	selected_cell = run.actor(id).position
-	moving_ids = [id]
+	moving_ids = _squad_movers(id)
 	if center_camera:
 		view.focus_cell(selected_cell)
 	_refresh()
@@ -571,8 +620,13 @@ func _show_move_preview() -> void:
 
 func _move_selected() -> void:
 	var destination = move_target
+	var mover: String = selected_id if selected_id in moving_ids else moving_ids[0]
 	_clear_map_move()
 	var result = run.move(moving_ids, destination)
+	if result.ok:
+		selected_id = mover
+		selected_cell = run.actor(mover).position
+		moving_ids = _squad_movers(mover)
 	_run_action(result)
 	if not result.ok:
 		return
