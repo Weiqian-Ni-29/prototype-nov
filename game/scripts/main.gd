@@ -411,7 +411,7 @@ func _crew_panel(screen: Vector2) -> void:
 		_refresh())
 	if crew_collapsed:
 		return
-	_text(box, "点相邻格预览 · 再点确认" if move_from_current_cell else "点地图切换小队 · 勾选同行", 13, muted)
+	_text(box, "点相邻格预览 · 再点确认" if move_from_current_cell else "点箭头选队 · 点相邻格移动", 13, muted)
 	var scroll = ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(scroll)
@@ -596,7 +596,7 @@ func _select_cell(id: String) -> void:
 		return
 	var source: String = run.actor(moving_ids[0]).position
 	var adjacent = Hex.is_land(run.data.tiles, id) and id in Hex.neighbors(source, run.data.tiles)
-	if id != source and not (move_from_current_cell and adjacent):
+	if id != source and not adjacent:
 		var candidates = run.same_cell(id, true)
 		if candidates.is_empty():
 			candidates = run.same_cell(id)
@@ -1092,6 +1092,7 @@ func _finish_battle() -> void:
 	var victory = combat.outcome == "victory"
 	combat = null
 	selected_cell = run.actor(selected_id).position
+	moving_ids = _squad_movers(selected_id)
 	if victory:
 		sound.play("victory")
 		_victory_dialog()

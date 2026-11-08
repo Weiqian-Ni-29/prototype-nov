@@ -221,7 +221,7 @@ func check_discovery() -> void:
 		"Actual arrival opens Eve's introduction for the scout who entered")
 	await press("结束交谈")
 	expect(contains_text(game.ui, "森林"), "The header updates to the terrain of the arriving squad")
-	game.view.cell_clicked.emit(run.data.start)
+	game.view.squad_clicked.emit("hero")
 	expect(game.selected_id == "hero" and contains_text(game.ui, "平原") and not contains_text(game.ui, "森林"),
 		"Selecting another squad on the map updates the header to its terrain")
 	await press("岑枝")

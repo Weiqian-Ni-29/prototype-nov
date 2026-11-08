@@ -506,8 +506,7 @@ func _finish(result: String) -> void:
 		_log("战斗胜利。" + ("本战倒下的队员恢复至 1 HP。" if not revived.is_empty() else "")
 			+ ("获得一份疗伤药。" if not receiver.is_empty() else ""))
 	elif result == "retreat":
-		for id in pending.get("movers", []):
-			run.actor(id).position = pending.get("origin", position)
+		run.retreat_squad(pending.get("movers", []), pending.get("origin", position))
 		_log("撤退，不返还精力、不发胜利奖励；未出战异地角色不受影响。")
 	else:
 		_log("战败。重伤者留在遭遇地点。")

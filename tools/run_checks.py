@@ -43,7 +43,7 @@ def main() -> int:
     result_dir = ROOT / 'test-results'
     result_dir.mkdir(exist_ok=True)
     commands = [('import', ['--headless', '--editor', '--quit'])]
-    scripts = ['test_rules.gd', 'test_story.gd', 'test_journey.gd', 'test_edges.gd', 'test_ui.gd', 'test_relics.gd', 'test_squads.gd', 'test_squad_markers.gd']
+    scripts = ['test_rules.gd', 'test_story.gd', 'test_journey.gd', 'test_edges.gd', 'test_ui.gd', 'test_relics.gd', 'test_squads.gd', 'test_squad_markers.gd', 'test_squad_retreat.gd']
     if (GAME / 'tests/test_battle_ui.gd').exists():
         scripts.append('test_battle_ui.gd')
     for script in scripts:

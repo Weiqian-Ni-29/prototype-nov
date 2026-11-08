@@ -86,13 +86,34 @@ func execute() -> void:
 	expect("ember" not in game.moving_ids, "injured members do not block default squad movement")
 	run.actor("ember").hp = run.actor("ember").hp_max
 	game._select_actor("hero")
+	game.view.zoom_size = 7.5
+	game.view._update_camera()
 	var destination: String = Hex.neighbors(start, run.data.tiles)[0]
 	run.data.tiles[destination].enemies = []
 	run.data.tiles[destination].terrain = "plains"
 	run.actor("lorne").position = destination
 	run.actor("grit").position = destination
-	game.move_target = destination
-	game._move_selected()
+	game._refresh()
+	await process_frame
+	var ground = Hex.world(destination)
+	ground.y = game.view.board_surface.height_at(ground) + 0.01
+	var target_point: Vector2 = game.view.camera.unproject_position(ground)
+	for pressed in [true, false]:
+		var event = InputEventMouseButton.new()
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = pressed
+		event.position = target_point
+		root.push_input(event, true)
+	await process_frame
+	expect(game.move_target == destination and game.selected_id == "hero", "mouse click on occupied adjacent ground previews move instead of switching squad")
+	for pressed in [true, false]:
+		var event = InputEventMouseButton.new()
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = pressed
+		event.position = target_point
+		root.push_input(event, true)
+	await process_frame
+	expect(run.actor("hero").position == destination, "second ground click confirms movement into occupied tile")
 	expect(game.moving_ids.size() == 4, "arrival merge updates next movement to entire merged squad")
 	game._close_modal()
 	# Restore two same-cell squads for the forest screenshot.

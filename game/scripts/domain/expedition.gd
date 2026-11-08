@@ -159,6 +159,15 @@ func _prepare_squad_move(ids: Array, destination: String) -> void:
 		if id in ids or actor(id).position == destination:
 			actor(id).squad_id = target
 
+func retreat_squad(ids: Array, destination: String) -> void:
+	if ids.is_empty():
+		return
+	# Detach movers before relocation so stationary residents retain their color.
+	# Returning to an occupied origin follows the normal arrival merge rule.
+	_prepare_squad_move(ids, destination)
+	for id in ids:
+		actor(id).position = destination
+
 func stat(id: String, field: String) -> int:
 	var a = actor(id)
 	var value = int(a.get(field, 0))
