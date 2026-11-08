@@ -241,11 +241,10 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 			node.position = Hex.world(id)
 			var detail = t.duplicate()
 			detail.current_day = run.data.day
-			detail.site = site
 			Terrain.board_details(node, detail, id, visual_seed, board_surface)
-			if detail.site != "":
+			if not site.is_empty():
 				var height = board_surface.height_at(node.position)
-				_label(node, _site_name(detail.site), Vector3(0, height + 1.03, 0), Color("eee0b8"), 0.0041)
+				_label(node, _site_name(site), Vector3(0, height + 1.03, 0), Color("eee0b8"), 0.0041)
 			tile_nodes[id] = node
 			tile_signatures[id] = signature
 	if not dirty_details.is_empty():
@@ -716,7 +715,6 @@ func _draw_battle_stage(definition: Dictionary, day: int, position: String) -> v
 	tile.height = 0.0
 	tile.enemies = []
 	tile.npc = ""
-	tile.site = ""
 	tile.quantity = 0
 	tile.ground_only = true
 	var stage = Terrain.tile(battle_stage, tile, hash(position))

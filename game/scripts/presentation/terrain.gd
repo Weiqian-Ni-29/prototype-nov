@@ -221,7 +221,6 @@ static func _tile_features(props: Node3D, definition: Dictionary) -> void:
 	if definition.get("camp", false):
 		var tent = Doll._cone(props,0.34,0.42,Color("d7bd8c"),Vector3(0,0.21,0.15))
 		tent.scale.z = 0.8
-	if definition.get("site", "")!="": landmark(props,str(definition.site))
 	if definition.get("burning",false): fire(props)
 	elif definition.get("wet_until",0)>definition.get("current_day",1):
 		_pool(props,Vector3(0,0.012,0.1),Vector3(0.74,1,0.45),Color("739caa"))
@@ -346,19 +345,6 @@ static func _reeds(parent: Node3D, rng: RandomNumberGenerator) -> void:
 	reeds.material_override = Doll.material(Color("a9ab70"))
 	reeds.material_override.cull_mode = BaseMaterial3D.CULL_DISABLED
 	parent.add_child(reeds)
-
-static func landmark(parent: Node3D, site: String) -> void:
-	var color = Color("d1b882")
-	if site in ["inn", "home", "exit"]:
-		Doll._box(parent, Vector3(0.5, 0.38, 0.38), Color("d5c5a3"), Vector3(0, 0.19, 0.1))
-		var roof = Doll._cone(parent, 0.43, 0.26, Color("756450"), Vector3(0, 0.51, 0.1))
-		roof.scale.z = 0.75
-		if site == "exit":
-			Doll._cylinder(parent, 0.06, 0.07, 1.15, Color("b4a070"), Vector3(0.4, 0.57, -0.2), 8)
-			Doll._sphere(parent, Vector3(0.12, 0.16, 0.12), Color("f4d995"), Vector3(0.4, 1.16, -0.2))
-	else:
-		Doll._cylinder(parent, 0.035, 0.04, 0.65, Color("7c6951"), Vector3(0.5, 0.32, 0.28), 8)
-		Doll._box(parent, Vector3(0.38, 0.18, 0.07), color, Vector3(0.5, 0.57, 0.28))
 
 static func fire(parent: Node3D) -> void:
 	var particles = CPUParticles3D.new()
