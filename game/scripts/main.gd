@@ -207,7 +207,6 @@ func _refresh() -> void:
 	_header(screen)
 	if combat != null:
 		_battle_ui(screen)
-		_footer(screen)
 	elif run.data.status in ["extracted", "failed"]:
 		_summary(screen)
 		_footer(screen)
@@ -926,6 +925,7 @@ func _formation_dialog() -> void:
 		if result.ok:
 			_close_modal()
 			combat = battle
+			toast_text = ""
 			selected_target = "enemy_0"
 			view.begin_battle(run, combat)
 			battle_timer = 0.8
@@ -939,7 +939,9 @@ func _formation_dialog() -> void:
 func _battle_ui(screen: Vector2) -> void:
 	view.refresh_battle(run, combat)
 	view.set_battle_target(selected_target)
-	var left_outer = _panel(ui, Rect2(20, 120, 250, screen.y - 275))
+	var battle_bottom = screen.y - 20
+	var side_height = battle_bottom - 120
+	var left_outer = _panel(ui, Rect2(20, 120, 250, side_height))
 	_text(left_outer, "出战角色", 24, gold)
 	var left = _scroll_content(left_outer)
 	left.add_theme_constant_override("separation", 4)
@@ -953,7 +955,7 @@ func _battle_ui(screen: Vector2) -> void:
 		var ultimate = _button(left, "%d%% · " % a.energy + Catalog.SKILLS[a.ultimate].name, _ultimate.bind(id), a.energy < 100 or a.hp <= 0)
 		ultimate.tooltip_text = "%s\n%s\n充能达到 100%% 时可释放，不占正常行动。" % [Catalog.SKILLS[a.ultimate].name, Catalog.skill_description(a.ultimate)]
 	var enemy_panel_x = screen.x - 330
-	var right_outer = _panel(ui, Rect2(enemy_panel_x, 120, 310, screen.y - 275))
+	var right_outer = _panel(ui, Rect2(enemy_panel_x, 120, 310, side_height))
 	_text(right_outer, "敌方阵容", 24, gold)
 	var right = _scroll_content(right_outer)
 	right.add_theme_constant_override("separation", 9)
@@ -987,7 +989,8 @@ func _battle_ui(screen: Vector2) -> void:
 	items.tooltip_text = "使用当前角色背包中的恢复道具。\n可给在场队友使用，不占正常行动。"
 	quick_actions.position = Vector2(enemy_panel_x - quick_actions.get_combined_minimum_size().x - 12, 120)
 
-	var center = _panel(ui, Rect2(290, screen.y - 305, screen.x - 640, 155))
+	var center = _panel(ui, Rect2(290, battle_bottom - 155, screen.x - 640, 155))
+	center.get_parent().grow_vertical = Control.GROW_DIRECTION_BEGIN
 	_text(center, view.presentation_title((combat.unit(combat.current).name + " 的行动") if combat.current != "" else "战斗结算"), 20, gold)
 	var commands = HBoxContainer.new()
 	center.add_child(commands)
@@ -1009,6 +1012,8 @@ func _battle_ui(screen: Vector2) -> void:
 	if is_friendly:
 		context += "\n" + _combat_skill_hint(skill_id, actor_id)
 	_text(center, context, 12, muted)
+	if not toast_text.is_empty():
+		_text(center, toast_text, 13, gold)
 
 func _enemy_card(parent: VBoxContainer, id: String, title: String) -> void:
 	var enemy = combat.enemies[id]
@@ -1055,8 +1060,7 @@ func _combat_action(skill_id: String) -> void:
 
 func _perform_combat(skill_id: String, target: String) -> void:
 	var result = combat.act(skill_id, target)
-	if not result.ok:
-		toast_text = result.message
+	toast_text = "" if result.ok else result.message
 	_after_combat_step()
 
 func _ultimate(id: String) -> void:
@@ -1066,6 +1070,7 @@ func _ultimate(id: String) -> void:
 			toast_text = "终结技已排队，在当前动作结束后释放。"
 			_refresh()
 			return
+		toast_text = ""
 		combat.resolve_queued()
 	else:
 		toast_text = result.message
@@ -1152,6 +1157,7 @@ func _process(delta: float) -> void:
 	var was_playing = battle_timer > 0
 	battle_timer -= delta
 	if battle_timer <= 0 and not combat.queue.is_empty():
+		toast_text = ""
 		combat.resolve_queued()
 		_after_combat_step()
 		return

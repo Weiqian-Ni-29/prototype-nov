@@ -180,6 +180,8 @@ func execute() -> void:
 	game.view.begin_battle(run, b)
 	game._refresh()
 	expect(b.current == "hero", "Fixture begins on protagonist normal action")
+	expect(not game.ui.find_children("*", "Label", true, false).any(func(label): return label.text == "旅途记录"),
+		"The battle HUD has no travel log banner")
 	var cards = game.ui.find_children("EnemyCard_*", "PanelContainer", true, false)
 	var card_contents_match = cards.all(func(card):
 		return (card.find_children("*", "Button", true, false).size() == 1
@@ -208,6 +210,15 @@ func execute() -> void:
 	var skill = find_button(game.ui, "巡路连射")
 	expect(skill != null and "8 MP" in skill.tooltip_text and "敌方单体" in skill.tooltip_text
 		and "预计基础伤害" in skill.tooltip_text, "Skill hover help explains cost, target and damage preview")
+	var hero = run.actor("hero")
+	var original_mp = hero.mp
+	hero.mp = 0
+	await press("巡路连射")
+	var action_panel = find_button(game.ui, "普攻").get_parent().get_parent()
+	expect(action_panel.find_children("*", "Label", true, false).any(func(label): return "魔力不足" in label.text),
+		"Invalid commands report the error inside the action panel")
+	hero.mp = original_mp
+	await finish_presentation()
 	# Full energy is a deliberate UI fixture. Charging itself is verified by domain checks.
 	run.actor("hero").energy = 100
 	game._refresh()
