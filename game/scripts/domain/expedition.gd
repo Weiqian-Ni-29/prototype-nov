@@ -328,18 +328,21 @@ func move(ids: Array, destination: String) -> Dictionary:
 	changed.emit()
 	return {"ok": true, "battle": encounter, "pending": data.pending_battle.duplicate(true)}
 
-func join_companion(id: String) -> Dictionary:
+func join_companion(id: String, recruiter_id: String = "") -> Dictionary:
 	if not data.actors.has(id) or id == "hero":
 		return fail("没有这位伙伴。")
 	var a = actor(id)
 	if a.hp <= 0:
 		return fail("对方重伤，需要同地实际救援后再交谈。")
-	if same_cell(a.position, true).is_empty():
+	var local_crew = same_cell(a.position, true)
+	if local_crew.is_empty() or (not recruiter_id.is_empty() and recruiter_id not in local_crew):
 		return fail("需要同格交谈。")
 	if a.joined:
 		return fail("已经同行。")
 	a.joined = true
 	_ensure_squads()
+	if not recruiter_id.is_empty():
+		a.squad_id = actor(recruiter_id).squad_id
 	if has_relic("life_seed"):
 		a.hp_max = roundi(a.hp_max * 1.20)
 	if has_relic("telescope"):

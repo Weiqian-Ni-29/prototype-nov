@@ -530,7 +530,7 @@ func _common(visitor: String, subject: String, option: String) -> Dictionary:
 		return {"ok": true, "heal_dialog": subject}
 	if option == "join":
 		var previous = run.data.story[subject].relation
-		var result = run.join_companion(subject)
+		var result = run.join_companion(subject, visitor)
 		if result.ok:
 			result.response = ("你改变了之前的决定，" if previous in ["declined", "later"] else "") + run.actor(subject).name + "确认与你同行。"
 		return result

@@ -395,6 +395,7 @@ func execute() -> void:
 	expect(story_owns_focus(), "Courier dialogue hides the map interface and owns keyboard focus")
 	await press("暂缓决定")
 	expect(game.run.data.story.lorne.relation == "later" and dialogue_contains("继续这场谈话"), "The defer branch updates relationship and visible response")
+	expect(game.moving_ids == ["hero"], "Deferring recruitment leaves the travel selection alone")
 	var checkpoint = saved_run()
 	var saved_choices: Array = checkpoint.get("choices", [])
 	expect(checkpoint.get("story", {}).get("lorne", {}).get("relation") == "later"
@@ -408,6 +409,10 @@ func execute() -> void:
 	await press("接过原信")
 	expect(game.run.actor("hero").inventory.get("Q-L", 0) == 1 and game.run.actor("lorne").inventory.get("Q-L", 0) == 0, "Native UI original letter transferred once")
 	await press("结束交谈")
+	var recruit_button = find_button(game.ui, "洛恩")
+	var recruit_toggle = recruit_button.get_parent().find_children("*", "CheckBox", false, false).front() if recruit_button != null else null
+	expect(game.moving_ids == ["hero", "lorne"] and recruit_toggle != null and recruit_toggle.button_pressed,
+		"A newly recruited companion is checked for the next squad move")
 	await press("结束一天")
 	await press("确认")
 	expect(game.run.data.day == 2 and game.run.actor("hero").ap == 5 and game.run.actor("lorne").ap == 10, "Native UI daily settlement")

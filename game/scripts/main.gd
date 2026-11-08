@@ -1375,6 +1375,8 @@ func _story_choice(option_id: String) -> void:
 		dialogue_response = result.message
 		_render_dialogue()
 		return
+	if option_id == "join":
+		moving_ids.append(dialogue_subject)
 	run.save_game()
 	if _show_relic_intro(func():
 		dialogue_response = ""

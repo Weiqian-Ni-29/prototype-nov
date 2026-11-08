@@ -33,6 +33,9 @@ func execute():
 	var loaded = ExpeditionModel.new()
 	expect(loaded.load_game(path).ok, "load splits")
 	expect(loaded.squad_groups().size() == 2 and loaded.actor("lorne").squad_id == split, "persisted identities and colors")
+	loaded.actor("tide").position = start
+	expect(loaded.join_companion("tide", "lorne").ok and loaded.actor("tide").squad_id == split
+		and loaded.squad_groups().size() == 2, "A recruit joins the speaking actor's squad when squads share a tile")
 	var destination = ""
 	for cell in Hex.neighbors(start, run.data.tiles):
 		if Hex.is_land(run.data.tiles, cell):
