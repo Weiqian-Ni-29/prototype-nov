@@ -180,6 +180,8 @@ func execute() -> void:
 	game.view.begin_battle(run, b)
 	game._refresh()
 	expect(b.current == "hero", "Fixture begins on protagonist normal action")
+	expect(game.ui.find_children("ShieldBadge_*", "TextureRect", true, false).is_empty(),
+		"An unshielded roster has no shield badges")
 	var cards = game.ui.find_children("EnemyCard_*", "PanelContainer", true, false)
 	var card_contents_match = cards.all(func(card):
 		return (card.find_children("*", "Button", true, false).size() == 1
@@ -215,6 +217,44 @@ func execute() -> void:
 	await press("100% · 归途号令")
 	expect(run.actor("hero").energy == 0 and b.next_time.hero == next_time, "Ultimate button spends personal energy and preserves normal action")
 	await finish_presentation()
+	var shields = game.ui.find_children("ShieldBadge_*", "TextureRect", true, false)
+	expect(shields.size() == b.active.size() and shields.all(func(badge):
+		var amount = badge.get_node_or_null("Amount") as Label
+		return (amount != null and amount.text == "32"
+			and amount.get_theme_color("font_color") == Color.WHITE)),
+		"An actual party shield skill shows a white remaining amount inside each badge")
+	# Use a larger display fixture than the current skill cap.
+	var hero = run.actor("hero")
+	hero.shield = 250
+	game._refresh()
+	await process_frame
+	var badge = game.ui.find_child("ShieldBadge_hero", true, false)
+	var amount = badge.get_node_or_null("Amount") as Label if badge != null else null
+	expect(amount != null and amount.text == "250", "Shield badge shows an amount larger than max HP")
+	var heading = game.ui.find_child("BattleAllyHeading_hero", true, false) as Control
+	var heading_rect = heading.get_global_rect()
+	if badge != null and amount != null:
+		var name_label = badge.get_parent().get_child(0) as Label
+		expect(name_label.get_line_count() == 1 and name_label.get_global_rect().end.x <= badge.get_global_rect().position.x
+			and amount.get_minimum_size().x <= badge.size.x,
+			"Name and three-digit badge fit on one line without overlap")
+		var companion_badge = game.ui.find_child("ShieldBadge_cen", true, false) as Control
+		expect(companion_badge != null and badge.size == companion_badge.size
+			and is_equal_approx(badge.get_global_rect().end.x, heading_rect.end.x)
+			and is_equal_approx(badge.get_global_rect().end.x, companion_badge.get_global_rect().end.x),
+			"Two- and three-digit badges have the same size and align along the right edge")
+	b._hurt("hero", 7)
+	game._refresh()
+	badge = game.ui.find_child("ShieldBadge_hero", true, false)
+	amount = badge.get_node_or_null("Amount") as Label if badge != null else null
+	expect(amount != null and amount.text == "243", "Absorbed damage updates the displayed shield")
+	b._hurt("hero", 243)
+	game._refresh()
+	await process_frame
+	expect(game.ui.find_child("ShieldBadge_hero", true, false) == null,
+		"An exhausted shield badge is removed")
+	heading = game.ui.find_child("BattleAllyHeading_hero", true, false) as Control
+	expect(heading.get_global_rect() == heading_rect, "Hiding a depleted shield keeps the roster row stable")
 	game.battle_timer = 0
 	game._refresh()
 	var original_item_count = run.actor("hero").inventory.salve

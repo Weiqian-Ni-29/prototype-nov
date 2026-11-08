@@ -13,6 +13,8 @@ const FontAsset = preload("res://assets/fonts/NotoSansSC.ttf")
 const Sound = preload("res://scripts/presentation/sound.gd")
 const TITLE_ART = preload("res://assets/portraits/waystation-ensemble.png")
 const OBJECTIVE_ICON = preload("res://assets/ui/expedition-objective.svg")
+const SHIELD_ICON = preload("res://assets/ui/shield-badge.svg")
+const SHIELD_BADGE_SIZE = Vector2(34, 37)
 const PROFESSION_ART = {
 	"wayfarer": preload("res://assets/portraits/hero.png"),
 	"guardian": preload("res://assets/portraits/hero-guardian.png"),
@@ -50,12 +52,15 @@ var narrative: RefCounted
 var dialogue_subject = ""
 var dialogue_response = ""
 var sound: Node
+var shield_number_font = SystemFont.new()
 var gold = Color("dec38e")
 var ink = Color("e8e4d1")
 var muted = Color("a2b3a7")
 
 func _ready() -> void:
 	DisplayServer.window_set_title("归灯之野 · 白栎远征")
+	shield_number_font.font_names = PackedStringArray(["Georgia", "Liberation Serif", "Times New Roman"])
+	shield_number_font.font_weight = 700
 	sound = Sound.new()
 	add_child(sound)
 	view = World.new()
@@ -947,7 +952,35 @@ func _battle_ui(screen: Vector2) -> void:
 		var a = run.actor(id)
 		var shown_hp = view.display_hp(id,int(a.hp))
 		var shown_shield = view.display_shield(id,int(a.shield))
-		_text(left, ("▶ " if view.presentation_actor(combat.current) == id else "") + a.name + (" · 盾%d" % shown_shield if shown_shield > 0 else ""), 19, ink if shown_hp > 0 else muted)
+		var heading = HBoxContainer.new()
+		heading.name = "BattleAllyHeading_" + id
+		heading.custom_minimum_size.y = SHIELD_BADGE_SIZE.y
+		heading.add_theme_constant_override("separation", 5)
+		left.add_child(heading)
+		var name_text = ("▶ " if view.presentation_actor(combat.current) == id else "") + a.name
+		var name_label = _text(heading, name_text, 19, ink if shown_hp > 0 else muted)
+		name_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+		name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		if shown_shield > 0:
+			var badge = TextureRect.new()
+			badge.name = "ShieldBadge_" + id
+			badge.texture = SHIELD_ICON
+			badge.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			badge.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			badge.custom_minimum_size = SHIELD_BADGE_SIZE
+			badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			heading.add_child(badge)
+			var amount = _text(badge, str(shown_shield), 10 if shown_shield >= 100 else 14, Color.WHITE)
+			amount.name = "Amount"
+			amount.add_theme_font_override("font", shield_number_font)
+			amount.add_theme_color_override("font_outline_color", Color("231f1b"))
+			amount.add_theme_constant_override("outline_size", 3)
+			amount.autowrap_mode = TextServer.AUTOWRAP_OFF
+			amount.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			amount.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			amount.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			amount.offset_bottom = -3
 		_text(left, "HP %d/%d · MP %d/%d" % [shown_hp, a.hp_max, a.mp, a.mp_max], 14, muted)
 		_hp_bar(left, shown_hp, a.hp_max)
 		var ultimate = _button(left, "%d%% · " % a.energy + Catalog.SKILLS[a.ultimate].name, _ultimate.bind(id), a.energy < 100 or a.hp <= 0)
