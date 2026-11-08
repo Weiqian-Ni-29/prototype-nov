@@ -868,7 +868,8 @@ func _battle_ui(screen: Vector2) -> void:
 		_hp_bar(left, shown_hp, a.hp_max)
 		var ultimate = _button(left, "%d%% · " % a.energy + Catalog.SKILLS[a.ultimate].name, _ultimate.bind(id), a.energy < 100 or a.hp <= 0)
 		ultimate.tooltip_text = "%s\n%s\n充能达到 100%% 时可释放，不占正常行动。" % [Catalog.SKILLS[a.ultimate].name, Catalog.skill_description(a.ultimate)]
-	var right_outer = _panel(ui, Rect2(screen.x - 330, 120, 310, screen.y - 275))
+	var enemy_panel_x = screen.x - 330
+	var right_outer = _panel(ui, Rect2(enemy_panel_x, 120, 310, screen.y - 275))
 	_text(right_outer, "敌方阵容", 24, gold)
 	var right = _scroll_content(right_outer)
 	right.add_theme_constant_override("separation", 9)
@@ -889,8 +890,20 @@ func _battle_ui(screen: Vector2) -> void:
 	if not timeline.is_empty():
 		right_outer.add_child(HSeparator.new())
 		_text(right_outer, "行动顺序\n" + " → ".join(timeline), 14, gold)
-	var center = _panel(ui, Rect2(290, screen.y - 305, screen.x - 640, 155))
 	var is_friendly = combat.current != "" and not combat.enemies.has(combat.current) and combat.outcome == "" and battle_timer <= 0 and not view.is_animating()
+	var quick_actions = HBoxContainer.new()
+	quick_actions.add_theme_constant_override("separation", 8)
+	ui.add_child(quick_actions)
+	var auto = _button(quick_actions, "自动战斗", func(): combat.auto_mode = not combat.auto_mode; _refresh())
+	auto.toggle_mode = true
+	auto.set_pressed_no_signal(combat.auto_mode)
+	auto.add_theme_stylebox_override("hover_pressed", auto.get_theme_stylebox("pressed"))
+	auto.tooltip_text = "切换自动战斗，由队员自动选择并执行战斗指令。"
+	var items = _button(quick_actions, "道具", func(): _item_dialog(combat.current), not is_friendly)
+	items.tooltip_text = "使用当前角色背包中的恢复道具。\n可给在场队友使用，不占正常行动。"
+	quick_actions.position = Vector2(enemy_panel_x - quick_actions.get_combined_minimum_size().x - 12, 120)
+
+	var center = _panel(ui, Rect2(290, screen.y - 305, screen.x - 640, 155))
 	_text(center, view.presentation_title((combat.unit(combat.current).name + " 的行动") if combat.current != "" else "战斗结算"), 20, gold)
 	var commands = HBoxContainer.new()
 	center.add_child(commands)
@@ -902,14 +915,8 @@ func _battle_ui(screen: Vector2) -> void:
 	skill.tooltip_text = Catalog.SKILLS[skill_id].name + "\n" + _combat_skill_hint(skill_id, actor_id)
 	var guard = _button(commands, "防守", func(): _combat_action("guard"), not is_friendly)
 	guard.tooltip_text = "防守\n下次正常行动前受到的伤害降低，并获得 10% 充能。"
-	var items = _button(commands, "道具", func(): _item_dialog(combat.current), not is_friendly)
-	items.tooltip_text = "使用当前角色背包中的恢复道具。\n可给在场队友使用，不占正常行动。"
 	var swap = _button(commands, "换人", _swap_dialog, not is_friendly or combat.reserves().is_empty())
 	swap.tooltip_text = "用同地候补换下当前角色，消耗本次正常行动。\n每名候补首次上场支付参战精力。"
-	var auto = _button(commands, "自动 ON" if combat.auto_mode else "自动 OFF", func(): combat.auto_mode = not combat.auto_mode; _refresh())
-	auto.tooltip_text = "切换自动战斗，由队员自动选择并执行战斗指令。"
-	var fire_policy = _button(commands, "自动可点火" if combat.allow_auto_ignite else "自动保林", func(): combat.allow_auto_ignite = not combat.allow_auto_ignite; _refresh())
-	fire_policy.tooltip_text = "切换自动战斗的点火策略，控制自动使用的技能能否引燃林地。"
 	var retreat_hint = "已付精力不退还；本战出战者承受 10% 最大生命损伤，敌人恢复。"
 	var retreat = _button(commands, "撤退", func(): _confirm("撤退？", retreat_hint, func(): _run_action(combat.retreat()); _finish_battle()))
 	retreat.tooltip_text = retreat_hint
@@ -1421,7 +1428,7 @@ func _settings_dialog() -> void:
 	slider.value = sound.volume
 	slider.value_changed.connect(func(value: float): sound.set_volume(value))
 	box.add_child(slider)
-	_text(box, "按住左键拖动地图 · WASD 平移 · 滚轮缩放\n点击角色定位，勾选同格成员同行。\n自动战斗默认保林，可在战斗中允许自动点火。", 18, muted)
+	_text(box, "按住左键拖动地图 · WASD 平移 · 滚轮缩放\n点击角色定位，勾选同格成员同行。\n战场右上角可切换自动战斗和使用道具。", 18, muted)
 	_button(box, "查看完整操作指南", _guide)
 	_button(box, "制作与许可", _credits_dialog)
 	if screen_state == Screen.EXPEDITION and combat == null and run.data.status == "exploring":

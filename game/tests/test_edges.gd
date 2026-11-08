@@ -146,20 +146,22 @@ func combat_edges() -> void:
 	expect(b.swap(outgoing).ok and r.actor("hero").ap == hero_ap, "Previously deployed reserve is not recharged")
 	expect(JSON.stringify(r.data.tiles[untouched]) == remote and r.data.day == day, "Battle leaves remote fire, fuel and date unchanged")
 	b.retreat()
-	r = fresh("arcanist")
-	ally(r, "ember")
-	var pos = r.actor("hero").position
-	r.data.tiles[pos].terrain = "forest"
-	r.data.weather = "sun"
-	b = battle(r, ["hero", "ember"])
-	r.actor("ember").energy = 100
-	b.auto_mode = true
-	b.step_auto()
-	expect(not r.data.tiles[pos].burning and r.actor("ember").energy == 100, "Auto preservation applies to ordinary and ultimate fire skills")
-	b.allow_auto_ignite = true
-	b.step_auto()
-	expect(r.data.tiles[pos].burning and r.actor("ember").energy == 0, "Explicit auto fire permission allows charged fire ultimate")
-	b.retreat()
+	for skill_id in ["ember", "sunfall"]:
+		for condition in ["dry", "rain", "wet"]:
+			r = fresh()
+			ally(r, "ember")
+			var tile = r.data.tiles[r.actor("hero").position]
+			tile.terrain = "forest"
+			r.data.weather = "rain" if condition == "rain" else "sun"
+			tile.wet_until = int(r.data.day) + 1 if condition == "wet" else 0
+			b = battle(r, ["ember"])
+			r.actor("ember").energy = 100 if skill_id == "sunfall" else 0
+			b.auto_mode = true
+			b.step_auto()
+			expect(b.events.any(func(event): return event.get("skill_id") == skill_id),
+				"Automatic battle casts %s in a %s forest" % [skill_id, condition])
+			expect(tile.burning == (condition == "dry") and tile.fuel == 3,
+				"Automatic %s follows existing ignition and fuel rules in a %s forest" % [skill_id, condition])
 	r = fresh()
 	ally(r, "grit")
 	b = battle(r, ["hero", "grit"])

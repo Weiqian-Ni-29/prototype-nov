@@ -14,7 +14,6 @@ var fire_tick = 10.0
 var current = ""
 var outcome = ""
 var auto_mode = false
-var allow_auto_ignite = false
 var pending: Dictionary = {}
 var events: Array = []
 var event_serial = 0
@@ -53,7 +52,6 @@ func begin(expedition: RefCounted, encounter: Dictionary, formation: Array) -> D
 	outcome = ""
 	current = ""
 	auto_mode = false
-	allow_auto_ignite = false
 	for id in formation:
 		active.append(id)
 		_deploy(id)
@@ -314,7 +312,7 @@ func step_auto() -> void:
 		_enemy_action(current)
 	elif auto_mode:
 		for id in active:
-			if unit(id).hp > 0 and unit(id).energy >= 100 and _auto_safe_skill(Catalog.SKILLS[unit(id).ultimate]):
+			if unit(id).hp > 0 and unit(id).energy >= 100:
 				request_ultimate(id)
 		resolve_queued()
 		if outcome != "":
@@ -331,15 +329,9 @@ func step_auto() -> void:
 		var choice = str(caster.skill)
 		if caster.mp < skill.mp or (skill.get("healing", false) and lowest_ratio > 0.65):
 			choice = "attack"
-		if not _auto_safe_skill(skill):
-			choice = "attack"
 		if Catalog.SKILLS[choice].target == "enemy":
 			target = _weakest(alive_enemies())
 		act(choice, target)
-
-func _auto_safe_skill(skill: Dictionary) -> bool:
-	var tile = run.data.tiles[position]
-	return allow_auto_ignite or skill.get("environment", "") != "ignite" or tile.terrain != "forest" or tile.burning or run.data.weather == "rain" or tile.wet_until > run.data.day
 
 func _enemy_action(id: String) -> void:
 	var a = enemies[id]
