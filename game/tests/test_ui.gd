@@ -71,6 +71,35 @@ func select_consumable(item_name: String) -> void:
 			root.push_input(event, true)
 	await process_frame
 
+func check_rest_tooltip() -> void:
+	game._start_new()
+	var run = game.run
+	var hero = run.actor("hero")
+	var tile = run.data.tiles[hero.position]
+	tile.terrain = "desert"
+	hero.hp = 1
+	hero.mp = 0
+	await press("行动")
+	var rest_button = find_button(game.modal_layer, "休整")
+	expect(rest_button != null and "20%" in rest_button.tooltip_text,
+		"Rest hover explains the current tile's base recovery")
+	var items = find_button(game.modal_layer, "使用道具")
+	var camp = find_button(game.modal_layer, "建营")
+	expect(items != null and items.tooltip_text.is_empty() and camp != null and camp.tooltip_text.is_empty(),
+		"Item and camp buttons have no hover help")
+	await press("关闭")
+
+	tile.terrain = "forest"
+	tile.camp = true
+	run.data.weather = "rain"
+	await press("行动")
+	rest_button = find_button(game.modal_layer, "休整")
+	expect(rest_button != null and "25%" in rest_button.tooltip_text,
+		"Rest hover includes the camp bonus and rain penalty")
+	await press("休整")
+	expect(hero.hp == 1 + ceili(hero.hp_max * 0.25) and hero.mp == ceili(hero.mp_max * 0.25),
+		"Rest applies the previewed recovery")
+
 func check_backpack_use() -> void:
 	game._start_new()
 	var run = game.run
@@ -455,6 +484,7 @@ func execute() -> void:
 	expect(game.modal_layer.get_child_count() == 0 and find_button(game.ui, "查看结局剧情") != null, "Ending returns to the expedition record and can be replayed")
 	await check_discovery()
 	await check_backpack_use()
+	await check_rest_tooltip()
 	# Allow the last short audio cue to finish before testing scene teardown.
 	await create_timer(0.25).timeout
 	print("UI INTEGRATION: %d checks, %d failures (opening branches, legacy saves, movement, dialogue, recruitment, inventory, ending)" % [checks, failures.size()])
