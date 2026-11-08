@@ -27,7 +27,7 @@ const STORY_SITES = {
 }
 const STORY_TERRAIN = {
 	"plains": "road", "forest": "woodland", "mountain": "highland", "ruins": "ruins",
-	"desert": "drylands", "swamp": "wetlands", "scorched": "ashwood",
+	"desert": "drylands", "swamp": "wetlands",
 }
 const SITE_IMPRESSIONS = {
 	"start": "桥板已沉入河槽。出发前，商队曾把一包疗伤药留在废棚梁下。",
@@ -476,13 +476,6 @@ func _cell_actions() -> void:
 	var dialog = _modal(title, 570, 580)
 	var box = _scroll_content(dialog)
 	_text(box, "%s · 坐标 %s" % [Catalog.terrain_name(t.terrain), cell], 14, muted)
-	var states: Array[String] = []
-	if t.burning:
-		states.append("燃烧 · 剩余燃料 %d 天" % t.fuel)
-	if t.wet_until > run.data.day:
-		states.append("潮湿至第 %d 天" % t.wet_until)
-	if not states.is_empty():
-		_text(box, " / ".join(states), 16, gold)
 	if t.site.is_empty() and not Nodes.story(node).is_empty():
 		_button(box, "查看节点剧情", _node_dialog)
 	if run.knows_encounter(cell):
@@ -520,10 +513,6 @@ func _cell_actions() -> void:
 	_button(box, "使用道具 / 同地救援", _item_dialog.bind(selected_id))
 	if actor.skill == "heal":
 		_button(box, "治疗队友 · 1 精力 / 12 MP", _healing_dialog)
-	if actor.skill == "ember":
-		_button(box, "点燃林地 · 1 精力 / 8 MP", func(): _close_modal(); _run_action(run.environmental_skill(selected_id, "ignite")))
-	if actor.skill == "torrent":
-		_button(box, "灭火 / 浸湿 · 1 精力 / 8 MP", func(): _close_modal(); _run_action(run.environmental_skill(selected_id, "wet")))
 	_button(box, "拆分小队", _split_squad_dialog).disabled = run.squad_members(selected_id).size() < 2
 	if cell == run.data.exit and run.actor("hero").position == run.data.exit:
 		_button(box, "确认撤离 / 继续等待", _extraction_dialog)
@@ -539,35 +528,20 @@ func _site_impression() -> void:
 	var cell: String = run.actor(selected_id).position
 	var tile = run.data.tiles[cell]
 	var text: String = SITE_IMPRESSIONS[tile.site]
-	if tile.terrain == "scorched":
-		text = "火已经熄了。灰烬下还能辨出这处旧地点原来的轮廓。"
 	_show_story(_node_title(cell), Catalog.terrain_name(tile.terrain), text, _story_scene_at(cell),
-		[], [_node_option("leave", "返回地图")], func(_choice: String): _close_modal(), {}, _node_tint(tile))
+		[], [_node_option("leave", "返回地图")], func(_choice: String): _close_modal(), {}, _node_tint())
 
 func _node_resolved(node: Dictionary, tile: Dictionary) -> bool:
 	return not node.result.is_empty() or (node.kind == "supply" and tile.quantity <= 0) \
 		or (node.kind in ["battle", "elite"] and tile.enemies.is_empty())
 
-func _node_tint(tile: Dictionary) -> Color:
-	if tile.burning:
-		return Color(1.0, 0.76, 0.60)
-	if run.data.weather == "rain" or tile.wet_until > run.data.day:
+func _node_tint() -> Color:
+	if run.data.weather == "rain":
 		return Color(0.78, 0.88, 1.0)
 	return Color.WHITE
 
 func _node_description(node: Dictionary, tile: Dictionary, event: Dictionary) -> String:
-	var resolved = _node_resolved(node, tile)
-	if tile.burning:
-		if node.kind in ["battle", "elite"] and not resolved:
-			return "火光照出还守在这里的敌影。出战时要留意火势。"
-		return "火正在这里蔓延。得等火熄灭，才看得清还剩下什么。"
-	if tile.terrain == "scorched":
-		if resolved:
-			return "火已经熄了。走过的路和在这里办过的事，仍记在手记里。"
-		return event.get("scorched", "灰烬盖住了脚印。你在烧黑的残片间辨认旧日留下的痕迹。")
-	if resolved:
-		return event.resolved
-	return event.intro
+	return event.resolved if _node_resolved(node, tile) else event.intro
 
 func _node_option(id: String, label: String) -> Dictionary:
 	return {"id": id, "text": label}
@@ -581,34 +555,29 @@ func _node_dialog(feedback: String = "") -> void:
 		_cell_actions()
 		return
 	var text = _node_description(node, tile, event)
-	if not tile.burning and tile.terrain != "scorched":
-		var after_flag: String = event.get("after_flag", "")
-		if not after_flag.is_empty() and run.data.flags.get(after_flag, false):
-			text += "\n" + str(event.get("after_text", ""))
-		var speaker: String = event.get("reaction_actor", "")
-		if speaker in run.same_cell(cell, true) and event.has("reaction"):
-			text += "\n%s说「%s」" % [run.actor(speaker).name, event.reaction]
+	var after_flag: String = event.get("after_flag", "")
+	if not after_flag.is_empty() and run.data.flags.get(after_flag, false):
+		text += "\n" + str(event.get("after_text", ""))
+	var speaker: String = event.get("reaction_actor", "")
+	if speaker in run.same_cell(cell, true) and event.has("reaction"):
+		text += "\n%s说「%s」" % [run.actor(speaker).name, event.reaction]
 	if node.result == "record":
 		text += "\n" + _node_lead(cell, event)
 	if not feedback.is_empty():
 		text += "\n" + feedback
 	var options: Array = []
-	if not tile.burning and not _node_resolved(node, tile):
-		var scorched = tile.terrain == "scorched"
+	if not _node_resolved(node, tile):
 		match node.kind:
 			"trade":
-				if not scorched or Nodes.survives_fire(node):
-					options.append(_node_option("trade", "查看货物 · 持有 %d 灯铢" % run.data.lamp_coins))
+				options.append(_node_option("trade", "查看货物 · 持有 %d 灯铢" % run.data.lamp_coins))
 			"supply":
 				options.append(_node_option("collect", "采集%s ×%d · 1 精力" % [Catalog.item_name(tile.resource), tile.quantity]))
 			"rest":
-				if not scorched:
-					options.append(_node_option("hp", "在此休整 · 同格可行动队员恢复 %d%% 生命" % run.recovery_percent(cell, "hp")))
-					options.append(_node_option("mp", "在此调息 · 同格可行动队员恢复 %d%% 魔力" % run.recovery_percent(cell, "mp")))
+				options.append(_node_option("hp", "在此休整 · 同格可行动队员恢复 %d%% 生命" % run.recovery_percent(cell, "hp")))
+				options.append(_node_option("mp", "在此调息 · 同格可行动队员恢复 %d%% 魔力" % run.recovery_percent(cell, "mp")))
 				options.append(_node_option("pack", "带走一份" + Catalog.item_name(node.item)))
 			"choice":
-				if not scorched or Nodes.survives_fire(node):
-					options.append(_node_option("work", "%s · 1 精力 · 得 %d 灯铢" % [event.get("work", "出手帮忙"), node.coins]))
+				options.append(_node_option("work", "%s · 1 精力 · 得 %d 灯铢" % [event.get("work", "出手帮忙"), node.coins]))
 			"clue":
 				options.append(_node_option("record", "记入旅途手记"))
 			"cache":
@@ -618,7 +587,7 @@ func _node_dialog(feedback: String = "") -> void:
 					options.append(_node_option("fight", "选择阵容并交战"))
 	options.append(_node_option("leave", "返回地图"))
 	_show_story(event.title, Catalog.terrain_name(tile.terrain) + " · " + Nodes.label(node.kind),
-		text, STORY_TERRAIN[tile.terrain], [], options, _node_choice, {}, _node_tint(tile))
+		text, STORY_TERRAIN[tile.terrain], [], options, _node_choice, {}, _node_tint())
 
 func _node_choice(option: String) -> void:
 	match option:
@@ -854,7 +823,7 @@ func _end_day_dialog() -> void:
 	for id in run.joined_ids():
 		if run.actor(id).ap > 0 and run.actor(id).hp > 0:
 			remaining.append("%s %d 精力" % [run.actor(id).name, run.actor(id).ap])
-	_confirm("结束这一天？", "尚余：" + " / ".join(remaining) + "\n\n全队进入次日，精力回各自上限。天气和火势随日期结算。生命与魔力靠节点、物资和治疗恢复。", func(): _run_action(run.end_day()))
+	_confirm("结束这一天？", "尚余：" + " / ".join(remaining) + "\n\n全队进入次日，精力回各自上限。次日天气可能变化。生命与魔力靠节点、物资和治疗恢复。", func(): _run_action(run.end_day()))
 
 func _extraction_dialog() -> void:
 	var preview = run.extraction_preview()
@@ -1071,7 +1040,7 @@ func _formation_dialog() -> void:
 		scene.custom_minimum_size.y = 86
 		scene.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		scene.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-		scene.modulate = _node_tint(tile)
+		scene.modulate = _node_tint()
 		box.add_child(scene)
 		_text(box, event.title + " · " + _node_description(node, tile, event), 15, gold)
 	var surprise = encounter.ambush or encounter.get("surprise", false)
@@ -1183,8 +1152,12 @@ func _battle_ui(screen: Vector2) -> void:
 	var retreat_hint = "已付精力不退还；本战出战者承受 10% 最大生命损伤，敌人恢复。"
 	var retreat = _button(commands, "撤退", func(): _confirm("撤退？", retreat_hint, func(): _run_action(combat.retreat()); _finish_battle()))
 	retreat.tooltip_text = retreat_hint
-	var terrain = run.data.tiles[combat.position]
-	var context = "场地：" + Catalog.terrain_name(terrain.terrain) + (" · 燃烧" if terrain.burning else " · 潮湿" if terrain.wet_until > run.data.day else "")
+	var field = combat.field_view()
+	var context = "场地：" + Catalog.terrain_name(field.terrain)
+	if field.burning:
+		context += " · 燃烧"
+	if field.wet:
+		context += " · 潮湿"
 	if is_friendly:
 		context += "\n" + _combat_skill_hint(skill_id, actor_id)
 	_text(center, context, 12, muted)
@@ -1515,8 +1488,6 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 
 func _story_scene_at(position: String) -> String:
 	var tile: Dictionary = run.data.tiles[position]
-	if tile.terrain == "scorched":
-		return "ashwood"
 	return STORY_SITES.get(tile.site, STORY_TERRAIN[tile.terrain])
 
 func _story_portrait(id: String) -> Texture2D:

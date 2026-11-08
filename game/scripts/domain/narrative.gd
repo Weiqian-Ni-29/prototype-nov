@@ -17,7 +17,7 @@ const PERSONAL = {
 	"lorne": {"E0": "投递或回告尚未完成，洛恩没有替收件人签下名字。", "E1": "旧信真实交到乔禾手中，签收也已当面告知。迟到的是信件，不是替别人作决定的权利。", "E2": "按乔禾的意愿，原信确实带回洛恩手中封存。未读不是没有结果。", "E3": "未经许可拆信的事实已经被洛恩知晓。即使信后来送达，信任的裂痕也没有被改写。"},
 	"eve": {"E0": "药箱的去向或回执仍待核对，伊芙没有提前写下送达。", "E1": "乔禾家逐项核对原清单，回执真实送回。伊芙合上药箱簿，这次没有遗漏一个名字。", "E2": "应急分药事先说明并修改清单，剩余药物与实际签收相符。伊芙记录了缺口，也记录了理由。", "E3": "隐瞒的药物差异已被发现。伊芙拒绝把缺失写成齐备，把有差异的那一页留在簿里。"},
 	"grit": {"E0": "扣环上的名字与旧营地的线索还没有合在一起。砾牙没有得到确定的回答。", "E1": "诊疗摘录、刻名扣环与墓记核对一致。砾牙承认舒远已去世，愿意走新的路。", "E2": "证据核实之后，砾牙表达了暂时守候的意愿；愿望没有替他跨越实际距离。", "E3": "证据尚不足，你明确没有把推测写成死讯。砾牙接受目前未证实的答案，仍可自行选择同行。"},
-	"ember": {"E0": "误会可以消除，清障的判断却尚未完成。弥烬还没有签下新的记录。", "E1": "危险已解除，林地也保留下来。弥烬把没有点燃的那场火记进清障记录。", "E2": "火场或焦土的代价确实发生，你们当面承认损失，没有把灰烬写成空白。", "E3": "你要求掩去已知损失。弥烬拒绝签假报，分歧被保留下来。", "E4": "清障地点没有再响起他的回答。弥烬重伤未醒，最后见到他的人还记得那场冲突；他尚未加入远征队。"},
+	"ember": {"E0": "误会可以消除，清障的判断却尚未完成。弥烬还没有签下新的记录。", "E1": "你们把亲历的林地战斗写进清障记录。弥烬在旁边加了一行：先确认还有谁在用这片林子。", "E2": "你们把三年前烧毁的储物棚补进旧清障记录，并记下了仍在使用它的人。", "E3": "你要求略去旧案里被烧毁的棚子。弥烬把原记录收回，拒绝在少了这一栏的报告上签字。", "E4": "清障地点没有再响起他的回答。弥烬重伤未醒，最后见到他的人还记得那场冲突；他尚未加入远征队。"},
 	"tide": {"E0": "水位与旧稿还没有形成当面的结论，那一行仍留空。", "E1": "澄汐保留原稿，在旁边添上真实刻度与有来源的维护记录。哪些问题尚无证据，她就仍留着空白。", "E2": "记录只写亲眼所见与可核实的事实。澄汐没有把局部刻度解释成整个世界的答案。", "E3": "澄汐拒绝伪造或删除不利数据。原稿、刻度与已取得的材料没有因此消失。"},
 }
 
@@ -166,7 +166,7 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 			"ember":
 				text = "弥烬横过一步，挡住旧清障设备，手停在燧石上。\n“又有人拿着地图来拆东西？三年前我也信过图上的‘废弃’二字，结果烧了别人还在用的棚子。说吧，谁让你来的？”"
 				if flags.get("invite_ember", false):
-					text = "弥烬把燧石收回袋里。\n“这回先说看到的事。哪块林子还在，哪块过了火，我照实写。”"
+					text = "弥烬把燧石收回袋里。\n“你在林子里见到什么，我就记什么。三年前那页，也可以翻出来对一对。”"
 				options.append(_choice("explain", "出示实际持有的测绘副本或登记回执，说明来意", _has(visitor, "Q-T") or _has(visitor, "Q-TR"), "凭据在异地时不能遥取"))
 				var can_deploy = false
 				for ally_id in run.same_cell(npc.position, true):
@@ -177,9 +177,13 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 				options.append(_choice("duel", "普通交战：承担重伤与远征失败风险", not npc.joined and can_deploy, duel_reason))
 				if flags.get("duel_won_ember", false):
 					flags["invite_ember"] = true
-				options.append(_choice("preserve", "报告亲历的解除危险与保林结果", _has_conservation_report(visitor), "需亲历森林遭遇胜利，林地实际保留且未燃烧"))
-				options.append(_choice("admit", "如实承认已经观察到的火场损失", _has_fire_report(visitor), "需有真实、已知的火场代价"))
-				options.append(_choice("falsify", "明知损失，仍要求不写入报告", _has_fire_report(visitor), "不能凭空假设发生过火灾"))
+				var at_clear_site = run.data.tiles[run.actor(visitor).position].site == "clear"
+				var knows_accident = _knows(visitor, "clearance_accident")
+				if at_clear_site and not knows_accident:
+					options.append(_choice("read_clearance", "翻看营地留下的旧清障记录"))
+				options.append(_choice("preserve", "报告亲历的林地胜利", _has_conservation_report(visitor), "需亲历一场森林遭遇胜利"))
+				options.append(_choice("admit", "补录三年前储物棚被烧毁的经过", knows_accident, "需核对营地的旧清障记录"))
+				options.append(_choice("falsify", "要求从报告里略去被烧毁的棚子", knows_accident, "需核对营地的旧清障记录"))
 			"tide":
 				text = "澄汐蹲在干渠边，用指节敲了敲石壁上的刻度。\n“老师写‘可能是季节变化’。你看，这一道比他记得高。台下石匣是放拓片的，背面那道槽存维护页。先对水位，再查水去了哪儿。”"
 				if run.data.tiles[run.actor(visitor).position].site != "water":
@@ -272,8 +276,6 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 				option.enabled = false
 				option.reason = "本局已作出明确选择，保留实际结果。"
 	options.append(_choice("leave", "我还想回去看看"))
-	if run.data.tiles[run.actor(visitor).position].terrain == "scorched":
-		text += "\n\n灰烬覆盖了原来的林地。这里的地点和人物仍在，但新鲜药草已不能照旧采集。"
 	return {"ok": true, "subject": subject, "title": title, "text": text, "options": options}
 
 func choose(visitor: String, subject: String, option_id: String) -> Dictionary:
@@ -377,6 +379,9 @@ func _choose(visitor: String, subject: String, option_id: String) -> Dictionary:
 					run.data.pending_battle = {"position": run.actor(visitor).position, "origin": run.actor(visitor).position, "ambush": false, "movers": [], "npc": "ember"}
 					flags["duel_seen_ember"] = true
 					return {"ok": true, "battle": true}
+				"read_clearance":
+					_learn(visitor, "clearance_accident")
+					response = "设备箱底压着一张三年前的清障单。「废弃」旁有人用炭笔补了一行：附近人家还在这里存锄头和种粮。棚子烧毁后，工具和粮种都没能取出来。"
 				"preserve", "admit", "falsify":
 					_result("ember", "E1" if option_id == "preserve" else "E2" if option_id == "admit" else "E3")
 					response = PERSONAL.ember[run.data.story.ember.result]
@@ -564,14 +569,7 @@ func _common(visitor: String, subject: String, option: String) -> Dictionary:
 func _has_conservation_report(visitor: String) -> bool:
 	for position in run.data.knowledge.get(visitor, {}).get("victories", []):
 		var t = run.data.tiles[position]
-		if t.terrain == "forest" and not t.burning and int(t.fuel) == 3:
-			return true
-	return false
-
-func _has_fire_report(visitor: String) -> bool:
-	for position in run.data.knowledge.get(visitor, {}).get("ignitions", []):
-		var t = run.data.tiles[position]
-		if (t.burning or t.terrain == "scorched" or int(t.fuel) < 3) and run.data.flags.get("player_ignitions", {}).has(position):
+		if t.terrain == "forest":
 			return true
 	return false
 
@@ -600,7 +598,7 @@ func character_ending(id: String) -> Dictionary:
 		"lorne": ["旧信的去向已有交代，信使自己的返程却没有完成。投递的结果与他所在的位置，成了记录里两件不同的事。","投递约定尚未结束。洛恩记着最后一个亲耳听到的地址，仍留在这段没有走完的路上。","洛恩已听到签收、封存或私拆的真实结果，伤势却让他无法继续。信件的终点没有替信使完成归途。","未完成的投递与待救的伤势一起留下。洛恩没有等到最后的回告，也还没有到达归航站。"],
 		"eve": ["伊芙核对过的清单已有明确结果，自己的归途却未完成。药物是否齐备、缺口是否事先说明，都仍记在原来的那一页。","回执或回告还没有来到面前。伊芙只记得最后一次交接，药箱簿上的那栏仍空着。","清单已有答复，医者自己却在此地重伤待援。她曾经为别人整理药物，此刻也需要一双真正来到身边的手。","药物的去向尚未核对，伊芙又已无法自行行动。最后的交接与眼前的伤势，分别留在两行未完成的记录里。"],
 		"grit": ["砾牙对旧主人、新路或未证实的线索已有回应，却仍留在这片边境。归航没有替他把每一步选择都走完。","砾牙还记着旧物的气味。扣环上的名字尚未形成完整的答案，他的返程也没有完成。","砾牙记得已经说清的答案，重伤的四肢却无法支撑他离开。新路或守候的愿望，此刻都还停在脚步之前。","旧物还唤起尚未核实的记忆，伤势又让砾牙无法起身。他等着的答案与援手，都还没有来到。"],
-		"ember": ["保林、承认损失或拒签假报，都已在弥烬的清障记录中留下后果。那一页有了答案，他自己却还没有到站。","弥烬还没能为这次清障写下结论。争论与危险停在未完成处，他也仍留在这片边境。","弥烬已作出的判断没有改变，伤势却让他无法继续行动。他的名字仍在远征队名册上，归航一栏尚未勾选。","尚未完成的合作与伤势一同留下。弥烬已经与你们同行过，此刻还在等待真正来到身边的救援。"],
+		"ember": ["林地战斗或旧案核对，都已在弥烬的清障记录里留下结果。那一页有了答案，他自己却还没有到站。","弥烬还没能为这次清障写下结论。争论与危险停在未完成处，他也仍留在这片边境。","弥烬已作出的判断没有改变，伤势却让他无法继续行动。他的名字仍在远征队名册上，归航一栏尚未勾选。","尚未完成的合作与伤势一同留下。弥烬已经与你们同行过，此刻还在等待真正来到身边的救援。"],
 		"tide": ["澄汐已经给出有界限的结论。文书有它自己的去向，而她本人的归途仍未完成。","未核对的一行保持空白。澄汐记着最后看过的刻度，记录和返程都还没有闭合。","澄汐已经分清哪些刻度可核实、哪些结论应当保留，伤势却不是知识可以治好的。她仍在等待同伴。","未闭合的数据与伤势留在同一个地点。水文稿还有空行，澄汐也还没有走到归航的灯下。"],
 	}
 	var item_notes: Array[String] = []

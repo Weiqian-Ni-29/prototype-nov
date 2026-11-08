@@ -111,7 +111,6 @@ func inspect_board() -> void:
 		run.data.tiles[hidden].terrain = old_terrain
 		var shore = ""
 		var forest = ""
-		var burned = ""
 		var ridge = ""
 		var coastal_ridge = ""
 		for id in run.data.tiles:
@@ -122,22 +121,14 @@ func inspect_board() -> void:
 					if Hex.is_land(run.data.tiles, next):
 						shore = next
 						break
-			if terrain == "forest" and run.data.tiles[id].site == "":
-				if forest.is_empty():
-					forest = id
-				elif Hex.distance(Hex.coord(id), Hex.coord(forest)) > 2:
-					burned = id
+			if forest.is_empty() and terrain == "forest" and run.data.tiles[id].site == "":
+				forest = id
 			if terrain == "mountain":
 				var neighbors = Hex.neighbors(id, run.data.tiles)
 				if ridge.is_empty() and neighbors.any(func(next): return run.data.tiles[next].terrain == "mountain"):
 					ridge = id
 				if neighbors.size() < 6 and Hex.distance(Hex.coord(id), Hex.coord(run.data.start)) <= 2:
 					coastal_ridge = id
-		if not burned.is_empty():
-			run.data.tiles[burned].terrain = "scorched"
-			for next in Hex.neighbors(burned, run.data.tiles):
-				if run.data.tiles[next].terrain == "forest" and run.data.tiles[next].site == "":
-					run.data.tiles[next].terrain = "scorched"
 		view.zoom_size = 38.0
 		view.focus_cell("0,0")
 		game._refresh()
@@ -154,7 +145,7 @@ func inspect_board() -> void:
 		await capture("terrain-lake-" + seed_value)
 		if seed_value == "20261104" and not forest.is_empty():
 			await inspect_occlusion(forest)
-			var areas = {"ridge": ridge, "scorched": burned, "coast-close": coastal_ridge, "ridge-close": ridge, "rocks-close": rocky_mountain}
+			var areas = {"ridge": ridge, "coast-close": coastal_ridge, "ridge-close": ridge, "rocks-close": rocky_mountain}
 			for detail in areas:
 				var focus: String = areas[detail]
 				if not focus.is_empty():
@@ -291,9 +282,6 @@ func capture_node_examples() -> void:
 	game._select_actor("hero")
 	game._node_dialog()
 	await capture("node-forest-rest")
-	run.data.tiles[rest].terrain = "scorched"
-	game._node_dialog()
-	await capture("node-scorched-rest")
 	game._close_modal()
 	var shop: String = shops[0]
 	run.actor("hero").position = shop
@@ -341,14 +329,12 @@ func execute() -> void:
 	await capture_node_examples()
 	# Inspect every biome through the exact same battle view used in the playable game.
 	game.set_process(false)
-	for biome in ["plains", "forest", "mountain", "ruins", "desert", "swamp", "scorched"]:
+	for biome in ["plains", "forest", "mountain", "ruins", "desert", "swamp"]:
 		game._start_new()
 		var run = game.run
 		var position = run.actor("hero").position
 		run.data.tiles[position].terrain = biome
 		run.data.tiles[position].site = ""
-		run.data.tiles[position].burning = biome == "forest"
-		run.data.tiles[position].wet_until = 3 if biome == "swamp" else 0
 		run.data.weather = "rain" if biome == "swamp" else "sun"
 		for id in Catalog.COMPANIONS:
 			run.actor(id).position = position
@@ -357,6 +343,10 @@ func execute() -> void:
 		var battle = Combat.new()
 		var pending = {"position": position, "origin": position, "movers": [], "npc": "", "ambush": false}
 		expect(battle.begin(run, pending, ["hero", "grit", "ember", "tide"]).ok, "Battle fixture begins " + biome)
+		if biome == "forest":
+			battle._apply_field_effect("ignite")
+		elif biome == "swamp":
+			battle._apply_field_effect("wet")
 		game.combat = battle
 		game.battle_timer = 0
 		game.view.begin_battle(run, battle)
@@ -378,8 +368,18 @@ func execute() -> void:
 		expect(not before_pose.is_equal_approx(after_pose), "Skeletal cast motion changes pose over real frames")
 		if biome == "forest":
 			await capture("animation-cast-forest")
+			battle._apply_field_effect("wet")
+			game.view.sync_event_environment({"environment_after": battle.field_view()})
+			game._refresh()
+			expect(game.view.battle_root.get_meta("environment_signature") == "forest:true:true", "Fire and wetness render together")
+			await create_timer(0.6).timeout
+			await capture("battle-forest-wet")
+			expect(battle.retreat().ok, "Leave burning battle")
 		game.combat = null
 		game.view.end_battle()
+		if biome == "forest":
+			game._refresh()
+			await capture("map-forest-after-battle")
 	# Seven-person inventory and portrait dialogue layout use explicit presentation fixtures.
 	game.run.data.status = "exploring"
 	game.run.data.pending_battle = {}

@@ -13,7 +13,7 @@ const CHUNK_SIZE = 3
 const BLEND_RADIUS_SQUARED = 2.19
 const LAND_LEVELS = {
 	"plains": 0.22, "forest": 0.26, "mountain": 0.48, "ruins": 0.29,
-	"desert": 0.29, "swamp": 0.072, "scorched": 0.26,
+	"desert": 0.29, "swamp": 0.072,
 }
 const UNKNOWN = ["unknown", 0.08, Color("788880")]
 const SEA = ["sea", -0.83, Color("8e9f84")]

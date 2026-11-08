@@ -193,11 +193,9 @@ func personal_paths() -> void:
 	expect_personal("ember", "E1")
 	for route in ["admit", "falsify"]:
 		fresh()
-		var point = r.data.start
-		r.data.tiles[point].terrain = "forest"
-		r.actor("hero").skill = "ember"
-		expect(r.environmental_skill("hero", "ignite").ok, "Actual map ignition for report")
 		visit("ember")
+		expect(not s.choose("hero", "ember", route).ok, "Accident report requires reading the clearance record")
+		choose("ember", "read_clearance")
 		choose("ember", route)
 		expect_personal("ember", "E2" if route == "admit" else "E3")
 	# Ordinary NPC combat: no automatic opponent 1HP and no invitation while wounded.

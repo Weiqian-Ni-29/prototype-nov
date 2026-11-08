@@ -210,28 +210,59 @@ func test_combat() -> void:
 
 func test_environment() -> void:
 	var r = fresh()
-	var source = "0,0"
-	var neighbor = "1,0"
-	var further = "2,0"
-	for k in [source, neighbor, further]:
-		r.data.tiles[k].terrain = "forest"
-		r.data.tiles[k].burning = false
-		r.data.tiles[k].wet_until = 0
-	expect(r.apply_environment(source, "ignite"), "Ignite dry forest")
-	var fuel = r.data.tiles[source].fuel
-	# Choose a deterministic sunny next day to inspect the propagation boundary.
-	for seed_value in range(100):
-		r.rng.seed = seed_value
-		var probe = RandomNumberGenerator.new()
-		probe.state = r.rng.state
-		if probe.randf() >= 0.28:
-			break
-	r.end_day()
-	expect(r.data.tiles[source].fuel == fuel - 1, "Fuel consumed once per day")
-	expect(r.data.tiles[neighbor].burning, "Six-neighbor fire propagation")
-	expect(not r.data.tiles[further].burning, "New ignition does not chain in same day")
-	expect(r.apply_environment(neighbor, "wet"), "Water extinguishes current tile")
-	expect(not r.data.tiles[neighbor].burning, "Extinguished tile persists")
-	var before = r.data.tiles[neighbor].wet_until
-	expect(not r.apply_environment(neighbor, "ignite"), "Wet tile cannot ignite")
-	expect(r.data.tiles[neighbor].wet_until == before, "Rejected environment action has no mutation")
+	var position = r.data.start
+	r.data.weather = "sun"
+	r.data.tiles[position].terrain = "forest"
+	r.actor("hero").skill = "ember"
+	fixture_ally(r, "tide", position)
+	var b = encounter(r, ["lamp_boss"], ["hero", "tide"])
+	var tiles_before = r.data.tiles.duplicate(true)
+	b.current = "hero"
+	expect(b.act("ember", "enemy_0").ok and b.field_view().burning, "Fire skill ignites the current forest battle")
+	expect(is_equal_approx(b.environment_multiplier("fire", "normal"), 1.1), "Burning boosts fire skills")
+	b.current = "tide"
+	expect(b.act("torrent", "enemy_0").ok and b.field_view().wet and b.field_view().burning,
+		"Water wets the battlefield without extinguishing an active fire")
+	expect(is_equal_approx(b.environment_multiplier("fire", "normal"), 1.1 * 0.8), "Wet field weakens fire skills")
+	var ally_hp: int = r.actor("hero").hp
+	var enemy_hp: int = b.unit("enemy_0").hp
+	b.clock = b.fire_tick
+	b._settle_fire()
+	expect(r.actor("hero").hp == ally_hp - ceili(r.actor("hero").hp_max * 0.08)
+		and b.unit("enemy_0").hp == enemy_hp - ceili(b.unit("enemy_0").hp_max * 0.08),
+		"Fire still ticks on both sides of the wet battlefield")
+	var checkpoint = Run.new()
+	var loaded = checkpoint.load_game(r.save_path)
+	expect(loaded.ok, "The battle checkpoint still loads: " + str(loaded))
+	var saved_tile: Dictionary = checkpoint.data.get("tiles", {}).get(position, {})
+	expect(saved_tile.get("terrain") == "forest" and not saved_tile.has("burning") and not saved_tile.has("wet_until"),
+		"The battle checkpoint has no field effects")
+	expect(b.retreat().ok and r.data.tiles == tiles_before, "Retreat leaves the entire map intact")
+	expect(b.begin(r, {"position": position, "origin": position, "movers": [], "npc": "", "ambush": false}, ["hero", "tide"]).ok
+		and not b.field_view().burning and not b.field_view().wet, "A rematch starts with a fresh battlefield")
+	b.current = "hero"
+	expect(b.act("ember", "enemy_0").ok and b.field_view().burning, "The forest can ignite again within a new battle")
+	b.unit("enemy_0").hp = 0
+	b.check_end()
+	var cleared_tile = tiles_before[position].duplicate(true)
+	cleared_tile.enemies = []
+	tiles_before[position] = cleared_tile
+	expect(b.outcome == "victory" and r.data.tiles == tiles_before, "Victory only clears the encounter on the map")
+	var hp_after: int = r.actor("hero").hp
+	expect(r.end_day().ok and r.data.tiles == tiles_before and r.actor("hero").hp == hp_after,
+		"No post-battle fire damage, spreading or terrain changes during day settlement")
+
+	var legacy = r.data.tiles[position]
+	legacy.base_terrain = "forest"
+	legacy.terrain = "scorched"
+	legacy.burning = false
+	legacy.fuel = 0
+	legacy.wet_until = r.data.day + 1
+	r.data.flags.player_ignitions = {position: "hero"}
+	r.data.knowledge.hero.ignitions = [position]
+	expect(r.save_game().ok and checkpoint.load_game(r.save_path).ok, "Old save with a burned forest still loads")
+	var restored = checkpoint.data.tiles[position]
+	expect(restored.terrain == "forest" and not restored.has("burning") and not restored.has("fuel") and not restored.has("wet_until"),
+		"Loading an old save restores the terrain and strips map fire state")
+	expect(not checkpoint.data.flags.has("player_ignitions") and not checkpoint.data.knowledge.hero.has("ignitions"),
+		"Old map ignition records are removed")

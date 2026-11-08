@@ -209,7 +209,7 @@ func _node_access(id: String, cost: int) -> Dictionary:
 	if not check.ok:
 		return check
 	var tile = data.tiles[actor(id).position]
-	if tile.burning or not tile.enemies.is_empty():
+	if not tile.enemies.is_empty():
 		return fail("需要先处理这个地块的危险。")
 	return success()
 
@@ -219,7 +219,7 @@ func trade(id: String, item: String, buying: bool) -> Dictionary:
 		return check
 	var trader = actor(id)
 	var node = node_at(trader.position)
-	if node.get("kind") != "trade" or (data.tiles[trader.position].terrain == "scorched" and not Nodes.survives_fire(node)):
+	if node.get("kind") != "trade":
 		return fail("这里的商摊无法交易。")
 	if not Nodes.PRICES.has(item):
 		return fail("商摊只收普通补给和装备。")
@@ -268,8 +268,6 @@ func use_node(id: String, option: String) -> Dictionary:
 		["supply", "collect"]:
 			return collect(id)
 		["rest", "hp"], ["rest", "mp"]:
-			if data.tiles[cell].terrain == "scorched":
-				return fail("火烧过这里，只能查看还有什么可以带走。")
 			var maximum = option + "_max"
 			var percent = recovery_percent(cell, option)
 			var recovered: Array[String] = []
@@ -284,7 +282,7 @@ func use_node(id: String, option: String) -> Dictionary:
 			message = "%s恢复 · %s" % ["生命" if option == "hp" else "魔力", "、".join(recovered)]
 		["rest", "pack"], ["cache", "search"]:
 			var relic = ""
-			if option == "search" and relic_sites.has(cell) and data.tiles[cell].terrain != "scorched":
+			if option == "search" and relic_sites.has(cell):
 				relic = str(investigate_relic(id).get("relic", ""))
 			if relic.is_empty():
 				var item: String = node.item
@@ -293,8 +291,6 @@ func use_node(id: String, option: String) -> Dictionary:
 			else:
 				message = "发现遗器「%s」。" % Relics.DATA[relic].name
 		["choice", "work"]:
-			if data.tiles[cell].terrain == "scorched" and not Nodes.survives_fire(node):
-				return fail("原来的委托已无法完成。")
 			data.lamp_coins += int(node.coins)
 			message = "%s 完成委托，得到 %d 灯铢。" % [visitor.name, node.coins]
 		["clue", "record"]:
@@ -533,7 +529,7 @@ func collect(id: String) -> Dictionary:
 		return check
 	var a = actor(id)
 	var t = data.tiles[a.position]
-	if t.burning or not t.enemies.is_empty() or t.quantity <= 0:
+	if not t.enemies.is_empty() or t.quantity <= 0:
 		return fail("这里没有安全可采集的道具。")
 	a.ap -= 1
 	var amount = int(t.quantity) + (1 if id == "cen" and t.terrain == "forest" else 0)
@@ -543,54 +539,6 @@ func collect(id: String) -> Dictionary:
 	note(message)
 	changed.emit()
 	return {"ok": true, "message": message}
-
-func environmental_skill(id: String, effect: String) -> Dictionary:
-	var check = _map_action(id, 1)
-	if not check.ok:
-		return check
-	var a = actor(id)
-	var valid = (effect == "ignite" and a.skill == "ember") or (effect == "wet" and a.skill == "torrent")
-	if not valid or a.mp < 8:
-		return fail("角色没有对应环境技能，或魔力不足（8 MP）。")
-	var t = data.tiles[a.position]
-	if not t.enemies.is_empty():
-		return fail("需先处理此处敌人。")
-	if not apply_environment(a.position, effect):
-		return fail("当前环境无法产生有效变化，不消耗资源。")
-	if effect == "ignite":
-		record_ignition(id, a.position)
-	a.ap -= 1
-	a.mp -= 8
-	note("%s 改变了当前地块的环境。" % a.name)
-	changed.emit()
-	return success()
-
-func apply_environment(position: String, effect: String) -> bool:
-	var t = data.tiles[position]
-	if effect == "ignite":
-		if t.terrain != "forest" or t.burning or data.weather == "rain" or t.wet_until > data.day:
-			return false
-		t.burning = true
-		return true
-	if effect == "wet":
-		if not t.burning and t.wet_until >= int(data.day) + 2:
-			return false
-		t.burning = false
-		t.wet_until = int(data.day) + 2
-		return true
-	return false
-
-func record_ignition(source_id: String, position: String) -> void:
-	if not data.flags.has("player_ignitions"):
-		data.flags.player_ignitions = {}
-	data.flags.player_ignitions[position] = source_id
-	for id in same_cell(position, true):
-		if not data.knowledge.has(id):
-			data.knowledge[id] = {}
-		if not data.knowledge[id].has("ignitions"):
-			data.knowledge[id].ignitions = []
-		if position not in data.knowledge[id].ignitions:
-			data.knowledge[id].ignitions.append(position)
 
 func heal_skill(user_id: String, target_id: String) -> Dictionary:
 	var check = _map_action(user_id, 1)
@@ -613,39 +561,12 @@ func end_day() -> Dictionary:
 	if data.status != "exploring" or not data.pending_battle.is_empty():
 		return fail("先结束当前遭遇。")
 	var new_day = int(data.day) + 1
-	var snapshot = data.tiles.duplicate(true)
 	data.weather = "rain" if rng.randf() < rain_chance() else "sun"
 	data.day = new_day
-	var ignitions = {}
-	for k in snapshot:
-		var old = snapshot[k]
-		var current = data.tiles[k]
-		if old.burning:
-			if data.weather == "rain":
-				current.burning = false
-				current.wet_until = new_day + 1
-				continue
-			else:
-				current.fuel = maxi(0, int(old.fuel) - 1)
-				for neighbor in Hex.neighbors(k, snapshot):
-					var next = snapshot[neighbor]
-					if next.terrain == "forest" and not next.burning and int(next.wet_until) <= new_day:
-						ignitions[neighbor] = true
-			if current.fuel == 0:
-				current.terrain = "scorched"
-				current.burning = false
-				current.quantity = 0
-	for k in ignitions:
-		if data.tiles[k].terrain == "forest":
-			data.tiles[k].burning = true
 	for id in joined_ids():
 		var a = actor(id)
 		a.ap = a.ap_max
 		a.ap_initialized_day = new_day
-		if a.hp <= 0:
-			continue
-		if snapshot[a.position].burning and data.weather != "rain":
-			a.hp = maxi(0, int(a.hp) - ceili(a.hp_max * 0.1))
 	data.last_day_settled = new_day - 1
 	check_global_failure()
 	note("第 %d 天，%s。精力回到各自上限。" % [data.day, "雨" if data.weather == "rain" else "晴"])
@@ -736,6 +657,7 @@ func load_game(path: String = "") -> Dictionary:
 	if invalid != "":
 		return fail("存档内容无效：" + invalid + "。旧文件没有被覆盖。")
 	data = loaded
+	_remove_legacy_map_effects()
 	_ensure_squads()
 	if not data.has("visited"):
 		_restore_legacy_visits()
@@ -746,6 +668,19 @@ func load_game(path: String = "") -> Dictionary:
 	rng.state = int(data.rng_state)
 	changed.emit()
 	return success()
+
+func _remove_legacy_map_effects() -> void:
+	# Saves made before field effects moved into battle may contain a burned forest.
+	for tile in data.tiles.values():
+		if tile.terrain == "scorched":
+			tile.terrain = tile.base_terrain
+		tile.erase("burning")
+		tile.erase("fuel")
+		tile.erase("wet_until")
+	data.flags.erase("player_ignitions")
+	for facts in data.knowledge.values():
+		if facts is Dictionary:
+			facts.erase("ignitions")
 
 func _restore_legacy_visits() -> void:
 	# Previous saves stored sight, but no route history. Recover only evidence of arrival.
@@ -820,9 +755,10 @@ func _validate_save(loaded: Dictionary) -> String:
 		if coordinate.search(str(k)) == null or Hex.distance(Hex.coord(k), Vector2i.ZERO) > 8:
 			return "六边形坐标无效"
 		var tile = loaded.tiles[k]
-		if not tile is Dictionary or not tile.has_all(["terrain", "base_terrain", "burning", "fuel", "wet_until", "enemies", "site", "npc", "resource", "quantity", "height", "hidden", "discovered_enemy"]):
+		if not tile is Dictionary or not tile.has_all(["terrain", "base_terrain", "enemies", "site", "npc", "resource", "quantity", "height", "hidden", "discovered_enemy"]):
 			return "地块字段不完整"
-		if not Catalog.TERRAIN.has(tile.terrain) or not Catalog.TERRAIN.has(tile.base_terrain) or not tile.enemies is Array:
+		var legacy_forest = tile.terrain == "scorched" and tile.base_terrain == "forest"
+		if (not Catalog.TERRAIN.has(tile.terrain) and not legacy_forest) or not Catalog.TERRAIN.has(tile.base_terrain) or not tile.enemies is Array:
 			return "地形或遭遇无效"
 		if tile.terrain == "lake" and (tile.site != "" or tile.npc != "" or not tile.enemies.is_empty() or tile.quantity > 0 or loaded.get("visited", {}).has(k)):
 			return "湖面包含陆地事件"

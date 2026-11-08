@@ -13,7 +13,6 @@ const TERRAIN = {
 	"ruins": {"name": "遗迹", "cost": 1, "color": "aba28b"},
 	"desert": {"name": "沙漠", "cost": 1, "color": "cfb578"},
 	"swamp": {"name": "沼泽", "cost": 2, "color": "657c72"},
-	"scorched": {"name": "焦土", "cost": 1, "color": "605951"},
 	"lake": {"name": "湖泊", "cost": 0, "color": "397d84"},
 }
 const PROFESSIONS = {
@@ -60,7 +59,7 @@ const ENEMIES = {
 	"spider": {"name": "苔伏蛛", "hp": 48, "attack": 16, "defense": 2, "speed": 125, "color": "5c7c58", "element": "normal", "role": "伏击 · 减速", "skill": "slow"},
 	"lurker": {"name": "淤泥潜伏者", "hp": 95, "attack": 19, "defense": 8, "speed": 75, "color": "537b78", "element": "water", "role": "潮湿 · 重甲", "skill": "wet"},
 	"furnace": {"name": "炉心守卒", "hp": 69, "attack": 23, "defense": 5, "speed": 88, "color": "c17b50", "element": "fire", "role": "点燃场地", "skill": "ignite"},
-	"canal": {"name": "渠台守卫", "hp": 76, "attack": 21, "defense": 6, "speed": 90, "color": "699da4", "element": "water", "role": "水击 · 灭火", "skill": "wet"},
+	"canal": {"name": "渠台守卫", "hp": 76, "attack": 21, "defense": 6, "speed": 90, "color": "699da4", "element": "water", "role": "水击 · 潮湿", "skill": "wet"},
 	"swarm": {"name": "巢鸣蜂群", "hp": 31, "attack": 12, "defense": 1, "speed": 151, "color": "d8b76b", "element": "normal", "role": "高速 · 脆弱", "skill": "attack"},
 	"apothecary": {"name": "拾荒药师", "hp": 56, "attack": 13, "defense": 3, "speed": 105, "color": "8b9d7b", "element": "normal", "role": "治疗同伴", "skill": "heal"},
 	"hunter_elite": {"name": "苔冠猎伏者", "hp": 160, "attack": 29, "defense": 7, "speed": 129, "color": "5e7751", "element": "normal", "role": "精英 · 伏击压制", "skill": "slow"},
@@ -87,10 +86,10 @@ static func skill_description(id: String) -> String:
 	if skill.has("slow"):
 		parts.append("减速 2 次行动")
 	if skill.get("environment", "") == "ignite":
-		parts.append("点燃当前干燥森林，双方承受火伤")
+		parts.append("晴天可点燃干燥的森林战场，双方承受持续火伤")
 	elif skill.get("environment", "") == "wet":
-		parts.append("当前格灭火并浸湿")
+		parts.append("使本场战地潮湿，降低火系技能伤害")
 	return " · ".join(parts)
 
 static func passive_description(id: String) -> String:
-	return {"hero": "职业决定各自的生命、魔力、机动与技能。", "cen": "未烧毁森林采集额外 +1。", "lorne": "山地移动只需 1 精力。", "eve": "同地可行动时，休整恢复额外 +10 个百分点。", "grit": "辨识附近已发现敌人；在场时令低于 35% HP 的队友减伤 20%。", "ember": "可花 1 精力 / 8 MP 点燃当前干燥森林。", "tide": "可花 1 精力 / 8 MP 对当前地块灭火或浸湿。"}.get(id, "")
+	return {"hero": "职业决定各自的生命、魔力、机动与技能。", "cen": "森林采集额外 +1。", "lorne": "山地移动只需 1 精力。", "eve": "同地可行动时，休整恢复额外 +10 个百分点。", "grit": "辨识附近已发现敌人；在场时令低于 35% HP 的队友减伤 20%。", "ember": "火术可在晴天点燃干燥的森林战场。", "tide": "水术可使当前战场潮湿，减弱火系技能伤害。"}.get(id, "")

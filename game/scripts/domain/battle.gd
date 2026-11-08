@@ -12,6 +12,8 @@ var next_time: Dictionary = {}
 var queue: Array = []
 var clock = 0.0
 var fire_tick = 10.0
+var burning = false
+var wet = false
 var current = ""
 var outcome = ""
 var auto_mode = false
@@ -50,6 +52,8 @@ func begin(expedition: RefCounted, encounter: Dictionary, formation: Array) -> D
 	event_serial = 0
 	clock = 0.0
 	fire_tick = 10.0
+	burning = false
+	wet = false
 	outcome = ""
 	current = ""
 	auto_mode = false
@@ -172,7 +176,7 @@ func act(skill_id: String, target_id: String = "") -> Dictionary:
 
 func _cast(id: String, skill_id: String, target_id: String, ultimate: bool = false) -> Dictionary:
 	var skill = Catalog.SKILLS[skill_id]
-	var environment_before = _environment_view()
+	var environment_before = field_view()
 	var results: Array = []
 	var effects: Array = []
 	if skill.get("healing",false): effects.append("heal")
@@ -220,9 +224,8 @@ func _cast(id: String, skill_id: String, target_id: String, ultimate: bool = fal
 			_log("%s 获得护盾。" % t.name)
 		results.append(_visual_result(target,before))
 	if skill.has("environment"):
-		if run.apply_environment(position, skill.environment) and skill.environment == "ignite":
-			run.record_ignition(id, position)
-	_emit_event({"actor": id, "targets": targets, "kind": "ultimate" if ultimate else "cast" if skill_id != "attack" else "attack", "element": skill.element, "skill": skill.name, "skill_id":skill_id,"effects":effects,"results":results,"environment_before":environment_before,"environment_after":_environment_view()})
+		_apply_field_effect(skill.environment)
+	_emit_event({"actor": id, "targets": targets, "kind": "ultimate" if ultimate else "cast" if skill_id != "attack" else "attack", "element": skill.element, "skill": skill.name, "skill_id":skill_id,"effects":effects,"results":results,"environment_before":environment_before,"environment_after":field_view()})
 	return {"ok": true}
 
 func damage_preview(source: String, target: String, skill_id: String) -> int:
@@ -246,9 +249,9 @@ func environment_multiplier(element: String, target_element: String) -> float:
 			multiplier *= 1.1
 		elif element == "fire":
 			multiplier *= 0.8
-	if t.burning and element == "fire":
+	if burning and element == "fire":
 		multiplier *= 1.1
-	if t.wet_until > run.data.day and element == "fire":
+	if wet and element == "fire":
 		multiplier *= 0.8
 	return clampf(multiplier, 0.5, 1.5)
 
@@ -367,11 +370,11 @@ func _enemy_action(id: String) -> void:
 			_enemy_hit(id, target, 1.0)
 			unit(target).slow = 2
 		"ignite", "wet":
-			var environment_before = _environment_view()
+			var environment_before = field_view()
 			_enemy_hit(id, target, 1.15, "fire" if a.skill == "ignite" else "water")
-			run.apply_environment(position, a.skill)
+			_apply_field_effect(a.skill)
 			events[-1].environment_before = environment_before
-			events[-1].environment_after = _environment_view()
+			events[-1].environment_after = field_view()
 		_:
 			_enemy_hit(id, target, 1.0)
 	_complete_action(id)
@@ -390,9 +393,16 @@ func _visual_result(id: String, before: Dictionary) -> Dictionary:
 	var after = _unit_view(unit(id))
 	return {"target":id,"hp_before":before.hp,"hp_after":after.hp,"shield_before":before.shield,"shield_after":after.shield,"damage":maxi(0,before.hp-after.hp),"healing":maxi(0,after.hp-before.hp),"shield_gain":maxi(0,after.shield-before.shield),"absorbed":maxi(0,before.shield-after.shield),"mp_gain":maxi(0,after.mp-before.mp)}
 
-func _environment_view() -> Dictionary:
-	var tile = run.data.tiles[position]
-	return {"terrain":tile.terrain,"burning":tile.burning,"wet_until":tile.wet_until}
+func field_view() -> Dictionary:
+	return {"terrain": run.data.tiles[position].terrain, "burning": burning, "wet": wet}
+
+func _apply_field_effect(effect: String) -> void:
+	match effect:
+		"ignite":
+			if run.data.tiles[position].terrain == "forest" and run.data.weather != "rain" and not wet:
+				burning = true
+		"wet":
+			wet = true
 
 func _emit_event(event: Dictionary) -> void:
 	event_serial += 1
@@ -423,7 +433,7 @@ func _complete_action(id: String) -> void:
 func _settle_fire() -> void:
 	while clock >= fire_tick:
 		fire_tick += 10.0
-		if not run.data.tiles[position].burning:
+		if not burning:
 			continue
 		# Simultaneous environmental damage; do not check victory between victims.
 		var results: Array = []
@@ -433,7 +443,7 @@ func _settle_fire() -> void:
 			_hurt(id, ceili(unit(id).hp_max * 0.08))
 			results.append(_visual_result(id,before))
 		_emit_event({"actor":"","targets":victims,"kind":"environment","skill_id":"fire_tick","element":"fire","results":results})
-		_log("火场灼伤在场双方；森林燃料仍按天消耗。")
+		_log("火场灼伤在场双方。")
 
 func check_end() -> bool:
 	if outcome != "":

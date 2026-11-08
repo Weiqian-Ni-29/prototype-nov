@@ -197,7 +197,7 @@ func forest_battle() -> void:
 		steps += 1
 	expect(b.outcome == "victory", "Unmodified full-party combat wins through normal combat rules")
 	expect(b.paid.size() == 4 and r.data.tiles[goal].enemies.is_empty(), "Exactly four deployed, encounter cleared once")
-	expect(r.data.tiles[goal].terrain == "forest" and not r.data.tiles[goal].burning, "Actual strategy preserved forest")
+	expect(r.data.tiles[goal].terrain == "forest", "Actual strategy preserved forest")
 
 func failure_journey() -> void:
 	r = Run.new()

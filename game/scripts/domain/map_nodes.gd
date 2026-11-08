@@ -34,9 +34,6 @@ static func story(node: Dictionary) -> Dictionary:
 static func label(kind: String) -> String:
 	return LABELS.get(kind, "")
 
-static func survives_fire(node: Dictionary) -> bool:
-	return story(node).has("scorched")
-
 static func is_elite(types: Array) -> bool:
 	return types.any(func(type): return str(type).ends_with("_elite") or type == "lamp_boss")
 

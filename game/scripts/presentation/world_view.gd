@@ -247,7 +247,7 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 		for next in Hex.neighbors(id, current_tiles):
 			borders.append(visible_layout.get(next, []))
 		var site: String = t.site if visited else ""
-		var signature = JSON.stringify([visible_layout[id], borders, t.wet_until > run.data.day, site, t.burning])
+		var signature = JSON.stringify([visible_layout[id], borders, site])
 		if tile_signatures.get(id, "") != signature:
 			dirty_details[Board.chunk_for(id)] = true
 			if tile_nodes.has(id):
@@ -256,9 +256,7 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 			var node = Node3D.new()
 			map_root.add_child(node)
 			node.position = Hex.world(id)
-			var detail = t.duplicate()
-			detail.current_day = run.data.day
-			Terrain.board_details(node, detail, id, visual_seed, board_surface)
+			Terrain.board_details(node, t, id, visual_seed, board_surface)
 			if not site.is_empty():
 				var height = board_surface.height_at(node.position)
 				_label(node, _site_name(site), Vector3(0, height + 1.03, 0), Color("eee0b8"), 0.0041)
@@ -729,21 +727,16 @@ func begin_battle(run: RefCounted, combat: RefCounted) -> void:
 	battle_stage = null
 	battle_dolls.clear()
 	battle_root.visible = true
-	_draw_battle_stage(run.data.tiles[combat.position],run.data.day,combat.position)
+	_draw_battle_stage(combat.field_view(), combat.position)
 	_update_camera()
 	refresh_battle(run, combat)
 
-func _draw_battle_stage(definition: Dictionary, day: int, position: String) -> void:
-	environment.background_color = {"plains":Color("526757"),"forest":Color("354b42"),"mountain":Color("657078"),"ruins":Color("64695b"),"desert":Color("9b8965"),"swamp":Color("405c60"),"scorched":Color("4f5652")}.get(str(definition.terrain),Color("526757"))
+func _draw_battle_stage(definition: Dictionary, position: String) -> void:
+	environment.background_color = {"plains":Color("526757"),"forest":Color("354b42"),"mountain":Color("657078"),"ruins":Color("64695b"),"desert":Color("9b8965"),"swamp":Color("405c60")}.get(str(definition.terrain),Color("526757"))
 	if is_instance_valid(battle_stage): battle_stage.free()
 	battle_stage = Node3D.new()
 	battle_root.add_child(battle_stage)
 	var tile = definition.duplicate(true)
-	tile.current_day = day
-	tile.height = 0.0
-	tile.enemies = []
-	tile.npc = ""
-	tile.quantity = 0
 	tile.ground_only = true
 	var stage = Terrain.tile(battle_stage, tile, hash(position))
 	stage.scale = Vector3(6.5, 1.0, 4.5)
@@ -760,11 +753,10 @@ func _draw_battle_stage(definition: Dictionary, day: int, position: String) -> v
 		Terrain.fire(fire_ring)
 	battle_root.set_meta("environment_signature", _battle_signature(tile))
 
-func refresh_battle(run: RefCounted, combat: RefCounted) -> void:
-	var tile = run.data.tiles[combat.position].duplicate(true)
-	tile.current_day = run.data.day
+func refresh_battle(_run: RefCounted, combat: RefCounted) -> void:
+	var tile = combat.field_view()
 	if not is_animating() and battle_root.get_meta("environment_signature", "") != _battle_signature(tile):
-		_draw_battle_stage(tile,run.data.day,combat.position)
+		_draw_battle_stage(tile, combat.position)
 	var ids = combat.active.duplicate()
 	ids.append_array(combat.enemies.keys())
 	if is_animating():
@@ -828,18 +820,15 @@ func sync_battle_states() -> void:
 	refresh_battle(battle_run,battle_combat)
 	for id in battle_dolls:
 		battle_dolls[id].set_down(battle_combat.unit(id).hp<=0)
-	var tile = battle_run.data.tiles[battle_combat.position].duplicate(true)
-	tile.current_day = battle_run.data.day
-	if battle_root.get_meta("environment_signature", "") != _battle_signature(tile):
-		_draw_battle_stage(tile,battle_run.data.day,battle_combat.position)
+	_update_battle_stage(battle_combat.field_view())
 
 func sync_event_environment(event: Dictionary) -> void:
-	if not event.has("environment_after") or battle_run==null: return
-	var tile = battle_run.data.tiles[battle_combat.position].duplicate(true)
-	tile.merge(event.environment_after,true)
-	tile.current_day = battle_run.data.day
-	if battle_root.get_meta("environment_signature", "") != _battle_signature(tile):
-		_draw_battle_stage(tile,battle_run.data.day,battle_combat.position)
+	if event.has("environment_after") and battle_combat != null:
+		_update_battle_stage(event.environment_after)
+
+func _update_battle_stage(field: Dictionary) -> void:
+	if battle_root.get_meta("environment_signature", "") != _battle_signature(field):
+		_draw_battle_stage(field, battle_combat.position)
 
 func end_battle() -> void:
 	presenter.cancel()
@@ -862,7 +851,7 @@ func impact_camera(strength: float) -> void:
 	camera_impulse = maxf(camera_impulse,strength)
 
 func _battle_signature(tile: Dictionary) -> String:
-	return "%s:%s:%s" % [tile.terrain, tile.burning, int(tile.wet_until) > int(tile.current_day)]
+	return "%s:%s:%s" % [tile.terrain, tile.burning, tile.wet]
 
 static func _site_name(site: String) -> String:
 	return {"start": "断桥废棚", "exit": "归航站", "inn": "白栎旧驿站", "home": "林边人家", "record": "旧调度柜", "sign": "山路旧牌", "forest": "林缘捕网", "herb": "药箱树荫", "track": "旧兽径营地", "clear": "清障营地", "water": "水文台"}.get(site, "路途")
