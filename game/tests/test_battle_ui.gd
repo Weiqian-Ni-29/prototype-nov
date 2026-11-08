@@ -189,9 +189,22 @@ func execute() -> void:
 	await press("棘背兽 2号")
 	expect(game.selected_target == "enemy_2" and find_button(game.ui, "◆ 棘背兽 2号") != null
 		and find_button(game.ui, "棘背兽 1号") != null, "Same-name enemies can be distinguished and selected")
-	for command in ["普攻", "巡路连射", "防守", "道具", "换人", "自动 OFF", "自动保林", "撤退", "0% · 归途号令"]:
+	for command in ["普攻", "巡路连射", "防守", "道具", "换人", "自动战斗", "撤退", "0% · 归途号令"]:
 		var button = find_button(game.ui, command)
 		expect(button != null and not button.tooltip_text.is_empty(), "Command has hover help: " + command)
+	var auto = find_button(game.ui, "自动战斗")
+	var items = find_button(game.ui, "道具")
+	var guard = find_button(game.ui, "防守")
+	var enemy_card = game.ui.find_child("EnemyCard_enemy_2", true, false) as Control
+	expect(auto.text == "自动战斗" and auto.toggle_mode and not auto.button_pressed,
+		"Automatic battle uses a fixed label and starts unhighlighted")
+	expect(auto.get_parent() == items.get_parent() and auto.position.y == items.position.y
+		and auto.get_global_rect().position.x > root.get_visible_rect().get_center().x
+		and items.get_global_rect().end.x < enemy_card.get_global_rect().position.x
+		and items.get_global_rect().end.y < guard.get_global_rect().position.y,
+		"Automatic battle and items share the upper-right row beside the enemy lineup")
+	expect(find_button(game.ui, "自动保林") == null and find_button(game.ui, "自动可点火") == null,
+		"Battle has no separate ignition policy button")
 	var skill = find_button(game.ui, "巡路连射")
 	expect(skill != null and "8 MP" in skill.tooltip_text and "敌方单体" in skill.tooltip_text
 		and "预计基础伤害" in skill.tooltip_text, "Skill hover help explains cost, target and damage preview")
@@ -218,10 +231,12 @@ func execute() -> void:
 	await press("洛恩")
 	expect("lorne" in b.active and "hero" not in b.active and run.actor("lorne").ap == lorne_ap - 2, "Reserve UI swaps same-cell character and charges once")
 	expect(b.active.size() == 4, "Swap never exceeds four active fighters")
-	await press("自动 OFF")
-	expect(b.auto_mode, "Automatic mode button changes decisions only")
-	await press("自动保林")
-	expect(b.allow_auto_ignite, "Automatic environment policy is explicit and controllable")
+	await press("自动战斗")
+	expect(b.auto_mode and find_button(game.ui, "自动战斗").button_pressed,
+		"Automatic mode stays highlighted after the battle UI refreshes")
+	await press("自动战斗")
+	expect(not b.auto_mode and not find_button(game.ui, "自动战斗").button_pressed,
+		"Turning off automatic mode clears the highlight")
 	await press("撤退")
 	await press("确认")
 	expect(game.combat == null and run.data.status == "exploring", "Retreat UI returns to map")
@@ -236,5 +251,5 @@ func execute() -> void:
 	await create_timer(0.25).timeout
 	game.queue_free()
 	await create_timer(0.05).timeout
-	print("BATTLE UI: %d checks, failed=%s (ultimate, item, reserve, auto policy, retreat, checkpoint)" % [checks, failed])
+	print("BATTLE UI: %d checks, failed=%s (ultimate, item, reserve, auto toggle, retreat, checkpoint)" % [checks, failed])
 	quit(1 if failed else 0)
