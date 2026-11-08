@@ -1,0 +1,111 @@
+extends RefCounted
+## Node placement uses a separate seed stream from terrain, combat and weather.
+const Hex = preload("res://scripts/domain/hex_map.gd")
+const STARTING_COINS = 8
+const REST_HP = 25
+const REST_MP = 35
+const PRICES = {"salve": 6, "ether": 7, "trail_food": 3, "trail_blade": 12, "padded_coat": 15, "lamp_charm": 18}
+const GEAR = ["trail_blade", "padded_coat", "lamp_charm"]
+const LABELS = {
+	"story": "地点", "trade": "交易", "supply": "补给", "rest": "歇脚",
+	"choice": "委托", "clue": "线索", "cache": "寻宝", "battle": "遭遇", "elite": "险地",
+}
+static var events: Dictionary = {}
+static var pools: Dictionary = {}
+
+static func _load_events() -> void:
+	if not events.is_empty():
+		return
+	var source = JSON.parse_string(FileAccess.get_file_as_string("res://assets/story/node_events.json"))
+	assert(source is Dictionary, "Map node story catalog is missing or invalid")
+	for kind in source:
+		for event in source[kind]:
+			events[event.id] = event
+			for terrain in event.terrains:
+				var key: String = kind + ":" + terrain
+				if not pools.has(key):
+					pools[key] = []
+				pools[key].append(event.id)
+
+static func story(node: Dictionary) -> Dictionary:
+	_load_events()
+	return events.get(node.get("event", ""), {})
+
+static func label(kind: String) -> String:
+	return LABELS.get(kind, "")
+
+static func survives_fire(node: Dictionary) -> bool:
+	return story(node).has("scorched")
+
+static func is_elite(types: Array) -> bool:
+	return types.any(func(type): return str(type).ends_with("_elite") or type == "lamp_boss")
+
+static func battle_coins(seed_value: int, cell: String, elite: bool) -> int:
+	var roller = RandomNumberGenerator.new()
+	roller.seed = hash("battle-coins:%d:%s" % [seed_value, cell])
+	return roller.randi_range(8, 12) if elite else roller.randi_range(4, 7)
+
+static func _kind(tile: Dictionary, has_relic: bool, defeated: bool, roll: int) -> String:
+	if not tile.site.is_empty():
+		return "story"
+	if not tile.enemies.is_empty() or defeated:
+		return "elite" if is_elite(tile.enemies) else "battle"
+	if has_relic:
+		return "cache"
+	if not tile.resource.is_empty():
+		return "supply"
+	if roll < 7:
+		return "trade"
+	if roll < 19:
+		return "rest"
+	if roll < 27:
+		return "cache"
+	if roll < 62:
+		return "choice"
+	return "clue"
+
+static func generate(tiles: Dictionary, seed_value: int, relic_sites: Dictionary, rewards: Dictionary, relic_checks: Dictionary) -> Dictionary:
+	_load_events()
+	var nodes = {}
+	var use_counts = {}
+	var cells = tiles.keys()
+	cells.sort()
+	var roller = RandomNumberGenerator.new()
+	for cell in cells:
+		if not Hex.is_land(tiles, cell):
+			continue
+		roller.seed = hash("node:%d:%s" % [seed_value, cell])
+		var tile = tiles[cell]
+		var defeated = rewards.has(cell + ":")
+		var kind = _kind(tile, relic_sites.has(cell), defeated, roller.randi_range(0, 99))
+		var node = {"kind": kind, "event": "", "result": ""}
+		nodes[cell] = node
+		if kind == "story":
+			continue
+		# Use the underlying biome for placement. Fire can change how a node
+		# reads and which actions are possible, without moving or rerolling it.
+		var biome: String = tile.base_terrain
+		var candidates: Array = pools.get(kind + ":" + biome, [])
+		if not candidates.is_empty():
+			var fewest = candidates.map(func(id): return int(use_counts.get(id, 0))).min()
+			var least_used = candidates.filter(func(id): return int(use_counts.get(id, 0)) == fewest)
+			node.event = least_used[roller.randi_range(0, least_used.size() - 1)]
+			use_counts[node.event] = int(fewest) + 1
+		if kind == "trade":
+			var stock = {"salve": 1, "ether": 1, "trail_food": 1}
+			var local_supply = "ether" if biome in ["swamp", "ruins", "desert"] else "salve"
+			stock[local_supply] += roller.randi_range(0, 1)
+			stock[GEAR[roller.randi_range(0, GEAR.size() - 1)]] = 1
+			node.stock = stock
+		elif kind == "rest":
+			node.item = "ether" if biome in ["swamp", "ruins", "desert"] else "salve"
+		elif kind == "choice":
+			node.coins = roller.randi_range(3, 5)
+		elif kind == "cache":
+			var items = GEAR + ["salve", "ether"]
+			node.item = items[roller.randi_range(0, items.size() - 1)]
+			if relic_checks.has("site:" + cell):
+				node.result = "search"
+		elif kind in ["battle", "elite"]:
+			node.coins = battle_coins(seed_value, cell, kind == "elite")
+	return nodes

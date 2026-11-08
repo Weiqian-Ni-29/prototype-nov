@@ -139,7 +139,7 @@ func check_exploration() -> void:
 	game._start_new()
 	var site = ""
 	for id in run.relic_sites:
-		if run.relic_sites[id] == "telescope" and roll(int(run.data.seed), "site:" + id) < 0.25:
+		if run.relic_sites[id] == "telescope" and run.node_at(id).kind == "cache" and roll(int(run.data.seed), "site:" + id) < 0.25:
 			site = id
 			break
 	if site.is_empty():
@@ -148,7 +148,7 @@ func check_exploration() -> void:
 			game.chosen_seed = str(seed_value)
 			game._start_new()
 			for id in run.relic_sites:
-				if run.relic_sites[id] == "telescope" and roll(seed_value, "site:" + id) < 0.25:
+				if run.relic_sites[id] == "telescope" and run.node_at(id).kind == "cache" and roll(seed_value, "site:" + id) < 0.25:
 					site = id
 					break
 			if not site.is_empty():
@@ -164,7 +164,11 @@ func check_exploration() -> void:
 	game._refresh()
 	game._cell_actions()
 	for button in game.modal_layer.find_children("*", "Button", true, false):
-		if button.text == "调查旧观测点":
+		if button.text == "查看节点剧情":
+			button.pressed.emit()
+			break
+	for button in game.modal_layer.find_children("*", "Button", true, false):
+		if button.text.begins_with("搜寻旧物"):
 			button.pressed.emit()
 			break
 	var intro = run.relic_intro()

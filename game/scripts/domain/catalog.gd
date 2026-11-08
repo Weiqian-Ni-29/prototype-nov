@@ -5,8 +5,6 @@ extends RefCounted
 const VERSION = 1
 const RADIUS = 8
 const BATTLE_AP = 2
-const DAILY_HP = 0.16
-const DAILY_MP = 0.22
 const ENERGY_MAX = 100
 const TERRAIN = {
 	"plains": {"name": "平原", "cost": 1, "color": "91a577"},
