@@ -35,6 +35,7 @@ func new_run(seed_value: int, profession: String) -> void:
 	data.actors.eve.inventory["Q-M"] = 1
 	data.actors.tide.inventory["Q-WA"] = 1
 	_initialize_relics()
+	_ensure_squads()
 	reveal(generated.start)
 	note("渡桥已塌。登记副本写着归航站的方向；沿途仍有未熄的灯。")
 
@@ -59,6 +60,113 @@ func same_cell(position: String, healthy: bool = false) -> Array[String]:
 		if actor(id).position == position and (not healthy or actor(id).hp > 0):
 			ids.append(id)
 	return ids
+
+# Squad identity is persistent: co-location alone must not undo an explicit split.
+func _new_squad() -> String:
+	var index = int(data.next_squad_id)
+	data.next_squad_id = index + 1
+	var id = "squad_%d" % index
+	data.squad_colors[id] = index
+	return id
+
+func _ensure_squads() -> void:
+	if data.is_empty():
+		return
+	if not data.has("squad_colors"):
+		data.squad_colors = {}
+	if not data.has("next_squad_id"):
+		data.next_squad_id = 0
+	var cells: Dictionary = {}
+	var by_cell: Dictionary = {}
+	# Existing identities win over newly recruited or legacy actors.
+	for id in joined_ids():
+		var a = actor(id)
+		var squad = str(a.get("squad_id", ""))
+		if squad == "" or not data.squad_colors.has(squad):
+			continue
+		if cells.has(squad) and cells[squad] != a.position:
+			# Retreat/story relocation may move only part of a squad.
+			var relocated = squad + "@" + a.position
+			if not cells.has(relocated):
+				cells[relocated] = _new_squad()
+			a.squad_id = cells[relocated]
+			squad = a.squad_id
+		cells[squad] = a.position
+		if not by_cell.has(a.position):
+			by_cell[a.position] = squad
+	for id in joined_ids():
+		var a = actor(id)
+		if str(a.get("squad_id", "")) != "" and data.squad_colors.has(a.squad_id):
+			continue
+		if not by_cell.has(a.position):
+			by_cell[a.position] = _new_squad()
+		a.squad_id = by_cell[a.position]
+
+func squad_groups() -> Array:
+	_ensure_squads()
+	var groups: Dictionary = {}
+	for id in joined_ids():
+		var a = actor(id)
+		if not groups.has(a.squad_id):
+			groups[a.squad_id] = {"id": a.squad_id, "members": [], "color_index": int(data.squad_colors[a.squad_id]), "cell": a.position}
+		groups[a.squad_id].members.append(id)
+	var result = groups.values()
+	result.sort_custom(func(a, b): return a.color_index < b.color_index)
+	return result
+
+func squad_members(actor_id: String) -> Array:
+	for group in squad_groups():
+		if actor_id in group.members:
+			return group.members.duplicate()
+	return []
+
+func split_squad(ids: Array) -> Dictionary:
+	if data.is_empty() or data.status != "exploring" or not data.pending_battle.is_empty():
+		return fail("战斗或结算期间不能拆分小队。")
+	if ids.is_empty():
+		return fail("请勾选要组成新小队的角色。")
+	var members = squad_members(str(ids[0]))
+	var seen: Dictionary = {}
+	for id in ids:
+		if id not in members or seen.has(id):
+			return fail("只能拆分同一小队的不同成员。")
+		seen[id] = true
+	if ids.size() >= members.size():
+		return fail("原小队至少需要留下一位成员。")
+	var squad = _new_squad()
+	for id in ids:
+		actor(id).squad_id = squad
+	note("已将勾选成员拆分为独立小队；同格时仍保持分队。")
+	changed.emit()
+	return {"ok": true, "squad_id": squad}
+
+func _prepare_squad_move(ids: Array, destination: String) -> void:
+	var groups = squad_groups()
+	var target = ""
+	# Arrival joins all occupants, including previously split squads at the target.
+	for group in groups:
+		if group.cell == destination:
+			target = group.id
+			break
+	if target == "":
+		for group in groups:
+			if group.members.size() == ids.size() and group.members.all(func(id): return id in ids):
+				target = group.id
+				break
+		if target == "":
+			target = _new_squad()
+	for id in joined_ids():
+		if id in ids or actor(id).position == destination:
+			actor(id).squad_id = target
+
+func retreat_squad(ids: Array, destination: String) -> void:
+	if ids.is_empty():
+		return
+	# Detach movers before relocation so stationary residents retain their color.
+	# Returning to an occupied origin follows the normal arrival merge rule.
+	_prepare_squad_move(ids, destination)
+	for id in ids:
+		actor(id).position = destination
 
 func stat(id: String, field: String) -> int:
 	var a = actor(id)
@@ -202,6 +310,7 @@ func move(ids: Array, destination: String) -> Dictionary:
 	var preview = movement_preview(ids, destination)
 	if not preview.ok:
 		return preview
+	_prepare_squad_move(ids, destination)
 	for id in ids:
 		actor(id).ap -= preview.costs[id]
 		actor(id).position = destination
@@ -230,6 +339,7 @@ func join_companion(id: String) -> Dictionary:
 	if a.joined:
 		return fail("已经同行。")
 	a.joined = true
+	_ensure_squads()
 	if has_relic("life_seed"):
 		a.hp_max = roundi(a.hp_max * 1.20)
 	if has_relic("telescope"):
@@ -509,6 +619,7 @@ func save_game(path: String = "") -> Dictionary:
 		path = save_path
 	if data.is_empty() or data.status == "battle":
 		return fail("只写入稳定检查点。")
+	_ensure_squads()
 	data.rng_state = str(rng.state)
 	data.transaction += 1
 	var temporary = path + ".tmp"
@@ -540,6 +651,7 @@ func load_game(path: String = "") -> Dictionary:
 	if invalid != "":
 		return fail("存档内容无效：" + invalid + "。旧文件没有被覆盖。")
 	data = loaded
+	_ensure_squads()
 	if not data.has("visited"):
 		_restore_legacy_visits()
 	if not data.has("choices"):
@@ -656,6 +768,19 @@ func _validate_save(loaded: Dictionary) -> String:
 				return "装备持有状态无效"
 		if id != "hero" and (not loaded.story.has(id) or not loaded.story[id] is Dictionary or not loaded.story[id].has_all(["met", "relation", "result"])):
 			return "故事状态缺失"
+	if loaded.has("squad_colors") or loaded.has("next_squad_id"):
+		if not loaded.get("squad_colors") is Dictionary or not _whole_number(loaded.get("next_squad_id")) or loaded.next_squad_id < 0:
+			return "小队记录无效"
+		var used_colors: Dictionary = {}
+		for squad in loaded.squad_colors:
+			var color = loaded.squad_colors[squad]
+			if not squad is String or not _whole_number(color) or color < 0 or color >= loaded.next_squad_id or used_colors.has(int(color)):
+				return "小队颜色记录无效"
+			used_colors[int(color)] = true
+		for id in loaded.actors:
+			var a = loaded.actors[id]
+			if a.joined and (not a.get("squad_id") is String or not loaded.squad_colors.has(a.squad_id)):
+				return "小队成员记录无效"
 	if not loaded.pending_battle.is_empty():
 		var pending = loaded.pending_battle
 		if not pending.has_all(["position", "origin", "ambush", "movers", "npc"]) or not loaded.tiles.has(pending.position) or not loaded.tiles.has(pending.origin) or not pending.movers is Array:

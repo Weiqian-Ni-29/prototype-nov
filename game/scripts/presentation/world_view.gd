@@ -19,6 +19,8 @@ const OCCLUSION_ZOOM = 9.0
 const FOG_REVEAL_SECONDS = 0.7
 signal cell_clicked(id: String)
 signal enemy_clicked(id: String)
+signal squad_clicked(id: String)
+var squad_markers = preload("res://scripts/presentation/squad_markers.gd").new()
 var camera: Camera3D
 var light: DirectionalLight3D
 var map_root: Node3D
@@ -101,6 +103,10 @@ func _ready() -> void:
 	add_child(actor_root)
 	add_child(battle_root)
 	add_child(battle_targeting)
+	var marker_canvas = CanvasLayer.new()
+	marker_canvas.layer = 1
+	add_child(marker_canvas)
+	marker_canvas.add_child(squad_markers)
 	ocean = preload("res://scripts/presentation/ocean.gd").new()
 	add_child(ocean)
 	selection_ring = MeshInstance3D.new()
@@ -133,10 +139,15 @@ func _ready() -> void:
 	presenter.finished.connect(func(): presentation_changed.emit())
 	presenter.feedback_changed.connect(func(): presentation_changed.emit())
 	presenter.started.connect(func(): presentation_changed.emit())
+	visibility_changed.connect(func():
+		squad_markers.visible = is_visible_in_tree() and not battle_mode)
 	_update_camera()
 
 func reset() -> void:
 	_cancel_map_pointer()
+	squad_markers.groups.clear()
+	squad_markers.markers.clear()
+	squad_markers.queue_redraw()
 	_clear_battle_target()
 	map_follow_actor = null
 	zoom_size = DEFAULT_MAP_ZOOM
@@ -174,6 +185,7 @@ func reset() -> void:
 
 func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> void:
 	current_tiles = run.data.tiles
+	squad_markers.refresh(run, selected_id)
 	if selected_id != map_actor:
 		map_follow_actor = null
 	map_actor = selected_id
@@ -553,6 +565,10 @@ func _input(event: InputEvent) -> void:
 			map_follow_offset = focus_point - _map_actor_ground(map_follow_actor)
 		get_viewport().set_input_as_handled()
 		if click:
+			var squad = squad_markers.pick(map_pointer_position)
+			if not squad.is_empty():
+				squad_clicked.emit(squad)
+				return
 			var id = board_surface.pick(camera.project_ray_origin(map_pointer_position), camera.project_ray_normal(map_pointer_position))
 			if id != "":
 				cell_clicked.emit(id)
@@ -611,6 +627,7 @@ func _process(delta: float) -> void:
 		_update_battle_targets()
 	else:
 		_update_occlusion(delta)
+	squad_markers.update_positions(camera, dolls, is_visible_in_tree() and not battle_mode)
 
 func _battle_enemy_at(screen_position: Vector2) -> String:
 	return battle_targeting.pick(camera, screen_position, battle_dolls, battle_combat.alive_enemies())
