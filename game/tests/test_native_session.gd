@@ -14,7 +14,6 @@ func execute() -> void:
 	game = Main.instantiate()
 	root.add_child(game)
 	await process_frame
-	game.chosen_profession = "guardian"
 	game.run.save_path = "user://native-session.json"
 	game._start_new()
 	var r = game.run

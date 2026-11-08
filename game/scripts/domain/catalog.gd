@@ -26,18 +26,70 @@ const PROFESSIONS = {
 	"stone_guard": {"name": "岩卫", "hero_name": "石垣", "element": "earth", "description": "以石棘打击单个敌人，终结技为全队撑起护盾。", "hp": 142, "mp": 48, "ap": 6, "attack": 23, "defense": 10, "speed": 84, "skill": "stone_spike", "ultimate": "stonewall", "color": "ba9267"},
 }
 const COMPANIONS = {
-	"cen": {"name": "岑枝", "title": "林缘猎人", "hp": 102, "mp": 34, "ap": 8, "attack": 22, "defense": 5, "speed": 113, "skill": "snare", "ultimate": "arrow_rain", "color": "77945c", "element": "normal", "terrain": "forest", "portrait": "cen"},
-	"lorne": {"name": "洛恩", "title": "山路信使", "hp": 88, "mp": 44, "ap": 10, "attack": 18, "defense": 4, "speed": 132, "skill": "trail_shot", "ultimate": "rally", "color": "be9b6c", "element": "normal", "terrain": "mountain", "portrait": "lorne"},
-	"eve": {"name": "伊芙", "title": "精灵医者", "hp": 90, "mp": 90, "ap": 7, "attack": 14, "defense": 5, "speed": 99, "skill": "heal", "ultimate": "warmth", "color": "b9c69d", "element": "normal", "terrain": "forest", "portrait": "eve"},
-	"grit": {"name": "砾牙", "title": "循迹巨狼", "hp": 155, "mp": 28, "ap": 6, "attack": 28, "defense": 7, "speed": 96, "skill": "rend", "ultimate": "wolf_howl", "color": "adb4b5", "element": "normal", "terrain": "forest", "portrait": "grit"},
-	"ember": {"name": "弥烬", "title": "清障火术师", "hp": 84, "mp": 78, "ap": 5, "attack": 29, "defense": 4, "speed": 94, "skill": "ember", "ultimate": "sunfall", "color": "bc6a52", "element": "fire", "terrain": "ruins", "portrait": "ember"},
-	"tide": {"name": "澄汐", "title": "水文术师", "hp": 93, "mp": 82, "ap": 7, "attack": 22, "defense": 6, "speed": 106, "skill": "torrent", "ultimate": "tide_shelter", "color": "6bafbd", "element": "water", "terrain": "ruins", "portrait": "tide"},
+	"frost_archer": {"name": "霜弦", "title": "精灵", "race": "精灵", "element": "ice", "terrain": "forest", "hp": 84, "mp": 50, "ap": 6, "attack": 18, "defense": 4, "speed": 89, "skill": "frost_arrow", "ultimate": "frostfall", "color": "93badd", "portrait": "frost_archer"},
+	"storm_caller": {"name": "闻霆", "title": "恶魔", "race": "恶魔", "element": "lightning", "terrain": "ruins", "hp": 93, "mp": 56, "ap": 7, "attack": 20, "defense": 5, "speed": 95, "skill": "thunderbolt", "ultimate": "thunderstorm", "color": "9f87d7", "portrait": "storm_caller"},
+	"wind_runner": {"name": "岚翎", "title": "人类", "race": "人类", "element": "wind", "terrain": "plains", "hp": 102, "mp": 62, "ap": 8, "attack": 22, "defense": 6, "speed": 101, "skill": "windblade", "ultimate": "tailwind", "color": "79bd9a", "portrait": "wind_runner"},
+	"stone_guard": {"name": "石垣", "title": "矮人", "race": "矮人", "element": "earth", "terrain": "mountain", "hp": 142, "mp": 68, "ap": 9, "attack": 24, "defense": 10, "speed": 84, "skill": "stone_spike", "ultimate": "stonewall", "color": "ba9267", "portrait": "stone_guard"},
+	"ironforge": {"name": "铎火", "title": "矮人", "race": "矮人", "element": "fire", "terrain": "mountain", "hp": 120, "mp": 50, "ap": 6, "attack": 26, "defense": 8, "speed": 113, "skill": "ironforge_skill", "ultimate": "ironforge_ult", "color": "7ca9b3", "portrait": "ironforge"},
+	"granite": {"name": "岩钉", "title": "矮人", "race": "矮人", "element": "earth", "terrain": "mountain", "hp": 142, "mp": 56, "ap": 7, "attack": 18, "defense": 10, "speed": 84, "skill": "granite_skill", "ultimate": "granite_ult", "color": "93badd", "portrait": "granite"},
+	"mistleaf": {"name": "沐叶", "title": "精灵", "race": "精灵", "element": "water", "terrain": "swamp", "hp": 93, "mp": 62, "ap": 8, "attack": 20, "defense": 5, "speed": 89, "skill": "mistleaf_skill", "ultimate": "mistleaf_ult", "color": "9f87d7", "portrait": "mistleaf"},
+	"willow": {"name": "暮柳", "title": "精灵", "race": "精灵", "element": "normal", "terrain": "forest", "hp": 102, "mp": 68, "ap": 9, "attack": 22, "defense": 6, "speed": 95, "skill": "willow_skill", "ultimate": "willow_ult", "color": "79bd9a", "portrait": "willow"},
+	"ashhorn": {"name": "灰角", "title": "恶魔", "race": "恶魔", "element": "fire", "terrain": "desert", "hp": 111, "mp": 50, "ap": 6, "attack": 24, "defense": 7, "speed": 101, "skill": "ashhorn_skill", "ultimate": "ashhorn_ult", "color": "ba9267", "portrait": "ashhorn"},
+	"oathguard": {"name": "契岑", "title": "恶魔", "race": "恶魔", "element": "earth", "terrain": "ruins", "hp": 120, "mp": 56, "ap": 7, "attack": 26, "defense": 8, "speed": 107, "skill": "oathguard_skill", "ultimate": "oathguard_ult", "color": "7ca9b3", "portrait": "oathguard"},
+	"highdrake": {"name": "铅翼", "title": "龙", "race": "龙", "element": "earth", "terrain": "mountain", "hp": 84, "mp": 62, "ap": 8, "attack": 18, "defense": 4, "speed": 113, "skill": "highdrake_skill", "ultimate": "highdrake_ult", "color": "93badd", "portrait": "highdrake"},
+	"cloudscale": {"name": "霁鳞", "title": "龙", "race": "龙", "element": "wind", "terrain": "plains", "hp": 93, "mp": 68, "ap": 9, "attack": 20, "defense": 5, "speed": 119, "skill": "cloudscale_skill", "ultimate": "cloudscale_ult", "color": "9f87d7", "portrait": "cloudscale"},
+	"longroad": {"name": "长路", "title": "人类", "race": "人类", "element": "normal", "terrain": "plains", "hp": 102, "mp": 50, "ap": 6, "attack": 22, "defense": 6, "speed": 89, "skill": "longroad_skill", "ultimate": "longroad_ult", "color": "79bd9a", "portrait": "longroad"},
+	"fieldmedic": {"name": "苏茅", "title": "人类", "race": "人类", "element": "water", "terrain": "forest", "hp": 111, "mp": 56, "ap": 7, "attack": 24, "defense": 7, "speed": 95, "skill": "fieldmedic_skill", "ultimate": "fieldmedic_ult", "color": "ba9267", "portrait": "fieldmedic"},
+	"siltguard": {"name": "泽栅", "title": "人类", "race": "人类", "element": "water", "terrain": "swamp", "hp": 120, "mp": 62, "ap": 8, "attack": 26, "defense": 8, "speed": 101, "skill": "siltguard_skill", "ultimate": "siltguard_ult", "color": "7ca9b3", "portrait": "siltguard"},
+	"seasons": {"name": "梅文娜", "title": "四季之神", "race": "神", "element": "ice", "terrain": "forest", "hp": 84, "mp": 68, "ap": 9, "attack": 18, "defense": 4, "speed": 107, "skill": "seasons_skill", "ultimate": "seasons_ult", "color": "93badd", "portrait": "seasons"},
+	"earth_god": {"name": "多兰克", "title": "大地之神", "race": "神", "element": "earth", "terrain": "mountain", "hp": 142, "mp": 50, "ap": 6, "attack": 20, "defense": 10, "speed": 84, "skill": "earth_god_skill", "ultimate": "earth_god_ult", "color": "9f87d7", "portrait": "earth_god"},
+	"sky_god": {"name": "莱文索", "title": "天空神", "race": "神", "element": "lightning", "terrain": "desert", "hp": 102, "mp": 56, "ap": 7, "attack": 22, "defense": 6, "speed": 119, "skill": "sky_god_skill", "ultimate": "sky_god_ult", "color": "79bd9a", "portrait": "sky_god"},
+	"snowforge": {"name": "砧雪", "title": "矮人", "race": "矮人", "element": "ice", "terrain": "mountain", "hp": 142, "mp": 62, "ap": 8, "attack": 24, "defense": 10, "speed": 84, "skill": "snowforge_skill", "ultimate": "snowforge_ult", "color": "ba9267", "portrait": "snowforge"},
+	"cen": {"race": "精灵", "name": "岑枝", "title": "林缘猎人", "hp": 102, "mp": 34, "ap": 8, "attack": 22, "defense": 5, "speed": 113, "skill": "snare", "ultimate": "arrow_rain", "color": "77945c", "element": "normal", "terrain": "forest", "portrait": "cen"},
+	"lorne": {"race": "人类", "name": "洛恩", "title": "山路信使", "hp": 88, "mp": 44, "ap": 10, "attack": 18, "defense": 4, "speed": 132, "skill": "trail_shot", "ultimate": "rally", "color": "be9b6c", "element": "normal", "terrain": "mountain", "portrait": "lorne"},
+	"eve": {"race": "精灵", "name": "伊芙", "title": "精灵医者", "hp": 90, "mp": 90, "ap": 7, "attack": 14, "defense": 5, "speed": 99, "skill": "heal", "ultimate": "warmth", "color": "b9c69d", "element": "normal", "terrain": "forest", "portrait": "eve"},
+	"grit": {"race": "龙", "name": "砾牙", "title": "远山来客", "hp": 155, "mp": 28, "ap": 6, "attack": 28, "defense": 7, "speed": 96, "skill": "rend", "ultimate": "wolf_howl", "color": "adb4b5", "element": "normal", "terrain": "forest", "portrait": "grit"},
+	"ember": {"race": "恶魔", "name": "弥烬", "title": "火术师", "hp": 84, "mp": 78, "ap": 5, "attack": 29, "defense": 4, "speed": 94, "skill": "ember", "ultimate": "sunfall", "color": "bc6a52", "element": "fire", "terrain": "ruins", "portrait": "ember"},
+	"tide": {"race": "人类", "name": "澄汐", "title": "水文术师", "hp": 93, "mp": 82, "ap": 7, "attack": 22, "defense": 6, "speed": 106, "skill": "torrent", "ultimate": "tide_shelter", "color": "6bafbd", "element": "water", "terrain": "ruins", "portrait": "tide"},
 }
 const SKILLS = {
+	"ironforge_skill": {"name": "战炉火花", "element": "fire", "mp": 8, "energy": 30, "target": "enemy", "power": 1.35},
+	"ironforge_ult": {"name": "炉心迸裂", "element": "fire", "mp": 0, "energy": 0, "target": "all_enemies", "power": 1.75},
+	"granite_skill": {"name": "盾角撞击", "element": "earth", "mp": 9, "energy": 30, "target": "enemy", "power": 1.45},
+	"granite_ult": {"name": "山门列盾", "element": "earth", "mp": 0, "energy": 0, "target": "all_allies", "shield": 31},
+	"mistleaf_skill": {"name": "露矢", "element": "water", "mp": 10, "energy": 30, "target": "enemy", "power": 1.55},
+	"mistleaf_ult": {"name": "薄雾齐射", "element": "water", "mp": 0, "energy": 0, "target": "all_enemies", "power": 1.99},
+	"willow_skill": {"name": "枝影箭", "element": "normal", "mp": 8, "energy": 30, "target": "enemy", "power": 1.65},
+	"willow_ult": {"name": "林间连矢", "element": "normal", "mp": 0, "energy": 0, "target": "all_enemies", "power": 2.11},
+	"ashhorn_skill": {"name": "灰烬球", "element": "fire", "mp": 9, "energy": 30, "target": "enemy", "power": 1.35},
+	"ashhorn_ult": {"name": "焰线横扫", "element": "fire", "mp": 0, "energy": 0, "target": "all_enemies", "power": 2.23},
+	"oathguard_skill": {"name": "石印重击", "element": "earth", "mp": 10, "energy": 30, "target": "enemy", "power": 1.45},
+	"oathguard_ult": {"name": "守约屏障", "element": "earth", "mp": 0, "energy": 0, "target": "all_allies", "shield": 28},
+	"highdrake_skill": {"name": "碎石推掌", "element": "earth", "mp": 8, "energy": 30, "target": "enemy", "power": 1.55},
+	"highdrake_ult": {"name": "群峰回震", "element": "earth", "mp": 0, "energy": 0, "target": "all_enemies", "power": 1.87},
+	"cloudscale_skill": {"name": "回旋气流", "element": "wind", "mp": 9, "energy": 30, "target": "enemy", "power": 1.65},
+	"cloudscale_ult": {"name": "薄云护身", "element": "wind", "mp": 0, "energy": 0, "target": "all_allies", "shield": 34},
+	"longroad_skill": {"name": "路边连射", "element": "normal", "mp": 10, "energy": 30, "target": "enemy", "power": 1.35},
+	"longroad_ult": {"name": "远行齐箭", "element": "normal", "mp": 0, "energy": 0, "target": "all_enemies", "power": 2.11},
+	"fieldmedic_skill": {"name": "清水疗伤", "element": "water", "mp": 8, "energy": 30, "target": "ally", "power": 30, "healing": true},
+	"fieldmedic_ult": {"name": "行囊里的药", "element": "water", "mp": 0, "energy": 0, "target": "all_allies", "power": 42, "healing": true},
+	"siltguard_skill": {"name": "浅水推击", "element": "water", "mp": 9, "energy": 30, "target": "enemy", "power": 1.55},
+	"siltguard_ult": {"name": "涌潮震荡", "element": "water", "mp": 0, "energy": 0, "target": "all_enemies", "power": 1.75},
+	"seasons_skill": {"name": "晚霜", "element": "ice", "mp": 10, "energy": 30, "target": "enemy", "power": 1.65, "slow": 2},
+	"seasons_ult": {"name": "春回", "element": "ice", "mp": 0, "energy": 0, "target": "all_allies", "power": 42, "healing": true},
+	"earth_god_skill": {"name": "地动", "element": "earth", "mp": 8, "energy": 30, "target": "enemy", "power": 1.35},
+	"earth_god_ult": {"name": "坚岩屏障", "element": "earth", "mp": 0, "energy": 0, "target": "all_allies", "shield": 34},
+	"sky_god_skill": {"name": "落雷", "element": "lightning", "mp": 9, "energy": 30, "target": "enemy", "power": 1.45},
+	"sky_god_ult": {"name": "雷雨散开", "element": "lightning", "mp": 0, "energy": 0, "target": "all_enemies", "power": 2.11},
+	"snowforge_skill": {"name": "冷锤", "element": "ice", "mp": 10, "energy": 30, "target": "enemy", "power": 1.55, "slow": 2},
+	"snowforge_ult": {"name": "雪夜守护", "element": "ice", "mp": 0, "energy": 0, "target": "all_allies", "shield": 40},
+	"gravity": {"name": "重压", "mp": 8, "power": 1.5, "target": "enemy", "element": "gravity", "energy": 30, "slow": 2},
+	"gravity_drift": {"name": "落石", "mp": 0, "power": 1.45, "target": "all_enemies", "element": "gravity", "energy": 0},
+	"gravity_wave": {"name": "坠落", "mp": 0, "power": 1.9, "target": "all_enemies", "element": "gravity", "energy": 0, "slow": 2},
 	"attack": {"name": "普通攻击", "mp": 0, "power": 1.0, "target": "enemy", "element": "normal", "energy": 25},
 	"trail_shot": {"name": "巡路连射", "mp": 8, "power": 1.55, "target": "enemy", "element": "normal", "energy": 30},
 	"snare": {"name": "缠枝箭", "mp": 9, "power": 1.25, "target": "enemy", "element": "normal", "energy": 30, "slow": 2},
-	"rend": {"name": "碎岩咬", "mp": 7, "power": 1.7, "target": "enemy", "element": "normal", "energy": 30},
+	"rend": {"name": "裂石击", "mp": 7, "power": 1.7, "target": "enemy", "element": "normal", "energy": 30},
 	"ember": {"name": "燧火", "mp": 10, "power": 1.65, "target": "enemy", "element": "fire", "energy": 30, "environment": "ignite"},
 	"torrent": {"name": "回流", "mp": 10, "power": 1.5, "target": "enemy", "element": "water", "energy": 30, "environment": "wet"},
 	"heal": {"name": "枝露疗愈", "mp": 12, "power": 38, "target": "ally", "element": "normal", "energy": 20, "healing": true},
@@ -77,7 +129,8 @@ const ENEMIES = {
 	"apothecary": {"name": "拾荒药师", "hp": 56, "attack": 13, "defense": 3, "speed": 105, "color": "8b9d7b", "element": "normal", "role": "治疗同伴", "skill": "heal"},
 	"hunter_elite": {"name": "苔冠猎伏者", "hp": 160, "attack": 29, "defense": 7, "speed": 129, "color": "5e7751", "element": "normal", "role": "精英 · 伏击压制", "skill": "slow"},
 	"furnace_elite": {"name": "裂炉监卫", "hp": 185, "attack": 33, "defense": 10, "speed": 85, "color": "ad6248", "element": "fire", "role": "精英 · 火场", "skill": "ignite"},
-	"lamp_boss": {"name": "旧驿灯卫", "hp": 320, "attack": 35, "defense": 12, "speed": 108, "color": "bbaa70", "element": "fire", "role": "可选首领 · 不阻挡撤离", "skill": "ignite"},
+	"war_god": {"name": "卡德兰", "hp": 250, "attack": 29, "defense": 12, "speed": 103, "color": "bd5447", "element": "normal", "role": "使人陷入疯狂", "skill": "madness"},
+	"lamp_boss": {"name": "旧石像", "hp": 320, "attack": 35, "defense": 12, "speed": 108, "color": "bbaa70", "element": "fire", "role": "重装守卫", "skill": "ignite"},
 }
 
 static func item_name(id: String) -> String:
@@ -90,7 +143,9 @@ static func skill_description(id: String) -> String:
 	var skill = SKILLS[id]
 	var parts: Array[String] = ["%d MP" % skill.mp]
 	parts.append({"enemy": "敌方单体", "ally": "己方单体，可救援", "all_enemies": "敌方全体", "all_allies": "己方在场全体"}[skill.target])
-	if skill.element != "normal":
+	if skill.element == "gravity":
+		parts.append("重力魔法")
+	elif skill.element != "normal":
 		parts.append(ELEMENT_NAMES[skill.element] + "属性")
 	if skill.get("healing", false):
 		parts.append("恢复 %d HP" % skill.power)
@@ -113,4 +168,4 @@ static func skill_description(id: String) -> String:
 	return " · ".join(parts)
 
 static func passive_description(id: String) -> String:
-	return {"hero": "职业决定各自的生命、魔力、机动与技能。", "cen": "森林采集额外 +1。", "lorne": "山地移动只需 1 精力。", "eve": "同地可行动时，休整恢复额外 +10 个百分点。", "grit": "辨识附近已发现敌人；在场时令低于 35% HP 的队友减伤 20%。", "ember": "火术可在晴天点燃干燥的森林战场。", "tide": "水术可使当前战场潮湿，减弱火系技能伤害。"}.get(id, "")
+	return {"hero": "以重力魔法作战。", "cen": "森林采集额外 +1。", "lorne": "山地移动只需 1 精力。", "eve": "同地可行动时，休整恢复额外 +10 个百分点。", "grit": "辨识附近已发现敌人；在场时令低于 35% HP 的队友减伤 20%。", "ember": "火术可在晴天点燃干燥的森林战场。", "tide": "水术可使当前战场潮湿，减弱火系技能伤害。"}.get(id, "")

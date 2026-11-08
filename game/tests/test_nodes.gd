@@ -29,7 +29,7 @@ func check_generation() -> void:
 		run.new_run(seed_value, "wayfarer")
 		duplicate.new_run(seed_value, "guardian")
 		expect(run.data.nodes == duplicate.data.nodes, "Seed fixes node placement, stories, rewards and stock")
-		expect(not Hex.path(run.data.tiles, run.data.start, run.data.exit, true).is_empty(), "Safe extraction remains reachable")
+		expect(not Hex.path(run.data.tiles, run.data.start, run.data.boss, true).is_empty(), "Safe boss approach remains reachable")
 		var coverage = true
 		var compatible = true
 		for cell in run.data.tiles:

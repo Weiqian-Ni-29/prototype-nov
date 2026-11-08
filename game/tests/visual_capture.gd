@@ -34,8 +34,11 @@ func inspect_story_layout() -> void:
 		expect(false, "Story screen is visible")
 		return
 	var dialogue = stage.get_node("Dialogue").get_rect()
-	var choices = stage.get_node("StoryChoices").get_rect()
 	expect(dialogue.position.y > stage.size.y * 0.65, "Dialogue sits near the bottom of the story screen")
+	var column = stage.get_node_or_null("StoryChoices")
+	if column == null:
+		return
+	var choices = column.get_rect()
 	expect(choices.position.x > stage.size.x * 0.5 and choices.end.x <= stage.size.x, "Choices stay in the right column")
 	expect(dialogue.end.x < choices.position.x, "Story text and choices do not overlap")
 
@@ -47,33 +50,6 @@ func advance_story() -> void:
 		event.position = root.get_visible_rect().size * Vector2(0.78, 0.27)
 		root.push_input(event, true)
 	await process_frame
-
-func inspect_portrait_mattes() -> void:
-	for id in ["hero", "hero-guardian", "hero-arcanist", "cen", "lorne", "eve", "grit", "ember", "tide", "inn", "home", "exit"]:
-		var path = "res://assets/portraits/mattes/" + id + ".png"
-		if not ResourceLoader.exists(path):
-			expect(false, "Portrait matte bundled for " + id)
-			continue
-		var matte: Image = load(path).get_image()
-		expect(matte.get_pixel(matte.get_width() / 2, matte.get_height() / 2).r > 0.9
-			and matte.get_pixel(0, 0).r < 0.05 and matte.get_pixel(matte.get_width() - 1, 0).r < 0.05,
-			"Portrait matte preserves the figure and clears the background for " + id)
-
-func capture_landmark_discovery() -> void:
-	var run = game.run
-	var target: String = run.actor("lorne").position
-	var path = Hex.path(run.data.tiles, run.data.start, target, true)
-	for id in path.slice(1, -1):
-		game._select_cell(id)
-		game._select_cell(id)
-	game._select_cell(target)
-	game.view.focus_cell(target)
-	expect(run.data.explored.has(target) and not run.has_visited(target), "Courier's hex is visible before arrival")
-	await capture("discovery-before-arrival")
-	game._select_cell(target)
-	expect(run.has_visited(target) and game.view.dolls.has("lorne"), "Arriving reveals the courier")
-	await create_timer(0.9).timeout
-	await capture("discovery-after-arrival")
 
 func inspect_board() -> void:
 	for seed_value in ["20261104", "41", "918"]:
@@ -294,29 +270,76 @@ func capture_node_examples() -> void:
 	game._close_modal()
 	game.chosen_seed = original_seed
 
+func inspect_character_poses() -> void:
+	var ids = Catalog.COMPANIONS.keys() + ["hero", "war_god"]
+	for id in ids:
+		expect(game._story_portrait(id) is Texture2D, "Normal portrait is available " + id)
+		var regions: Array[Rect2] = []
+		for pose in ["serious", "friendly", "grief", "anger", "surprise", "battle"]:
+			var portrait = game._story_portrait(id, pose)
+			expect(portrait is AtlasTexture, "Pose loads from a distinct cell " + id + "/" + pose)
+			if portrait is AtlasTexture:
+				expect(not regions.has(portrait.region), "Pose is a separate illustration " + id + "/" + pose)
+				regions.append(portrait.region)
+	for group in ["human", "elf", "dwarf"]:
+		for pose in ["concerned", "serious", "farewell", "grief", "battle"]:
+			expect(game._story_portrait("villager_" + group, pose) is AtlasTexture, "Village pose is available " + group + "/" + pose)
+
+func capture_finale() -> void:
+	game._close_modal()
+	game._start_new()
+	var run = game.run
+	var hero = run.actor("hero")
+	for cell in run.data.tiles:
+		run.data.explored[cell] = true
+	for chapter in range(1, 5):
+		run.finish_chapter(chapter)
+	hero.position = run.data.boss
+	run.reveal(hero.position)
+	var battle = Combat.new()
+	var encounter = {"position": hero.position, "origin": hero.position, "movers": [], "npc": "", "ambush": false}
+	expect(battle.begin(run, encounter, ["hero"]).ok, "Finale starts the actual boss battle")
+	game.combat = battle
+	game.view.begin_battle(run, battle)
+	battle.current = "hero"
+	battle.unit("enemy_0").hp = 1
+	game._perform_combat("gravity", "enemy_0")
+	while game.view.is_animating():
+		await process_frame
+	game._process(0.1)
+	expect(game.modal_layer.has_node("StoryScreen") and battle.reveal_pending and not battle.river,
+		"The old strike triggers the flashback before the river")
+	await capture("story-final-memory")
+	for i in range(4):
+		await advance_story()
+	await capture("story-final-river")
+	await advance_story()
+	await process_frame
+	expect(battle.river and hero.name == "伊文洛" and game.view.battle_root.get_meta("environment_signature").ends_with(":true"),
+		"Leaving the flashback brings the river into the actual combat view")
+	await capture("battle-final-river")
+	game.combat = null
+	game.view.end_battle()
+
 func execute() -> void:
 	DirAccess.make_dir_recursive_absolute(destination)
 	game = Main.instantiate()
 	root.add_child(game)
 	await process_frame
 	game.run.save_path = "user://visual-test-run.json"
+	game.chosen_seed = "20261104"
 	await create_timer(1.0).timeout
 	await capture("01-menu")
-	game._show_opening(Game.Screen.PROFESSION)
-	for profession in Catalog.PROFESSIONS:
-		game._choose_profession(profession)
-		await capture("01-profession-" + profession)
-	game._choose_profession("wayfarer")
 	game._begin_opening_story()
-	await capture("story-opening-road")
-	game._opening_beat("bridge")
-	await capture("story-opening-bridge")
-	game._opening_beat("shelter")
-	await capture("story-opening-shelter")
+	await capture("story-world-intro")
+	await advance_story()
+	await advance_story()
+	await capture("story-village-waking")
 	inspect_story_layout()
-	game._opening_beat("lamps", "lamps")
-	await capture("story-opening-lamps")
-	game._start_new()
+	for i in range(6):
+		await advance_story()
+	await capture("story-village-farewell")
+	await advance_story()
 	await create_timer(0.5).timeout
 	await capture("02-exploration")
 	game.crew_collapsed = true
@@ -324,21 +347,18 @@ func execute() -> void:
 	await capture("02-exploration-folded")
 	game.crew_collapsed = false
 	game._refresh()
-	await capture_landmark_discovery()
 	await inspect_board()
 	await capture_node_examples()
 	# Inspect every biome through the exact same battle view used in the playable game.
 	game.set_process(false)
-	var hero_fixtures = {"forest": "frost_archer", "mountain": "stone_guard", "desert": "wind_runner", "swamp": "storm_caller"}
 	for biome in ["plains", "forest", "mountain", "ruins", "desert", "swamp"]:
-		game.chosen_profession = hero_fixtures.get(biome, "wayfarer")
 		game._start_new()
 		var run = game.run
 		var position = run.actor("hero").position
 		run.data.tiles[position].terrain = biome
 		run.data.tiles[position].site = ""
 		run.data.weather = "rain" if biome == "swamp" else "sun"
-		for id in Catalog.COMPANIONS:
+		for id in ["lorne", "cen", "eve", "grit", "ember", "tide"]:
 			run.actor(id).position = position
 			run.join_companion(id)
 		run.data.tiles[position].enemies = ["spider", "furnace", "swarm", "canal"]
@@ -355,27 +375,13 @@ func execute() -> void:
 		game._refresh()
 		await create_timer(0.6).timeout
 		expect(game.view.battle_dolls.size() == 8, "Four friends and four distinct foes rendered")
-		expect(game.view.battle_dolls.grit.skeleton.get_bone_count() >= 23 and game.view.battle_dolls.grit.rigged.animator!=null, "Four-legged character has a full imported rig and animation player")
+		expect(game.view.battle_dolls.grit.skeleton.get_bone_count() >= 23 and game.view.battle_dolls.grit.rigged.animator != null, "Dragon in human form has a full imported rig and animation player")
 		expect(game.view.battle_dolls.enemy_0.family == "spider" and game.view.battle_dolls.enemy_2.family == "swarm", "Enemy silhouettes match spider and swarm")
 		await capture("battle-" + biome)
 		if biome == "plains":
 			battle.step_auto()
 			game._refresh()
 			await capture("battle-friendly-decision")
-		if hero_fixtures.has(biome):
-			var hero = run.actor("hero")
-			battle.current = "hero"
-			game._perform_combat(hero.skill, "enemy_0")
-			while game.view.is_animating():
-				await process_frame
-			hero.energy = 100
-			game.battle_timer = 0.0
-			game._ultimate("hero")
-			await create_timer(0.74).timeout
-			await capture("elemental-ultimate-" + str(hero.element))
-			while game.view.is_animating():
-				await process_frame
-			expect(hero.energy == 0, "Elemental ultimate plays through the real battle interface")
 		var caster = game.view.battle_dolls.ember
 		caster.play_action("cast")
 		var before_pose = caster.skeleton.get_bone_pose_rotation(caster.bones.arm_r)
@@ -387,7 +393,7 @@ func execute() -> void:
 			battle._apply_field_effect("wet")
 			game.view.sync_event_environment({"environment_after": battle.field_view()})
 			game._refresh()
-			expect(game.view.battle_root.get_meta("environment_signature") == "forest:true:true", "Fire and wetness render together")
+			expect(game.view.battle_root.get_meta("environment_signature") == "forest:true:true:false", "Fire and wetness render together")
 			await create_timer(0.6).timeout
 			await capture("battle-forest-wet")
 			expect(battle.retreat().ok, "Leave burning battle")
@@ -415,14 +421,14 @@ func execute() -> void:
 	game.run.data.story.lorne.relation = "unmet"
 	game._talk("lorne")
 	await capture("story-courier-first-meeting")
-	for i in range(3):
-		await advance_story()
 	await capture("dialogue-portrait")
+	await advance_story()
 	inspect_story_layout()
+	game._story_choice("join")
+	await capture("story-lorne-joins")
 	game._story_choice("later")
 	await capture("story-courier-deferred")
 	game._close_modal()
-	inspect_portrait_mattes()
 	game.run.actor("hero").position = game.run.actor("eve").position
 	game.run.actor("eve").joined = false
 	game.run.data.story.eve.met = false
@@ -443,5 +449,7 @@ func execute() -> void:
 		doll.configure(definition)
 		expect(doll.skeleton.get_bone_count() >= 6, "Enemy has rig " + id)
 		doll.queue_free()
+	inspect_character_poses()
+	await capture_finale()
 	print("VISUAL FIXTURES: %d checks; failed=%s; captures=%s" % [checks, failed, ProjectSettings.globalize_path(destination)])
 	quit(1 if failed else 0)

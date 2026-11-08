@@ -13,6 +13,11 @@ var next_time: Dictionary = {}
 var queue: Array = []
 var clock = 0.0
 var fire_tick = 10.0
+var war_boss = ""
+var reveal_pending = false
+var river = false
+var madness = {}
+var madness_recovering = false
 var burning = false
 var wet = false
 var current = ""
@@ -29,6 +34,8 @@ func begin(expedition: RefCounted, encounter: Dictionary, formation: Array) -> D
 	if expedition.data.status != "exploring" or formation.is_empty() or formation.size() > 4:
 		return {"ok": false, "message": "请选择一至四名同格角色。"}
 	position = encounter.position
+	if position == expedition.data.boss and expedition.data.tiles[position].enemies.has("war_god") and "hero" not in formation:
+		return {"ok": false, "message": "旅人必须亲自迎战战神。"}
 	var unique = {}
 	for id in formation:
 		var a = expedition.actor(id)
@@ -53,6 +60,11 @@ func begin(expedition: RefCounted, encounter: Dictionary, formation: Array) -> D
 	events.clear()
 	event_serial = 0
 	clock = 0.0
+	war_boss = ""
+	reveal_pending = false
+	river = false
+	madness.clear()
+	madness_recovering = false
 	fire_tick = 10.0
 	burning = false
 	wet = false
@@ -75,9 +87,11 @@ func begin(expedition: RefCounted, encounter: Dictionary, formation: Array) -> D
 			e["role"] = "误会中的普通交战 · 需要实际救援"
 			e["skill"] = "ignite" if npc == "ember" else "attack"
 		else:
-			e = Catalog.ENEMIES[type].duplicate(true)
+			e = run.war_god_stats() if type == "war_god" else Catalog.ENEMIES[type].duplicate(true)
 			e["hp_max"] = e.hp
 		e["id"] = "enemy_%d" % i
+		if type == "war_god":
+			war_boss = e.id
 		e["type"] = type
 		e["shield"] = 0
 		e["slow"] = 0
@@ -172,9 +186,12 @@ func seek_next() -> void:
 	unit(current).guard = false
 
 func act(skill_id: String, target_id: String = "") -> Dictionary:
-	if not outcome.is_empty() or current.is_empty() or enemies.has(current):
+	if reveal_pending or not outcome.is_empty() or current.is_empty() or enemies.has(current):
 		return _fail("现在不是己方正常行动。")
 	var id = current
+	if madness.has(id):
+		_mad_action(id)
+		return {"ok": true}
 	var allowed = ["attack", "guard", str(unit(id).skill)]
 	if skill_id not in allowed:
 		return _fail("该角色没有这个普通指令。")
@@ -256,6 +273,8 @@ func _cast(id: String, skill_id: String, target_id: String, ultimate: bool = fal
 func damage_preview(source: String, target: String, skill_id: String) -> int:
 	var skill = Catalog.SKILLS[skill_id]
 	var attack_value = run.stat(source, "attack")
+	if river and source == "hero":
+		attack_value *= 3
 	var defense_value = int(unit(target).defense) if enemies.has(target) else run.stat(target, "defense")
 	var multiplier = environment_multiplier(str(skill.element), str(unit(target).get("element", "normal")))
 	return maxi(1, floori((attack_value * float(skill.get("power", 1.0)) - defense_value * 0.6) * multiplier))
@@ -283,7 +302,7 @@ func environment_multiplier(element: String, target_element: String) -> float:
 	return clampf(multiplier, 0.5, 1.5)
 
 func use_item(item: String, target_id: String) -> Dictionary:
-	if outcome != "" or enemies.has(current) or current.is_empty() or target_id not in active:
+	if outcome != "" or enemies.has(current) or current.is_empty() or madness.has(current) or target_id not in active:
 		return _fail("只在我方本人正常行动窗口使用道具，目标须在场。")
 	var before = _unit_view(unit(target_id))
 	var result = run.use_item(current, target_id, item, true)
@@ -294,7 +313,7 @@ func use_item(item: String, target_id: String) -> Dictionary:
 	return result
 
 func swap(incoming: String) -> Dictionary:
-	if outcome != "" or enemies.has(current) or current.is_empty() or incoming not in reserves():
+	if outcome != "" or enemies.has(current) or current.is_empty() or madness.has(current) or incoming not in reserves():
 		return _fail("只能在己方正常行动时换入合格同地候补。")
 	var outgoing = current
 	var index = active.find(outgoing)
@@ -309,7 +328,7 @@ func swap(incoming: String) -> Dictionary:
 	return {"ok": true}
 
 func request_ultimate(id: String, target: String = "") -> Dictionary:
-	if outcome != "" or id not in active or unit(id).hp <= 0 or unit(id).energy < Catalog.ENERGY_MAX:
+	if outcome != "" or id not in active or madness.has(id) or unit(id).hp <= 0 or unit(id).energy < Catalog.ENERGY_MAX:
 		return _fail("仅在场、存活且满能量的角色能释放终结技。")
 	for request in queue:
 		if request.id == id:
@@ -323,14 +342,14 @@ func request_ultimate(id: String, target: String = "") -> Dictionary:
 	return {"ok": true}
 
 func resolve_queued() -> void:
-	while not queue.is_empty() and outcome == "":
+	while not reveal_pending and not queue.is_empty() and outcome == "":
 		var request = queue.pop_front()
-		if request.id in active and unit(request.id).hp > 0 and unit(request.id).energy >= 100:
+		if request.id in active and unit(request.id).hp > 0 and not madness.has(request.id) and unit(request.id).energy >= 100:
 			_cast(request.id, unit(request.id).ultimate, request.target, true)
 			check_end()
 
 func step_auto() -> void:
-	if outcome != "":
+	if reveal_pending or outcome != "":
 		return
 	resolve_queued()
 	if outcome != "":
@@ -341,6 +360,8 @@ func step_auto() -> void:
 		return
 	if enemies.has(current):
 		_enemy_action(current)
+	elif madness.has(current):
+		_mad_action(current)
 	elif auto_mode:
 		for id in active:
 			if unit(id).hp > 0 and unit(id).energy >= 100:
@@ -368,6 +389,12 @@ func _enemy_action(id: String) -> void:
 	var a = enemies[id]
 	var target = _weakest(alive_allies())
 	match a.skill:
+		"madness":
+			if not river and not madness.has(target) and not madness_recovering:
+				madness[target] = true
+				_log("%s陷入疯狂，接下来可能攻击任何在场的人。" % unit(target).name)
+			madness_recovering = not madness_recovering
+			_enemy_hit(id, target, 0.8 if not river else 0.5)
 		"heal":
 			var patient = _weakest(alive_enemies())
 			if unit(patient).hp < unit(patient).hp_max * 0.75:
@@ -421,7 +448,7 @@ func _visual_result(id: String, before: Dictionary) -> Dictionary:
 	return {"target":id,"hp_before":before.hp,"hp_after":after.hp,"shield_before":before.shield,"shield_after":after.shield,"damage":maxi(0,before.hp-after.hp),"healing":maxi(0,after.hp-before.hp),"shield_gain":maxi(0,after.shield-before.shield),"absorbed":maxi(0,before.shield-after.shield),"mp_gain":maxi(0,after.mp-before.mp)}
 
 func field_view() -> Dictionary:
-	return {"terrain": run.data.tiles[position].terrain, "burning": burning, "wet": wet}
+	return {"terrain": run.data.tiles[position].terrain, "burning": burning, "wet": wet, "river": river}
 
 func _apply_field_effect(effect: String) -> void:
 	match effect:
@@ -437,6 +464,8 @@ func _emit_event(event: Dictionary) -> void:
 	events.append(event)
 
 func _hurt(id: String, damage: int) -> void:
+	if river and id == "hero":
+		return
 	var target = unit(id)
 	if not enemies.has(id) and id != "grit" and "grit" in active and unit("grit").hp > 0 and target.hp < target.hp_max * 0.35:
 		damage = ceili(damage * 0.8)
@@ -444,13 +473,23 @@ func _hurt(id: String, damage: int) -> void:
 		damage = ceili(damage * 0.55)
 	var absorbed = mini(int(target.get("shield", 0)), damage)
 	target.shield = int(target.get("shield", 0)) - absorbed
-	target.hp = maxi(0, int(target.hp) - damage + absorbed)
+	var minimum = ceili(target.hp_max * 0.55) if id == war_boss and not river else 0
+	target.hp = maxi(minimum, int(target.hp) - damage + absorbed)
 
 func _complete_action(id: String) -> void:
 	if unit(id).get("slow", 0) > 0:
 		unit(id).slow -= 1
 	_schedule_action(id)
 	current = ""
+	if river and not war_boss.is_empty() and unit(war_boss).hp > 0:
+		var boss = unit(war_boss)
+		var before = _unit_view(boss)
+		boss.attack = maxi(0, int(boss.attack) - 6)
+		boss.defense = maxi(0, int(boss.defense) - 4)
+		boss.speed = maxi(36, int(boss.speed) - 12)
+		boss.shield = 0
+		boss.hp = maxi(0, int(boss.hp) - 9)
+		_emit_event({"actor": "", "kind": "environment", "targets": [war_boss], "skill_id": "river", "element": "normal", "results": [_visual_result(war_boss, before)]})
 	_settle_fire()
 	if check_end():
 		return
@@ -488,12 +527,48 @@ func check_end() -> bool:
 			# User-confirmed: a simultaneous wipe is a defeat, never a free victory revive.
 			_finish("defeat")
 			return true
+	if not war_boss.is_empty() and not river and unit(war_boss).hp <= ceili(unit(war_boss).hp_max * 0.55):
+		if not reveal_pending:
+			reveal_pending = true
+			_emit_event({"actor": war_boss, "kind": "cast", "targets": ["hero"], "skill_id": "old_strike", "element": "fire", "results": []})
+		return true
 	if alive_enemies().is_empty():
 		_finish("victory")
 		return true
 	return false
 
+func awaken_death_power() -> void:
+	if not reveal_pending:
+		return
+	reveal_pending = false
+	river = true
+	madness.clear()
+	if "hero" not in active:
+		var replaced = active[0]
+		active[0] = "hero"
+		next_time.erase(replaced)
+	unit("hero").name = "伊文洛"
+	unit("hero").hp = unit("hero").hp_max
+	unit("hero").mp = unit("hero").mp_max
+	unit("hero").energy = 100
+	next_time["hero"] = clock
+	seek_next()
+
+func _mad_action(id: String) -> void:
+	madness.erase(id)
+	var targets = alive_allies() + alive_enemies()
+	targets.erase(id)
+	if targets.is_empty():
+		return
+	var target = targets[run.rng.randi_range(0, targets.size() - 1)]
+	var before = _unit_view(unit(target))
+	_hurt(target, run.stat(id, "attack") * 2)
+	_emit_event({"actor": id, "kind": "attack", "targets": [target], "skill_id": "mad_attack", "element": "normal", "results": [_visual_result(target, before)]})
+	_complete_action(id)
+
 func retreat() -> Dictionary:
+	if river or reveal_pending:
+		return _fail("决战正在进行。")
 	if outcome != "":
 		return _fail("战斗已经结束。")
 	for id in paid:
@@ -514,6 +589,7 @@ func _finish(result: String) -> void:
 			run.data.flags["duel_won_" + npc] = true
 	var reward_key = position + ":" + npc
 	if result == "victory":
+		run.record_story_progress(position, false)
 		var revived: Array[String] = []
 		var receiver = ""
 		var relic = ""
@@ -553,7 +629,7 @@ func _finish(result: String) -> void:
 	else:
 		_log("战败。重伤者留在遭遇地点。")
 	run.data.pending_battle = {}
-	run.data.status = "exploring"
+	run.data.status = "won" if result == "victory" and not war_boss.is_empty() else "exploring"
 	if result == "defeat" and paid.has("hero"):
 		run.data.status = "failed"
 		run.data.flags["failure_reason"] = "主角参与的战斗中，友方与合格同地候补均无法继续。"

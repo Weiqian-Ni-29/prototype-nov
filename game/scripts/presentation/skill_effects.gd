@@ -115,7 +115,7 @@ func number(point: Vector3, text: String, color: Color) -> void:
 
 const ELEMENT_COLORS = {
 	"normal": Color("e6c98a"), "fire": Color("ef8749"), "water": Color("7fd3e2"),
-	"ice": Color("b8e8ff"), "lightning": Color("d5b4ff"), "wind": Color("b1f5c5"), "earth": Color("dbad73"),
+	"gravity": Color("aaa4d6"), "ice": Color("b8e8ff"), "lightning": Color("d5b4ff"), "wind": Color("b1f5c5"), "earth": Color("dbad73"),
 }
 
 func projectile(start: Vector3, end: Vector3, kind: String, element: String, duration: float = 0.22) -> void:
@@ -165,6 +165,10 @@ func ultimate_start(skill: String, actor: Vector3, targets: Array) -> void:
 				ring(Vector3(target.x,0.18,target.z),Color("8bdae0"),0.9,0.8)
 				burst(target-Vector3.UP*0.5,"circle_01",Color("93d3dd"),18,0.9)
 
+		"gravity_wave":
+			for target in targets:
+				ring(target - Vector3.UP * 0.5, ELEMENT_COLORS.gravity, 1.4, 0.65)
+				burst(target, "trace_01", ELEMENT_COLORS.gravity, 14, 0.55)
 		"frostfall":
 			for target in targets:
 				ring(target - Vector3.UP * 0.5, ELEMENT_COLORS.ice, 1.0, 0.6)

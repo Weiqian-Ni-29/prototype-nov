@@ -5,7 +5,7 @@ const Catalog = preload("res://scripts/domain/catalog.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
-const SAVE_VERSION = 2
+const SAVE_VERSION = 3
 signal changed
 var data: Dictionary = {}
 var rng = RandomNumberGenerator.new()
@@ -16,14 +16,16 @@ func new_run(seed_value: int, profession: String) -> void:
 	assert(Catalog.PROFESSIONS.has(profession))
 	var generated = Hex.generate(seed_value)
 	rng.seed = seed_value ^ 0x5eed123
-	data = {"version": SAVE_VERSION, "seed": seed_value, "profession": profession, "day": 1, "weather": "sun", "tiles": generated.tiles, "start": generated.start, "exit": generated.exit, "actors": {}, "explored": {}, "visited": {}, "flags": {}, "knowledge": {}, "submitted": {}, "story": {}, "rewards": {}, "choices": [], "status": "exploring", "log": [], "last_day_settled": 0, "battles": 0, "transaction": 0, "pending_battle": {}}
+	data = {"version": SAVE_VERSION, "seed": seed_value, "profession": profession, "day": 1, "weather": "sun", "tiles": generated.tiles, "start": generated.start, "boss": generated.boss, "leads": {}, "peace": {}, "chapter": 0, "actors": {}, "explored": {}, "visited": {}, "flags": {}, "knowledge": {}, "story": {}, "rewards": {}, "choices": [], "status": "exploring", "log": [], "last_day_settled": 0, "battles": 0, "transaction": 0, "pending_battle": {}}
 	var hero_def = Catalog.PROFESSIONS[profession].duplicate(true)
-	hero_def["title"] = hero_def.name
-	hero_def["name"] = hero_def.get("hero_name", "旅人")
-	hero_def["element"] = hero_def.get("element", "normal")
+	hero_def["title"] = "旅人"
+	hero_def["name"] = "旅人"
+	hero_def["element"] = "none"
 	hero_def["portrait"] = "hero"
+	hero_def["skill"] = "gravity"
+	hero_def["ultimate"] = "gravity_drift"
 	data.actors["hero"] = _actor("hero", hero_def, generated.start, true)
-	data.actors.hero.inventory.merge({"Q-T": 1, "trail_food": 2, "trail_blade": 1, "padded_coat": 1, "lamp_charm": 1})
+	data.actors.hero.inventory.merge({"trail_food": 2, "trail_blade": 1, "padded_coat": 1, "lamp_charm": 1})
 	data.actors.hero.equipment = {"weapon": "trail_blade", "armor": "padded_coat", "accessory": "lamp_charm"}
 	for id in Catalog.COMPANIONS:
 		var location = ""
@@ -32,14 +34,11 @@ func new_run(seed_value: int, profession: String) -> void:
 				location = k
 		data.actors[id] = _actor(id, Catalog.COMPANIONS[id], location, false)
 		data.story[id] = {"relation": "unmet", "result": "E0", "met": false}
-	data.actors.lorne.inventory["Q-L"] = 1
-	data.actors.eve.inventory["Q-M"] = 1
-	data.actors.tide.inventory["Q-WA"] = 1
 	_initialize_relics()
 	_initialize_nodes()
 	_ensure_squads()
 	reveal(generated.start)
-	note("渡桥已塌。登记副本写着归航站的方向；沿途仍有未熄的灯。")
+	note("村民送来了疗伤药、澄露和干粮。你想找到结束战争的办法。")
 
 func _actor(id: String, definition: Dictionary, position: String, joined: bool) -> Dictionary:
 	var result = definition.duplicate(true)
@@ -176,7 +175,7 @@ func stat(id: String, field: String) -> int:
 	for slot in a.equipment:
 		var item = Catalog.ITEMS.get(a.equipment[slot], {})
 		value += int(item.get(field, 0))
-	if field == "attack" and a.joined and has_relic("ranged_sight") and a.skill in ["trail_shot", "snare", "ember", "torrent", "heal"]:
+	if field == "attack" and a.joined and has_relic("ranged_sight") and a.skill in ["trail_shot", "snare", "ember", "torrent", "heal", "gravity", "frost_arrow", "thunderbolt", "windblade"]:
 		value = roundi(value * 1.15)
 	return value
 
@@ -261,6 +260,8 @@ func use_node(id: String, option: String) -> Dictionary:
 	var visitor = actor(id)
 	var cell: String = visitor.position
 	var node = node_at(cell)
+	if option == "settle" and "hero" not in same_cell(cell, true):
+		return fail("等旅人到场，再一起处理这里的事。")
 	if node.is_empty() or not node.result.is_empty():
 		return fail("这里的事件已经处理完毕。")
 	var message = ""
@@ -293,12 +294,15 @@ func use_node(id: String, option: String) -> Dictionary:
 		["choice", "work"]:
 			data.lamp_coins += int(node.coins)
 			message = "%s 完成委托，得到 %d 灯铢。" % [visitor.name, node.coins]
-		["clue", "record"]:
-			message = "已将此处见闻写进旅途手记。"
+		["clue", "record"], ["haunt", "settle"]:
+			message = "已将此处见闻写进旅途手记。" if option == "record" else "附近终于安静下来。"
+			record_story_progress(cell, option == "settle")
 		_:
 			return fail("当前节点没有这个选项。")
 	visitor.ap -= cost
 	node.result = option
+	if option == "work":
+		record_story_progress(cell, true)
 	note(message)
 	changed.emit()
 	return {"ok": true, "message": message}
@@ -368,7 +372,7 @@ func has_visited(position: String) -> bool:
 
 func knows_encounter(position: String) -> bool:
 	var tile = data.tiles[position]
-	return has_visited(position) and tile.discovered_enemy and not tile.enemies.is_empty()
+	return (has_visited(position) or (position == data.boss and boss_known())) and tile.discovered_enemy and not tile.enemies.is_empty()
 
 func move_cost(id: String, destination: String) -> int:
 	var cost = int(Catalog.TERRAIN[data.tiles[destination].terrain].cost)
@@ -388,11 +392,16 @@ func movement_preview(ids: Array, destination: String) -> Dictionary:
 	var source = actor(str(ids[0])).get("position", "")
 	if not data.tiles.has(source):
 		return fail("角色位置无效。")
-	if not data.tiles[source].enemies.is_empty():
+	if not data.tiles[source].enemies.is_empty() and source != data.boss:
 		return fail("敌人阻挡此处；需交战，或在战斗中撤退。")
 	if destination not in Hex.neighbors(source, data.tiles):
 		return fail("每次移动一格；可点击远处地块查看路径。")
 	var known_encounter = knows_encounter(destination)
+	if destination == data.boss and known_encounter:
+		var hero = actor("hero")
+		var can_enter = ("hero" in ids and hero.ap >= move_cost("hero", destination) + Catalog.BATTLE_AP) or (hero.position == destination and hero.ap >= Catalog.BATTLE_AP)
+		if hero.hp <= 0 or not can_enter:
+			return fail("需要旅人亲自前往，并留出 2 点精力迎战。")
 	var costs = {}
 	for id in ids:
 		if costs.has(id):
@@ -589,26 +598,41 @@ func check_global_failure() -> bool:
 	data.flags["failure_reason"] = "全体重伤，已没有可行动的救援者。"
 	return true
 
-func extraction_preview() -> Dictionary:
-	var present: Array[String] = []
-	var absent: Array[String] = []
-	for id in joined_ids():
-		if actor(id).position == data.exit:
-			present.append(id)
-		else:
-			absent.append(id)
-	return {"present": present, "absent": absent}
+func war_god_stats() -> Dictionary:
+	var result = Catalog.ENEMIES.war_god.duplicate(true)
+	var calm = mini(12, data.peace.size())
+	result.hp -= calm * 3
+	result.attack -= calm
+	return result
 
-func extract() -> Dictionary:
-	if data.status != "exploring" or actor("hero").position != data.exit or actor("hero").hp <= 0:
-		return fail("主角需可行动并在归航站，才能确认结束。")
-	if not data.pending_battle.is_empty():
-		return fail("先处理当前遭遇。")
-	data.status = "extracted"
-	data.flags["extraction"] = extraction_preview()
-	note("你确认了归航名单。到站者撤离，异地成员按真实处境留下记录。")
-	changed.emit()
-	return success()
+func boss_known() -> bool:
+	return int(data.chapter) >= 4
+
+func pending_chapter() -> int:
+	var chapter = int(data.chapter)
+	if data.status == "exploring" and chapter < 4 and data.explored.size() * 100 >= (chapter + 1) * 20 * data.tiles.size():
+		return chapter + 1
+	return 0
+
+func finish_chapter(chapter: int) -> void:
+	if chapter != pending_chapter():
+		return
+	data.chapter = chapter
+	if chapter == 2:
+		actor("hero").ultimate = "gravity_wave"
+		note("你记起了怎样把周围的敌人一并压向地面。")
+	if chapter == 4:
+		data.tiles[data.boss].enemies = ["war_god"]
+		data.tiles[data.boss].discovered_enemy = true
+		data.explored[data.boss] = true
+		note("战神的位置已标在地图上。")
+
+func record_story_progress(cell: String, peaceful: bool) -> void:
+	if cell == data.boss:
+		return
+	data.leads[cell] = true
+	if peaceful:
+		data.peace[cell] = true
 
 func _map_action(id: String, cost: int) -> Dictionary:
 	var a = actor(id)
@@ -698,15 +722,17 @@ func _restore_legacy_visits() -> void:
 		data.explored[position] = true
 
 func _validate_save(loaded: Dictionary) -> String:
-	if not loaded.has_all(["flags", "story", "submitted", "knowledge", "rewards", "log", "pending_battle", "start", "exit", "profession", "explored", "transaction", "battles", "weather"]):
+	if not loaded.has_all(["flags", "story", "knowledge", "rewards", "log", "pending_battle", "start", "boss", "leads", "peace", "chapter", "profession", "explored", "transaction", "battles", "weather"]):
 		return "缺少进度字段"
-	for key in ["actors", "tiles", "flags", "story", "submitted", "knowledge", "rewards", "pending_battle", "explored"]:
+	for key in ["actors", "tiles", "flags", "story", "knowledge", "rewards", "pending_battle", "explored", "leads", "peace"]:
 		if not loaded[key] is Dictionary:
 			return "字段类型不符"
-	if loaded.tiles.size() != 217 or not loaded.tiles.has(loaded.start) or not loaded.tiles.has(loaded.exit):
+	if loaded.tiles.size() != 217 or not loaded.tiles.has(loaded.start) or not loaded.tiles.has(loaded.boss):
 		return "地图不完整"
-	if loaded.status not in ["exploring", "extracted", "failed"] or loaded.weather not in ["sun", "rain"] or not Catalog.PROFESSIONS.has(loaded.profession):
+	if loaded.status not in ["exploring", "won", "failed"] or loaded.weather not in ["sun", "rain"] or not Catalog.PROFESSIONS.has(loaded.profession):
 		return "状态或职业无效"
+	if not _whole_number(loaded.chapter) or loaded.chapter < 0 or loaded.chapter > 4:
+		return "剧情进度无效"
 	if not loaded.log is Array or not _whole_number(loaded.day) or int(loaded.day) < 1 or not str(loaded.rng_state).is_valid_int():
 		return "日期或随机状态无效"
 	if loaded.has("choices") and not loaded.choices is Array:

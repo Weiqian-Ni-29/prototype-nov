@@ -247,6 +247,8 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 		for next in Hex.neighbors(id, current_tiles):
 			borders.append(visible_layout.get(next, []))
 		var site: String = t.site if visited else ""
+		if t.site == "boss":
+			site = "boss" if run.boss_known() else ""
 		var signature = JSON.stringify([visible_layout[id], borders, site])
 		if tile_signatures.get(id, "") != signature:
 			dirty_details[Board.chunk_for(id)] = true
@@ -297,14 +299,8 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 		var count = int(counts.get(a.position, 0))
 		counts[a.position] = count + 1
 		var total = int(visible_counts[a.position])
-		model.scale = Vector3.ONE * (0.19 if total > 4 else 0.22 if total > 1 else 0.24)
-		var offset = Vector3.ZERO
-		if total>1:
-			var ring_count = total-1 if total==7 else total
-			var index = count-1 if total==7 else count
-			if index>=0:
-				var angle = TAU*float(index)/ring_count
-				offset += Vector3(cos(angle),0,sin(angle))*(0.52 if total>3 else 0.34)
+		model.scale = Vector3.ONE * (0.13 if total > 7 else 0.19 if total > 4 else 0.22 if total > 1 else 0.24)
+		var offset = _actor_offset(count, total)
 		var point = Hex.world(a.position) + offset
 		point.y = board_surface.height_at(point) + 0.025
 		if model.has_meta("cell") and model.get_meta("cell") != a.position:
@@ -746,12 +742,33 @@ func _draw_battle_stage(definition: Dictionary, position: String) -> void:
 		var backdrop = Terrain.tile(battle_stage, tile, i + 31)
 		backdrop.position = Vector3(-5 + i * 2.4, -0.2, -4.0)
 		backdrop.scale = Vector3(1.4, 1.7, 1.4)
+	if tile.get("river", false):
+		_draw_river()
 	if tile.burning:
 		var fire_ring = Node3D.new()
 		battle_stage.add_child(fire_ring)
 		fire_ring.position = Vector3(0, 0.05, 2.8)
 		Terrain.fire(fire_ring)
 	battle_root.set_meta("environment_signature", _battle_signature(tile))
+
+func _draw_river() -> void:
+	var ribbon = SurfaceTool.new()
+	ribbon.begin(Mesh.PRIMITIVE_TRIANGLE_STRIP)
+	for i in range(17):
+		var x = -5.1 + i * 0.60
+		var center = 1.25 + sin(x * 0.7) * 0.66
+		ribbon.set_color(Color("50466c"))
+		ribbon.add_vertex(Vector3(x, 0.09, center - 0.62))
+		ribbon.set_color(Color("24273e"))
+		ribbon.add_vertex(Vector3(x, 0.09, center + 0.62))
+	var surface = MeshInstance3D.new()
+	surface.mesh = ribbon.commit()
+	var material = StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	material.vertex_color_use_as_albedo = true
+	surface.material_override = material
+	battle_stage.add_child(surface)
 
 func refresh_battle(_run: RefCounted, combat: RefCounted) -> void:
 	var tile = combat.field_view()
@@ -851,10 +868,28 @@ func impact_camera(strength: float) -> void:
 	camera_impulse = maxf(camera_impulse,strength)
 
 func _battle_signature(tile: Dictionary) -> String:
-	return "%s:%s:%s" % [tile.terrain, tile.burning, tile.wet]
+	return "%s:%s:%s:%s" % [tile.terrain, tile.burning, tile.wet, tile.get("river", false)]
+
+static func _actor_offset(index: int, total: int) -> Vector3:
+	if total <= 1 or (total >= 7 and index == 0):
+		return Vector3.ZERO
+	var radius = 0.52 if total > 3 else 0.34
+	var slots = total - 1 if total >= 7 else total
+	var slot = index - 1 if total >= 7 else index
+	if total > 7:
+		var inner = mini(8, ceili((total - 1) / 3.0))
+		if slot < inner:
+			radius = 0.36
+			slots = inner
+		else:
+			radius = 0.74
+			slot -= inner
+			slots -= inner
+	var angle = TAU * float(slot) / slots
+	return Vector3(cos(angle), 0, sin(angle)) * radius
 
 static func _site_name(site: String) -> String:
-	return {"start": "断桥废棚", "exit": "归航站", "inn": "白栎旧驿站", "home": "林边人家", "record": "旧调度柜", "sign": "山路旧牌", "forest": "林缘捕网", "herb": "药箱树荫", "track": "旧兽径营地", "clear": "清障营地", "water": "水文台"}.get(site, "路途")
+	return {"start": "村庄", "boss": "战神卡德兰"}.get(site, "路途")
 
 static func _label(parent: Node3D, text: String, point: Vector3, color: Color, pixel_size: float = 0.006) -> void:
 	var label = Label3D.new()

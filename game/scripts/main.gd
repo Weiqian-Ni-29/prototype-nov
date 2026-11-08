@@ -12,32 +12,11 @@ const World = preload("res://scripts/presentation/world_view.gd")
 const MapMovePreview = preload("res://scripts/presentation/map_move_preview.gd")
 const FontAsset = preload("res://assets/fonts/NotoSansSC.ttf")
 const Sound = preload("res://scripts/presentation/sound.gd")
-const TITLE_ART = preload("res://assets/portraits/waystation-ensemble.png")
+enum Screen { MENU, OPENING_STORY, EXPEDITION }
 const OBJECTIVE_ICON = preload("res://assets/ui/expedition-objective.svg")
-const PROFESSION_ART = {
-	"wayfarer": preload("res://assets/portraits/hero.png"),
-	"guardian": preload("res://assets/portraits/hero-guardian.png"),
-	"arcanist": preload("res://assets/portraits/hero-arcanist.png"),
-	"frost_archer": preload("res://assets/portraits/hero.png"),
-	"storm_caller": preload("res://assets/portraits/hero-arcanist.png"),
-	"wind_runner": preload("res://assets/portraits/lorne.png"),
-	"stone_guard": preload("res://assets/portraits/hero-guardian.png"),
-}
-enum Screen { MENU, PROFESSION, OPENING_STORY, EXPEDITION }
-const STORY_SITES = {
-	"start": "shelter", "sign": "highland", "inn": "waystation", "home": "woodland",
-	"record": "ruins", "water": "ruins", "exit": "harbor", "forest": "woodland",
-	"track": "woodland", "herb": "woodland", "clear": "ruins",
-}
 const STORY_TERRAIN = {
 	"plains": "road", "forest": "woodland", "mountain": "highland", "ruins": "ruins",
 	"desert": "drylands", "swamp": "wetlands",
-}
-const SITE_IMPRESSIONS = {
-	"start": "桥板已沉入河槽。出发前，商队曾把一包疗伤药留在废棚梁下。",
-	"sign": "路牌被人转回了正确的方向。新刻痕在旧字下面，指向仍有人走的那一侧。",
-	"herb": "几圈药瓶的旧印还留在地上。伊芙整理药箱时在这里歇过脚。",
-	"clear": "旧器械还横在清障点。有人把沾过灰的部分单独堆起，等下一次核对记录。",
 }
 var run = Run.new()
 var view: Node3D
@@ -51,8 +30,8 @@ var move_from_current_cell = false
 var move_preview = MapMovePreview.new()
 var moving_ids: Array = ["hero"]
 var crew_collapsed = false
-var chosen_profession = "wayfarer"
-var chosen_seed = "20261104"
+var chosen_seed = ""
+var opening_seed = 20261104
 var selected_target = "enemy_0"
 var screen_state = Screen.MENU
 var battle_timer = 0.0
@@ -60,13 +39,14 @@ var toast_text = ""
 var narrative: RefCounted
 var dialogue_subject = ""
 var dialogue_response = ""
+var dialogue_ready = false
 var sound: Node
 var gold = Color("dec38e")
 var ink = Color("e8e4d1")
 var muted = Color("a2b3a7")
 
 func _ready() -> void:
-	DisplayServer.window_set_title("归灯之野 · 白栎远征")
+	DisplayServer.window_set_title("维洛丹")
 	sound = Sound.new()
 	add_child(sound)
 	view = World.new()
@@ -209,16 +189,13 @@ func _refresh() -> void:
 	if screen_state == Screen.MENU:
 		_menu(screen)
 		return
-	if screen_state == Screen.PROFESSION:
-		_profession_picker(screen)
-		return
 	if screen_state == Screen.OPENING_STORY:
 		return
 	view.refresh(run, selected_id, selected_cell)
 	_header(screen)
 	if combat != null:
 		_battle_ui(screen)
-	elif run.data.status in ["extracted", "failed"]:
+	elif run.data.status in ["won", "failed"]:
 		_summary(screen)
 		_footer(screen)
 	else:
@@ -227,7 +204,7 @@ func _refresh() -> void:
 			_show_move_preview()
 
 func _menu(screen: Vector2) -> void:
-	var cover = _opening_image(TITLE_ART)
+	var cover = _opening_image(_story_texture("cover"))
 	cover.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	cover.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var box = VBoxContainer.new()
@@ -235,14 +212,14 @@ func _menu(screen: Vector2) -> void:
 	box.size.x = minf(365, screen.x * 0.28)
 	box.add_theme_constant_override("separation", 12)
 	ui.add_child(box)
-	_text(box, "RETURN TO THE LAMPS", 13, gold)
-	_text(box, "归灯之野", 64, ink)
-	_text(box, "第一章  ·  地图上没有的驿站", 21, gold)
-	_text(box, "渡桥已塌，归途在迷雾之外。", 18, ink)
-	var new_run = _button(box, "开始新远征  →", func(): _show_opening(Screen.PROFESSION))
+	_text(box, "维洛丹", 64, ink)
+	_text(box, "VEYLODAN", 14, gold)
+	_text(box, "从一座村庄醒来，找到结束战争的办法。", 18, ink)
+	var new_run = _button(box, "开始新远征  →", _begin_opening_story)
 	new_run.custom_minimum_size.y = 52
 	new_run.add_theme_stylebox_override("normal", _style(Color("486054"), gold.darkened(0.2), 6))
 	_button(box, "继续上次远征", _continue_run, not FileAccess.file_exists(run.save_path))
+	_button(box, "地图种子", _seed_dialog)
 	_button(box, "设置与操作指南", _settings_dialog)
 
 func _opening_image(texture: Texture2D) -> TextureRect:
@@ -257,90 +234,61 @@ func _show_opening(state: Screen) -> void:
 	screen_state = state
 	_refresh()
 
-func _profession_picker(screen: Vector2) -> void:
-	var backdrop = ColorRect.new()
-	backdrop.color = Color("101f21")
-	backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ui.add_child(backdrop)
-	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	var portrait_height = minf(screen.y * 0.9, screen.x * 0.44 / 0.75)
-	var portrait = _opening_image(PROFESSION_ART[chosen_profession])
-	portrait.name = "ProfessionPortrait"
-	portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	portrait.size = Vector2(portrait_height * 0.75, portrait_height)
-	portrait.position = Vector2(screen.x * 0.94 - portrait.size.x, (screen.y - portrait_height) * 0.5)
-
-	var box = _panel(ui, Rect2(screen.x * 0.06, screen.y * 0.07, screen.x * 0.43, screen.y * 0.86))
-	_text(box, "新远征", 15, gold)
-	_text(box, "选择出发角色", 44, ink)
-	var elemental = Catalog.PROFESSIONS[chosen_profession].has("hero_name")
-	var categories = HBoxContainer.new()
-	box.add_child(categories)
-	_button(categories, "旅人职业", _choose_profession.bind("wayfarer"), not elemental)
-	_button(categories, "元素英雄", _choose_profession.bind("frost_archer"), elemental)
-	var options = _scroll_content(box)
-	for id in Catalog.PROFESSIONS:
-		var p = Catalog.PROFESSIONS[id]
-		if p.has("hero_name") != elemental:
-			continue
-		var selected = id == chosen_profession
-		var name = "%s · %s" % [Catalog.ELEMENT_NAMES[p.element], p.hero_name] if elemental else str(p.name)
-		var title = ("◆ " if selected else "◇ ") + name + "   HP %d · MP %d · 精力 %d" % [p.hp, p.mp, p.ap]
-		var option = _button(options, title + "\n" + p.description, _choose_profession.bind(id))
-		option.custom_minimum_size.y = 80
-		option.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		if selected:
-			var accent = Color(p.color)
-			option.add_theme_stylebox_override("normal", _style(Color("29413c").lerp(accent, 0.22), accent, 6))
-	var row = HBoxContainer.new()
-	options.add_child(row)
-	var seed_label = _text(row, "地图种子", 16, muted)
-	seed_label.custom_minimum_size.x = 100
-	seed_label.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	var seed_edit = LineEdit.new()
-	seed_edit.text = chosen_seed
-	seed_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	seed_edit.text_changed.connect(func(value: String): chosen_seed = value)
-	row.add_child(seed_edit)
-	if elemental:
-		_button(box, "直接开始远征  →", _start_new)
-	else:
-		_button(box, "开始远征  →", _begin_opening_story)
-	_button(box, "返回主菜单", _show_opening.bind(Screen.MENU))
-
-func _choose_profession(id: String) -> void:
-	chosen_profession = id
-	_refresh()
+func _seed_dialog() -> void:
+	var box = _modal("地图种子", 500, 250)
+	var field = LineEdit.new()
+	field.text = chosen_seed
+	field.placeholder_text = "留空时，每次出发随机生成"
+	box.add_child(field)
+	_button(box, "确定", func():
+		chosen_seed = field.text.strip_edges()
+		_close_modal())
 
 func _begin_opening_story() -> void:
 	_show_opening(Screen.OPENING_STORY)
-	_opening_beat("road")
+	opening_seed = randi() if chosen_seed.is_empty() else _seed_value()
+	var generated = Hex.generate(opening_seed)
+	var terrain: String = generated.tiles[generated.start].terrain
+	_opening_world_page(terrain, 0)
 
-func _opening_beat(id: String, decision: String = "") -> void:
-	var beat: Dictionary = OpeningStory.BEATS[id]
-	var choices: Array = beat.options if beat.options.size() > 1 else []
-	_show_story(OpeningStory.TITLE + "  /  " + beat.location, beat.speaker, beat.text,
-		beat.scene, [], choices,
-		func(next: String):
-			if next.is_empty():
-				next = beat.options[0].id
-			if next == "depart":
-				_start_new(decision)
+func _opening_world_page(terrain: String, index: int) -> void:
+	var pages = OpeningStory.WORLD.split("\n\n")
+	_show_story("诸神的战争", "旁白", pages[index], "world_intro", [], [],
+		func(_option: String):
+			if index + 1 < pages.size():
+				_opening_world_page(terrain, index + 1)
 			else:
-				_opening_beat(next, next if id == "shelter" else decision),
-		{
-			"返回职业选择": func():
-				_close_modal()
-				_show_opening(Screen.PROFESSION),
-			"跳过剧情": func(): _start_new(),
-		})
+				_village_page(terrain, 0),
+		{"返回主菜单": _cancel_opening})
 
-func _start_new(opening_decision: String = "") -> void:
+func _cancel_opening() -> void:
 	_close_modal()
-	var value = int(chosen_seed) if chosen_seed.is_valid_int() else hash(chosen_seed)
-	run.new_run(value, chosen_profession)
-	if not opening_decision.is_empty():
-		run.data.choices.append({"day": 1, "visitor": "hero", "subject": "opening", "option": opening_decision})
+	_show_opening(Screen.MENU)
+
+func _village_page(terrain: String, index: int) -> void:
+	var local = OpeningStory.village(terrain)
+	var villager = "villager_" + str(local[1])
+	var poses = ["concerned", "", "serious", "serious", "", "farewell", "farewell"]
+	var pages = OpeningStory.dialogue(terrain)
+	var page = pages[index]
+	_show_story(local[0], page[0], page[1], "village_" + terrain,
+		[_story_portrait("hero", "serious")] if page[0] == "旅人" else [_story_portrait(villager, poses[index])], [],
+		func(_option: String):
+			if index + 1 < pages.size():
+				_village_page(terrain, index + 1)
+			else:
+				_start_new(),
+		{"返回主菜单": _cancel_opening})
+
+func _seed_value() -> int:
+	if chosen_seed.is_empty():
+		return 20261104
+	return int(chosen_seed) if chosen_seed.is_valid_int() else hash(chosen_seed)
+
+func _start_new() -> void:
+	_close_modal()
+	var value = opening_seed if screen_state == Screen.OPENING_STORY else _seed_value()
+	run.new_run(value, "wayfarer")
 	combat = null
 	_clear_map_move()
 	view.reset()
@@ -374,7 +322,7 @@ func _continue_run() -> void:
 		_formation_dialog()
 	elif run.data.has("pending_victory"):
 		_victory_dialog()
-	elif not _show_relic_intro():
+	elif not _show_chapter() and not _show_relic_intro():
 		_show_npc_encounter(selected_id)
 
 func _header(screen: Vector2) -> void:
@@ -382,7 +330,7 @@ func _header(screen: Vector2) -> void:
 	var row = HBoxContainer.new()
 	row.add_theme_constant_override("separation", 20)
 	box.add_child(row)
-	_text(row, "归灯之野", 29, gold).custom_minimum_size.x = 190
+	_text(row, "维洛丹", 29, gold).custom_minimum_size.x = 190
 	var weather = "细雨" if run.data.weather == "rain" else "晴朗"
 	var exploration = floori(100.0 * run.data.explored.size() / run.data.tiles.size())
 	var conditions = HBoxContainer.new()
@@ -413,13 +361,16 @@ func _header(screen: Vector2) -> void:
 	_button(row, "主菜单", _to_menu)
 
 func _expedition_objective() -> String:
-	if run.data.status in ["extracted", "failed"]:
-		return "远征已结束"
-	if run.actor("hero").position == run.data.exit:
-		return "已抵达撤离点 · 等待同伴或确认撤离"
-	if run.has_visited(run.data.exit):
-		return "前往撤离点 · 可从旅途手记定位"
-	return "找到岛上的撤离点"
+	if run.data.status in ["won", "failed"]:
+		return "旅程已结束"
+	return [
+		"踏出旅程的第一步",
+		"帮助被亡灵困扰的地方",
+		"查清谁在延长战争",
+		"找到亡军的集结地",
+		"击败战神卡德兰",
+	][int(run.data.chapter)]
+
 
 func _crew_panel(screen: Vector2) -> void:
 	var box = _panel(ui, Rect2(20, 120, 244, 56 if crew_collapsed else screen.y - 275))
@@ -490,26 +441,27 @@ func _cell_actions() -> void:
 	var dialog = _modal(title, 570, 580)
 	var box = _scroll_content(dialog)
 	_text(box, "%s · 坐标 %s" % [Catalog.terrain_name(t.terrain), cell], 14, muted)
-	if t.site.is_empty() and not Nodes.story(node).is_empty():
+	if (t.site.is_empty() or (t.site == "boss" and not run.boss_known())) and not Nodes.story(node).is_empty():
 		_button(box, "查看节点剧情", _node_dialog)
 	if run.knows_encounter(cell):
-		_text(box, "驻守敌人 · 强度固定", 18, Color("e4ab87"))
+		_text(box, "决战 · 已平息 %d 处纷争" % run.data.peace.size() if t.enemies.has("war_god") else "驻守敌人", 18, Color("e4ab87"))
 		_text(box, "首次上场每人 2 精力；同地最多四名角色出战。", 14, muted)
 		for enemy in t.enemies:
 			_text(box, Catalog.ENEMIES[enemy].name + " · " + Catalog.ENEMIES[enemy].role, 14, muted)
 			if run.actor("grit").joined and run.actor("grit").hp > 0 and run.actor("grit").position == cell:
-				var definition = Catalog.ENEMIES[enemy]
+				var definition = run.war_god_stats() if enemy == "war_god" else Catalog.ENEMIES[enemy]
 				_text(box, "砾牙辨识：HP %d · 攻击 %d · 速度 %d" % [definition.hp, definition.attack, definition.speed], 13, gold)
 		var eligible = run.same_cell(cell, true).any(func(id): return Combat.can_deploy(run.actor(id), {}))
-		_button(box, "选择阵容并交战", _open_current_encounter, not eligible)
-	if t.npc != "" and t.npc != selected_id and run.actor(t.npc).position == cell:
+		var requires_hero = t.enemies.has("war_god") and ("hero" not in run.same_cell(cell, true) or run.actor("hero").ap < Catalog.BATTLE_AP)
+		if requires_hero:
+			_text(box, "需要旅人到场并保留 2 点精力。", 15, muted)
+		_button(box, "选择阵容并交战", _open_current_encounter, not eligible or requires_hero)
+	if t.npc != "" and t.npc != selected_id and run.actor(t.npc).position == cell and t.enemies.is_empty():
 		var npc = run.actor(t.npc)
 		_text(box, npc.name + " · " + npc.title, 18)
 		_button(box, "交谈 / 个人故事", _talk.bind(t.npc))
-	elif t.site in ["inn", "home", "record", "exit", "water", "track", "forest"]:
-		_button(box, "调查与交谈", _talk.bind(t.site))
-	elif SITE_IMPRESSIONS.has(t.site):
-		_button(box, "查看地点", _site_impression)
+	elif t.site == "start":
+		_button(box, "看看村庄", _site_impression)
 	for id in run.same_cell(cell):
 		if id != "hero" and id != t.npc and id != selected_id:
 			_button(box, "与 " + run.actor(id).name + " 交谈", _talk.bind(id))
@@ -528,22 +480,19 @@ func _cell_actions() -> void:
 	if actor.skill == "heal":
 		_button(box, "治疗队友 · 1 精力 / 12 MP", _healing_dialog)
 	_button(box, "拆分小队", _split_squad_dialog).disabled = run.squad_members(selected_id).size() < 2
-	if cell == run.data.exit and run.actor("hero").position == run.data.exit:
-		_button(box, "确认撤离 / 继续等待", _extraction_dialog)
 	_button(dialog, "关闭", _close_modal)
 
 func _node_title(cell: String) -> String:
 	var tile = run.data.tiles[cell]
-	if not tile.site.is_empty():
+	if not tile.site.is_empty() and (tile.site != "boss" or run.boss_known()):
 		return World._site_name(tile.site)
 	return Nodes.story(run.node_at(cell)).get("title", Catalog.terrain_name(tile.terrain))
 
 func _site_impression() -> void:
 	var cell: String = run.actor(selected_id).position
-	var tile = run.data.tiles[cell]
-	var text: String = SITE_IMPRESSIONS[tile.site]
-	_show_story(_node_title(cell), Catalog.terrain_name(tile.terrain), text, _story_scene_at(cell),
-		[], [_node_option("leave", "返回地图")], func(_choice: String): _close_modal(), {}, _node_tint())
+	var terrain: String = run.data.tiles[cell].terrain
+	_show_story(_node_title(cell), "村民", "你回来啦。来喝口水吧。路上遇到难事的话，也可以坐下慢慢说。",
+		STORY_TERRAIN[terrain], [], [_node_option("leave", "返回地图")], func(_choice: String): _close_modal(), {}, _node_tint())
 
 func _node_resolved(node: Dictionary, tile: Dictionary) -> bool:
 	return not node.result.is_empty() or (node.kind == "supply" and tile.quantity <= 0) \
@@ -560,7 +509,7 @@ func _node_description(node: Dictionary, tile: Dictionary, event: Dictionary) ->
 func _node_option(id: String, label: String) -> Dictionary:
 	return {"id": id, "text": label}
 
-func _node_dialog(feedback: String = "") -> void:
+func _node_dialog(feedback: String = "", ready: bool = false) -> void:
 	var cell: String = run.actor(selected_id).position
 	var tile = run.data.tiles[cell]
 	var node = run.node_at(cell)
@@ -575,10 +524,14 @@ func _node_dialog(feedback: String = "") -> void:
 	var speaker: String = event.get("reaction_actor", "")
 	if speaker in run.same_cell(cell, true) and event.has("reaction"):
 		text += "\n%s说「%s」" % [run.actor(speaker).name, event.reaction]
-	if node.result == "record":
-		text += "\n" + _node_lead(cell, event)
+	if run.data.leads.has(cell):
+		text += "\n已把这里的线索记进手记。"
 	if not feedback.is_empty():
 		text += "\n" + feedback
+	if node.kind in ["choice", "haunt"] and not _node_resolved(node, tile) and not ready and feedback.is_empty():
+		_show_story(event.title, Catalog.terrain_name(tile.terrain), text, STORY_TERRAIN[tile.terrain], [], [],
+			func(_option: String): _node_dialog("", true), {"返回地图": _close_modal}, _node_tint())
+		return
 	var options: Array = []
 	if not _node_resolved(node, tile):
 		match node.kind:
@@ -594,11 +547,18 @@ func _node_dialog(feedback: String = "") -> void:
 				options.append(_node_option("work", "%s · 1 精力 · 得 %d 灯铢" % [event.get("work", "出手帮忙"), node.coins]))
 			"clue":
 				options.append(_node_option("record", "记入旅途手记"))
+			"haunt":
+				if "hero" in run.same_cell(cell, true):
+					options.append(_node_option("settle", event.get("work", "帮亡者了结心事")))
+				else:
+					text += "\n等旅人到场，再一起处理这里的事。"
 			"cache":
 				options.append(_node_option("search", "搜寻旧物 · 1 精力"))
 			"battle", "elite":
 				if run.knows_encounter(cell):
 					options.append(_node_option("fight", "选择阵容并交战"))
+	if not tile.npc.is_empty() and tile.npc != selected_id and run.actor(tile.npc).position == cell and tile.enemies.is_empty():
+		options.append(_node_option("talk", "和%s交谈" % run.actor(tile.npc).name))
 	options.append(_node_option("leave", "返回地图"))
 	_show_story(event.title, Catalog.terrain_name(tile.terrain) + " · " + Nodes.label(node.kind),
 		text, STORY_TERRAIN[tile.terrain], [], options, _node_choice, {}, _node_tint())
@@ -609,6 +569,8 @@ func _node_choice(option: String) -> void:
 			_close_modal()
 		"trade":
 			_shop_dialog()
+		"talk":
+			_talk(run.data.tiles[run.actor(selected_id).position].npc)
 		"fight":
 			_open_current_encounter()
 		_:
@@ -617,22 +579,6 @@ func _node_choice(option: String) -> void:
 			if result.ok and _show_relic_intro(func(): _node_dialog(str(result.get("message", "")))):
 				return
 			_node_dialog(str(result.get("message", "")))
-
-func _node_lead(cell: String, event: Dictionary) -> String:
-	var site: String = event.get("lead", "")
-	if site.is_empty():
-		return ""
-	for destination in run.data.tiles:
-		if run.data.tiles[destination].site != site:
-			continue
-		var offset = Hex.world(destination) - Hex.world(cell)
-		var side = "东" if offset.x > 0 else "西"
-		var vertical = "南" if offset.z > 0 else "北"
-		var direction = side if absf(offset.x) > absf(offset.z) * 2.0 else vertical
-		if absf(offset.x) * 2.0 > absf(offset.z) and absf(offset.z) * 2.0 >= absf(offset.x):
-			direction = vertical + side
-		return "线索指向%s，约在这里的%s侧。" % [World._site_name(site), direction]
-	return ""
 
 func _shop_dialog(feedback: String = "") -> void:
 	var trader = run.actor(selected_id)
@@ -779,7 +725,7 @@ func _move_selected() -> void:
 		view.follow_map_movement(selected_id)
 	if result.get("battle", false):
 		_formation_dialog()
-	else:
+	elif not _show_chapter():
 		_show_npc_encounter(selected_id if selected_id in moving_ids else moving_ids[0])
 
 func _run_action(result: Dictionary) -> void:
@@ -839,25 +785,10 @@ func _end_day_dialog() -> void:
 			remaining.append("%s %d 精力" % [run.actor(id).name, run.actor(id).ap])
 	_confirm("结束这一天？", "尚余：" + " / ".join(remaining) + "\n\n全队进入次日，精力回各自上限。次日天气可能变化。生命与魔力靠节点、物资和治疗恢复。", func(): _run_action(run.end_day()))
 
-func _extraction_dialog() -> void:
-	var preview = run.extraction_preview()
-	var message = "到站撤离：\n"
-	for id in preview.present:
-		message += run.actor(id).name + ("（重伤）" if run.actor(id).hp <= 0 else "") + "  "
-	message += "\n\n异地未撤离：\n"
-	for id in preview.absent:
-		message += "%s · %s · %s\n" % [run.actor(id).name, run.actor(id).position, "重伤待援" if run.actor(id).hp <= 0 else "可行动"]
-	message += "\n可取消并继续等人；确认后按当前处境记录尾声。"
-	_confirm("确认归航名单", message, func():
-		var result = run.extract()
-		_run_action(result)
-		if result.ok:
-			_ending_story())
-
 func _inventory_tab(item: String) -> int:
 	if Catalog.ITEMS.get(item, {}).has("slot"):
 		return 1
-	return 2 if Story.DOCUMENTS.has(item) else 0
+	return 0
 
 func _inventory_dialog(id: String, current_tab: int = 0, selected_consumable: String = "") -> void:
 	var a = run.actor(id)
@@ -868,7 +799,11 @@ func _inventory_dialog(id: String, current_tab: int = 0, selected_consumable: St
 		var item = str(a.equipment.get(slot, ""))
 		slots.append({"weapon": "武器", "armor": "防具", "accessory": "饰品"}[slot] + "：" + (Catalog.item_name(item) if item != "" else "空"))
 	_text(box, "  ·  ".join(slots), 17, gold)
-	_text(box, "专长：" + Catalog.passive_description(id), 16, muted)
+	if id != "hero" and Story.BACKGROUNDS.has(id):
+		_text(box, "%s · %s" % [a.race, Story.CHARACTER_BEHAVIOR[id][0]], 15, muted)
+	var passive = Catalog.passive_description(id)
+	if not passive.is_empty():
+		_text(box, "专长 " + passive, 16, muted)
 	_text(box, "技能 · " + Catalog.SKILLS[a.skill].name + "\n" + Catalog.skill_description(a.skill), 16, muted)
 	_text(box, "终结技 · " + Catalog.SKILLS[a.ultimate].name + "\n" + Catalog.skill_description(a.ultimate) + "；满能量额外释放，不占正常行动。", 16, muted)
 	var tabs = TabContainer.new()
@@ -876,7 +811,7 @@ func _inventory_dialog(id: String, current_tab: int = 0, selected_consumable: St
 	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(tabs)
 	var lists: Array[VBoxContainer] = []
-	for title in ["消耗品", "装备", "任务物品", "遗器"]:
+	for title in ["消耗品", "装备", "遗器"]:
 		var page = VBoxContainer.new()
 		page.name = title
 		tabs.add_child(page)
@@ -926,7 +861,7 @@ func _inventory_dialog(id: String, current_tab: int = 0, selected_consumable: St
 			card.add_child(row)
 		else:
 			lists[tab].add_child(row)
-		var item_label = _text(row, Story.DOCUMENTS.get(item, Catalog.item_name(item)) + " ×%d" % a.inventory[item], 16)
+		var item_label = _text(row, Catalog.item_name(item) + " ×%d" % a.inventory[item], 16)
 		if tab == 0:
 			item_label.size_flags_horizontal = Control.SIZE_FILL
 			item_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -950,24 +885,24 @@ func _inventory_dialog(id: String, current_tab: int = 0, selected_consumable: St
 			_button(row, "卸下" if item in a.equipment.values() else "装备", func(): _run_action(run.equip(id, item)); _inventory_dialog(id, 1))
 		if run.same_cell(a.position).size() > 1:
 			_button(row, "交接", _transfer_dialog.bind(id, item))
-	for i in range(3):
+	for i in range(2):
 		if lists[i].get_child_count() == 0:
 			_text(lists[i], "暂无物品。", 16, muted)
 	if cards.is_empty():
 		detail_panel.hide()
 	elif cards.has(selected_consumable):
 		select_consumable.call(selected_consumable)
-	_text(lists[3], "全队共享 · 本局有效", 17, gold)
+	_text(lists[2], "全队共享 · 本局有效", 17, gold)
 	if run.data.relics.is_empty():
-		_text(lists[3], "本次远征尚未获得遗器。", 16, muted)
+		_text(lists[2], "本次远征尚未获得遗器。", 16, muted)
 	for relic in run.data.relics:
 		var definition = Relics.DATA[relic]
-		_text(lists[3], "%s · %s" % [definition.name, "已触发" if definition.once else "持续生效"], 17, gold)
-		_text(lists[3], definition.effect, 16)
+		_text(lists[2], "%s · %s" % [definition.name, "已触发" if definition.once else "持续生效"], 17, gold)
+		_text(lists[2], definition.effect, 16)
 	_button(box, "关闭", _close_modal)
 
 func _transfer_dialog(owner: String, item: String) -> void:
-	var box = _modal("同地交接 · " + Story.DOCUMENTS.get(item, Catalog.item_name(item)), 650, 540)
+	var box = _modal("同地交接 · " + Catalog.item_name(item), 650, 540)
 	_text(box, "每次交接一件，不消耗精力。已装备的物品需先卸下。", 17, muted)
 	var content = _scroll_content(box)
 	for other in run.same_cell(run.actor(owner).position):
@@ -1060,6 +995,7 @@ func _formation_dialog() -> void:
 	var surprise = encounter.ambush or encounter.get("surprise", false)
 	_text(box, "每人本场首次上场支付 2 精力；同地候补可换入。" + ("\n突发遭遇：精力不足仍可出战，最多扣至 0。" if surprise else ""), 17, muted)
 	var chosen: Array = []
+	var lineup = _scroll_content(box)
 	for id in run.same_cell(encounter.position, true):
 		var eligible = Combat.can_deploy(run.actor(id), encounter)
 		var toggle = CheckBox.new()
@@ -1076,7 +1012,7 @@ func _formation_dialog() -> void:
 					toggle.set_pressed_no_signal(false)
 			else:
 				chosen.erase(id))
-		box.add_child(toggle)
+		lineup.add_child(toggle)
 	_button(box, "开始战斗", func():
 		var battle = Combat.new()
 		var result = battle.begin(run, encounter, chosen)
@@ -1110,12 +1046,24 @@ func _battle_ui(screen: Vector2) -> void:
 		var label = ("▶ " if view.presentation_actor(combat.current) == id else "") + a.name
 		if shown_shield > 0:
 			label += " · 盾%d" % shown_shield
+		if combat.madness.has(id):
+			label += " · 疯狂"
 		if shown_hp > 0 and combat.haste_turns.has(id):
 			label += " · 提速"
-		_text(left, label, 19, ink if shown_hp > 0 else muted)
+		var heading = HBoxContainer.new()
+		left.add_child(heading)
+		var portrait = _story_portrait(id, "grief" if shown_hp <= 0 else "anger" if combat.madness.has(id) else "battle")
+		if portrait != null:
+			var icon = TextureRect.new()
+			icon.texture = portrait
+			icon.custom_minimum_size = Vector2(32, 32)
+			icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			heading.add_child(icon)
+		_text(heading, label, 19, ink if shown_hp > 0 else muted)
 		_text(left, "HP %d/%d · MP %d/%d" % [shown_hp, a.hp_max, a.mp, a.mp_max], 14, muted)
 		_hp_bar(left, shown_hp, a.hp_max)
-		var ultimate = _button(left, "%d%% · " % a.energy + Catalog.SKILLS[a.ultimate].name, _ultimate.bind(id), a.energy < 100 or a.hp <= 0)
+		var ultimate = _button(left, "%d%% · " % a.energy + Catalog.SKILLS[a.ultimate].name, _ultimate.bind(id), a.energy < 100 or a.hp <= 0 or combat.madness.has(id))
 		ultimate.tooltip_text = "%s\n%s\n充能达到 100%% 时可释放，不占正常行动。" % [Catalog.SKILLS[a.ultimate].name, Catalog.skill_description(a.ultimate)]
 	var enemy_panel_x = screen.x - 330
 	var right_outer = _panel(ui, Rect2(enemy_panel_x, 120, 310, side_height))
@@ -1139,7 +1087,7 @@ func _battle_ui(screen: Vector2) -> void:
 	if not timeline.is_empty():
 		right_outer.add_child(HSeparator.new())
 		_text(right_outer, "行动顺序\n" + " → ".join(timeline), 14, gold)
-	var is_friendly = combat.current != "" and not combat.enemies.has(combat.current) and combat.outcome == "" and battle_timer <= 0 and not view.is_animating()
+	var is_friendly = combat.current != "" and not combat.enemies.has(combat.current) and not combat.madness.has(combat.current) and combat.outcome == "" and battle_timer <= 0 and not view.is_animating()
 	var quick_actions = HBoxContainer.new()
 	quick_actions.add_theme_constant_override("separation", 8)
 	ui.add_child(quick_actions)
@@ -1169,14 +1117,18 @@ func _battle_ui(screen: Vector2) -> void:
 		var swap = _button(commands, "换人", _swap_dialog)
 		swap.tooltip_text = "用同地候补换下当前角色，消耗本次正常行动。\n每名候补首次上场支付参战精力。"
 	var retreat_hint = "已付精力不退还；本战出战者承受 10% 最大生命损伤，敌人恢复。"
-	var retreat = _button(commands, "撤退", func(): _confirm("撤退？", retreat_hint, func(): _run_action(combat.retreat()); _finish_battle()))
+	var retreat = _button(commands, "撤退", func(): _confirm("撤退？", retreat_hint, func(): _run_action(combat.retreat()); _finish_battle()), combat.river or combat.madness.has(combat.current))
 	retreat.tooltip_text = retreat_hint
 	var field = combat.field_view()
 	var context = "场地：" + Catalog.terrain_name(field.terrain)
+	if combat.madness.has(combat.current):
+		context += " · 当前角色失去判断，将自行攻击"
 	if field.burning:
 		context += " · 燃烧"
 	if field.wet:
 		context += " · 潮湿"
+	if field.get("river", false):
+		context += " · 冥河正在削弱战神"
 	if is_friendly:
 		context += "\n" + _combat_skill_hint(skill_id, actor_id)
 	_text(center, context, 12, muted)
@@ -1315,7 +1267,10 @@ func _victory_dialog() -> void:
 			view.end_battle()
 		_close_modal()
 		_refresh()
-		_show_relic_intro())
+		if run.data.status == "won":
+			_ending_story()
+		elif not _show_chapter() and not _show_relic_intro(_show_npc_encounter.bind(selected_id)):
+			_show_npc_encounter(selected_id))
 	next.grab_focus()
 
 func _process(delta: float) -> void:
@@ -1326,6 +1281,9 @@ func _process(delta: float) -> void:
 		return
 	if modal_layer.get_child_count() > 0 or view.is_animating():
 		return
+	if combat.reveal_pending:
+		_final_battle_page(0)
+		return
 	var was_playing = battle_timer > 0
 	battle_timer -= delta
 	if battle_timer <= 0 and not combat.queue.is_empty():
@@ -1333,11 +1291,55 @@ func _process(delta: float) -> void:
 		combat.resolve_queued()
 		_after_combat_step()
 		return
-	if battle_timer <= 0 and (combat.enemies.has(combat.current) or combat.auto_mode):
+	if battle_timer <= 0 and (combat.enemies.has(combat.current) or combat.madness.has(combat.current) or combat.auto_mode):
 		combat.step_auto()
 		_after_combat_step()
 	elif was_playing and battle_timer <= 0:
 		_refresh()
+
+func _show_chapter() -> bool:
+	var chapter = run.pending_chapter()
+	if chapter == 0:
+		return false
+	var pages = [
+		["留下的人", "走过几处聚落以后，你发现人们怕的不只是下一场战斗。还有些死去的人留在原地，重复着最后一天发生的事。\n\n你记起自己曾经握过一个陌生人的手，答应陪他走到路尽头。你想不起那条路通往哪里。"],
+		["活人和死者", "前线传来的消息渐渐对得上。有人亲眼看见死去的士兵重新站起来，也有人看见原本还能说话的两队人突然杀成一团。战神在让这场仗继续。只要有人不停地打下去，他的力量就会越来越强。\n\n你想起自己曾在一场争执里把一柄刀压在地上。那时候，你也只想让双方停手。"],
+		["曾经答应的事", "越来越多的记录提到一场没能谈完的停战会。那一天，有人死在了会场。\n\n你记起自己也赴过一场这样的会。出门前，你答应过某个人，会回来把事情讲清楚。剩下的，你还是想不起来。"],
+		["找到战神", "沿途听来的消息终于指向同一处。那里聚着战神召来的亡兵，他本人也在那里。\n\n你把地点标在地图上。现在，该去结束这场战争了。"],
+	]
+	var page = pages[chapter - 1]
+	_show_story(page[0], "旅人", page[1], _story_scene_at(run.actor(selected_id).position), [_story_portrait("hero")], [],
+		func(_option: String):
+			run.finish_chapter(chapter)
+			run.save_game()
+			_close_modal()
+			_refresh()
+			if not _show_chapter() and not _show_relic_intro():
+				_show_npc_encounter(selected_id), {})
+	return true
+
+func _final_battle_page(index: int) -> void:
+	var pages = [
+		["旅人", "战神的武器亮起红光，朝你劈来。\n\n你想起来了。很久以前，他也是这样举起武器的。那一击杀了你。"],
+		["旅人", "你是伊文洛，死亡之神。你终于明白自己为何还能回来。你的身体在冥界重新长成，一次偶然的恶魔召唤把昏迷的你带到了村外。直到村屋里睁开眼，你才恢复意识。\n\n记起自己是谁以后，你的力量也回来了。"],
+		["卡德兰", "我看着你一次次把我的士兵接走。只要他们还能离开，一场仗就有打完的时候。我费了那么大的力气才杀了你。其他神有的顾着自己的领地，有的怕我，世人早就忘了你。你竟然还活着。"],
+		["旁白", "你伸出手。那些在世间等了太久的死者，终于看见了回家的路。他们一起走过你打开的门。每送走一个人，你就更清楚自己该怎么使用这份力量。"],
+		["旁白", "黑色的河水漫过战场。这里有一部分已经是冥界，是你掌管的地方。你站在水里，战神的力量却在一点点被河水带走。"],
+	]
+	var page = pages[index]
+	var met_demon = Catalog.COMPANIONS.keys().any(func(id): return Catalog.COMPANIONS[id].race == "恶魔" and run.data.story[id].met)
+	if index == 3 and met_demon:
+		page[1] += "\n\n你也终于明白，恶魔在你身边感到熟悉，是因为它们认得故乡的气息。"
+	var scene = "final_memory" if index < 2 else _story_scene_at(run.data.boss) if index == 2 else "finale"
+	var portraits = [] if index < 2 else [_story_portrait("hero", "battle"), _story_portrait("war_god", "anger" if index == 2 else "surprise")]
+	_show_story("记忆回来了", page[0], page[1], scene, portraits, [],
+		func(_option: String):
+			if index + 1 < pages.size():
+				_final_battle_page(index + 1)
+			else:
+				combat.awaken_death_power()
+				_close_modal()
+				_refresh(), {})
 
 func _show_npc_encounter(visitor: String) -> void:
 	var cell: String = run.actor(visitor).position
@@ -1346,37 +1348,26 @@ func _show_npc_encounter(visitor: String) -> void:
 	if npc.is_empty() or npc.joined or npc.position != cell:
 		return
 	var intro = narrative.encounter_intro(visitor, id)
-	if not intro.ok or intro.beats.is_empty():
+	if not intro.ok or run.data.story[id].met:
 		return
 	if selected_id != visitor:
 		selected_id = visitor
 		view.focus_cell(cell)
 		_refresh()
-	_begin_dialogue(id, intro.beats)
+	_node_dialog()
 
 func _talk(id: String) -> void:
 	var intro = narrative.encounter_intro(selected_id, id)
 	if not intro.ok:
 		_notice(intro.message)
 		return
-	_begin_dialogue(id, intro.beats)
+	_begin_dialogue(id)
 
-func _begin_dialogue(id: String, beats: Array) -> void:
+func _begin_dialogue(id: String) -> void:
 	dialogue_subject = id
 	dialogue_response = ""
-	_encounter_beat(beats, 0)
-
-func _encounter_beat(beats: Array, index: int) -> void:
-	if index >= beats.size():
-		_render_dialogue()
-		return
-	var beat: Dictionary = beats[index]
-	var visitor = run.actor(selected_id)
-	var speaker = visitor.name if beat.speaker == "visitor" else beat.speaker
-	var portraits = [_story_portrait(selected_id), _story_portrait(dialogue_subject)]
-	_show_story("初次交谈 · %d/%d" % [index + 1, beats.size()], speaker, beat.text,
-		_story_scene_at(visitor.position), portraits, [],
-		func(_option: String): _encounter_beat(beats, index + 1), {"结束交谈": _close_modal})
+	dialogue_ready = false
+	_render_dialogue()
 
 func _story_region(control: Control, left: float, top: float, right: float, bottom: float) -> void:
 	control.set_anchor_and_offset(SIDE_RIGHT, right, 0)
@@ -1400,7 +1391,7 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 	var background = TextureRect.new()
-	background.texture = load("res://assets/story/" + scene + ".png")
+	background.texture = _story_texture(scene)
 	background.modulate = tint
 	background.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	background.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
@@ -1411,16 +1402,9 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	for i in portraits.size():
 		if portraits[i] == null:
 			continue
-		var matte = "res://assets/portraits/mattes/" + portraits[i].resource_path.get_file()
-		if not ResourceLoader.exists(matte):
-			continue
-		var cast_material = ShaderMaterial.new()
-		cast_material.shader = StoryPortrait
-		cast_material.set_shader_parameter("silhouette", load(matte))
 		var actor_image = TextureRect.new()
 		actor_image.name = "StoryActor%d" % i
 		actor_image.texture = portraits[i]
-		actor_image.material = cast_material
 		actor_image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		actor_image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		actor_image.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1507,14 +1491,27 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	if first_enabled != null:
 		first_enabled.grab_focus()
 
-func _story_scene_at(position: String) -> String:
-	var tile: Dictionary = run.data.tiles[position]
-	return STORY_SITES.get(tile.site, STORY_TERRAIN[tile.terrain])
+func _story_texture(scene: String) -> Texture2D:
+	var path = "res://assets/story/" + scene + ".png"
+	return load(path) if ResourceLoader.exists(path) else load("res://assets/story/" + STORY_TERRAIN.get(scene.trim_prefix("village_"), "road") + ".png")
 
-func _story_portrait(id: String) -> Texture2D:
-	if id == "hero":
-		return PROFESSION_ART[run.data.profession]
-	var path = "res://assets/portraits/" + id + ".png"
+func _story_scene_at(position: String) -> String:
+	return STORY_TERRAIN.get(run.data.tiles[position].terrain, "road")
+
+func _story_portrait(id: String, pose: String = "") -> Texture2D:
+	var villager = id.begins_with("villager_")
+	var directory = "res://assets/portraits/"
+	var atlas_path = directory + id + "_poses.png"
+	if (villager or not pose.is_empty()) and ResourceLoader.exists(atlas_path):
+		var sheet: Texture2D = load(atlas_path)
+		var sprite = AtlasTexture.new()
+		sprite.atlas = sheet
+		var cell = Vector2(sheet.get_size()) / Vector2(2, 3)
+		var index = {"concerned": 1, "serious": 2, "farewell": 3, "grief": 4, "battle": 5}.get(pose, 0) if villager else {"serious": 0, "friendly": 1, "grief": 2, "anger": 3, "surprise": 4, "battle": 5}.get(pose, 0)
+		sprite.region = Rect2(Vector2(int(index) % 2, floori(float(index) / 2.0)) * cell, cell)
+		sprite.filter_clip = true
+		return sprite
+	var path = directory + id + ".png"
 	return load(path) if ResourceLoader.exists(path) else null
 
 func _render_dialogue() -> void:
@@ -1522,15 +1519,25 @@ func _render_dialogue() -> void:
 	if not d.ok:
 		_notice(d.message)
 		return
-	var subject_portrait = _story_portrait(dialogue_subject)
-	var speaker = "值守者" if dialogue_subject == "exit" else str(d.title).get_slice(" · ", 0)
+	var pose = "friendly" if not dialogue_response.is_empty() and run.actor(dialogue_subject).joined else str(d.get("pose", ""))
+	if run.actor(dialogue_subject).hp <= 0:
+		pose = "grief"
+	elif dialogue_ready and pose.is_empty():
+		pose = "serious"
+	var subject_portrait = _story_portrait(dialogue_subject, pose)
+	var speaker = str(d.title).get_slice(" · ", 0)
 	if subject_portrait == null or not dialogue_response.is_empty():
 		speaker = "旁白"
 	var text = d.text if dialogue_response.is_empty() else dialogue_response
 	var portraits = [_story_portrait(selected_id), subject_portrait]
 	var scene = _story_scene_at(run.actor(selected_id).position)
-	if dialogue_response.is_empty():
-		_show_story(d.title, speaker, text, scene, portraits, d.options, _story_choice, {"结束交谈": _close_modal})
+	if not dialogue_ready:
+		_show_story(d.title, speaker, text, scene, portraits, [],
+			func(_option: String):
+				dialogue_ready = true
+				_render_dialogue(), {"结束交谈": _close_modal})
+	elif dialogue_response.is_empty():
+		_show_story(d.title, "旁白", "你打算怎么回答？", scene, portraits, d.options, _story_choice, {"结束交谈": _close_modal})
 	else:
 		_show_story(d.title, speaker, text, scene, portraits, [],
 			func(_option: String):
@@ -1540,7 +1547,18 @@ func _render_dialogue() -> void:
 	run.save_game()
 
 func _story_choice(option_id: String) -> void:
-	var result = narrative.choose(selected_id, dialogue_subject, option_id)
+	if option_id == "duel":
+		var person = run.actor(dialogue_subject)
+		var scene = _story_scene_at(person.position)
+		_show_story(person.name, person.name, "「真要交手？双方都可能受伤。」", scene, [_story_portrait(dialogue_subject, "battle")],
+			[_node_option("start_duel", "开始交手"), _node_option("back", "先不打")],
+			func(choice: String):
+				if choice == "start_duel":
+					_story_choice(choice)
+				else:
+					_render_dialogue(), {"结束交谈": _close_modal})
+		return
+	var result = narrative.choose(selected_id, dialogue_subject, "duel" if option_id == "start_duel" else option_id)
 	if not result.ok:
 		dialogue_response = result.message
 		_render_dialogue()
@@ -1557,8 +1575,6 @@ func _story_choice(option_id: String) -> void:
 		_refresh()
 	elif result.get("battle", false):
 		_formation_dialog()
-	elif result.get("extract_requested", false):
-		_extraction_dialog()
 	elif result.has("rescue"):
 		_item_dialog(selected_id)
 	elif result.has("heal_dialog"):
@@ -1591,41 +1607,27 @@ func _show_relic_intro(after: Callable = Callable()) -> bool:
 		if not _show_relic_intro(after):
 			_close_modal()
 			_refresh()
-			if after.is_valid():
+			if not _show_chapter() and after.is_valid():
 				after.call(), {})
 	return true
 
 func _journal() -> void:
-	var box = _modal("旅途手记 · 亲历、文书与同行", 920, 720)
+	var box = _modal("旅途手记 · 线索与同行", 920, 720)
 	var content = _scroll_content(box)
-	if run.has_visited(run.data.exit):
-		_text(content, "已发现归航站：" + str(run.data.exit), 21, gold)
-		_button(content, "在地图上定位归航站", func(): _close_modal(); selected_cell = run.data.exit; view.focus_cell(selected_cell); _refresh())
-	_text(content, "地方故事", 23, gold)
-	var flags = run.data.flags
-	_text(content, "二十八年前的接应记录与仍有人居住的林边之间存在矛盾。材料可向陆衡、乔禾和旧调度柜核对；调查不是撤离前置条件。" if flags.get("investigated", false) else "渡桥坍塌，归航站在另一端。你可以沿方向归航，也可以探索沿途人物与仍在使用的旧灯路。", 18)
+	_text(content, _expedition_objective(), 23, gold)
+	_text(content, "地图种子 %s" % run.data.seed, 15, muted)
+	if run.boss_known():
+		_button(content, "在地图上定位战神", func(): _close_modal(); selected_cell = run.data.boss; view.focus_cell(selected_cell); _refresh())
 	for id in Catalog.COMPANIONS:
 		if run.data.story[id].met:
-			var s = run.data.story[id]
-			_text(content, "%s · %s" % [run.actor(id).name, "已同行" if run.actor(id).joined else "暂缓" if s.relation == "later" else "本局未同行" if s.relation == "declined" else "已接触"], 20, gold)
-			_text(content, Story.PERSONAL[id].get(str(s.result), ""), 16, muted)
-	_text(content, "原件的实际去向", 23, gold)
-	for item in Story.DOCUMENTS:
-		var holders: Array[String] = []
-		for id in run.joined_ids():
-			if int(run.actor(id).inventory.get(item, 0)) > 0:
-				holders.append(run.actor(id).name + "（" + str(run.actor(id).position) + "）")
-		if run.data.submitted.has(item):
-			holders.append("归航站已实际收件")
-		if not holders.is_empty():
-			_text(content, Story.DOCUMENTS[item] + "：" + " / ".join(holders), 16, muted)
+			_text(content, "%s · %s" % [run.actor(id).name, "已同行" if run.actor(id).joined else "已见过"], 18, muted)
 	var clues: Array[String] = []
 	for cell in run.data.nodes:
 		var node = run.node_at(cell)
-		if node.result != "record":
+		if not run.data.leads.has(cell):
 			continue
 		var event = Nodes.story(node)
-		clues.append("%s · %s" % [event.title, _node_lead(cell, event)])
+		clues.append(str(event.title))
 	if not clues.is_empty():
 		_text(content, "路上记录的线索", 20, gold)
 		_text(content, "\n".join(clues), 16, muted)
@@ -1634,7 +1636,7 @@ func _journal() -> void:
 
 func _summary(screen: Vector2) -> void:
 	var box = _panel(ui, Rect2(300, 135, screen.x - 600, screen.y - 300))
-	_text(box, "归航记录" if run.data.status == "extracted" else "远征终止", 36, gold)
+	_text(box, "战争结束" if run.data.status == "won" else "远征终止", 36, gold)
 	_text(box, "第 %d 天 · 到访 %d 格 · 战斗 %d 场" % [run.data.day, run.data.visited.size(), run.data.battles], 18)
 	if run.data.status == "failed":
 		_text(box, run.data.flags.get("failure_reason", "远征失败。"), 20, muted)
@@ -1645,8 +1647,9 @@ func _summary(screen: Vector2) -> void:
 	var content = _scroll_content(box)
 	for id in Catalog.COMPANIONS:
 		var ending = narrative.character_ending(id)
-		var condition = "未相遇" if not run.data.story[id].met and not run.actor(id).joined else "本局未同行" if not run.actor(id).joined else "已到站" if run.actor(id).position == run.data.exit else "异地重伤" if run.actor(id).hp <= 0 else "异地未撤离"
-		_text(content, ending.name + " · " + condition, 20, gold)
+		if not run.data.story[id].met:
+			continue
+		_text(content, ending.name, 20, gold)
 		_text(content, ending.text, 17, muted)
 	_button(box, "查看结局剧情", _ending_story)
 	_button(box, "返回主菜单", _to_menu)
@@ -1670,7 +1673,7 @@ func _ending_story() -> void:
 func _ending_page(pages: Array[Dictionary], index: int) -> void:
 	var page: Dictionary = pages[index]
 	var last = index == pages.size() - 1
-	_show_story(page.title, page.speaker, page.text, page.scene, [_story_portrait(page.actor)],
+	_show_story(page.title, page.speaker, page.text, page.scene, [_story_portrait(page.actor, "grief" if run.actor(page.actor).hp <= 0 else "friendly")],
 		[],
 		func(_option: String):
 			if last:
@@ -1690,7 +1693,7 @@ func _to_menu() -> void:
 		_show_opening(Screen.MENU)
 
 func _guide() -> void:
-	_notice("点队友所在格切换小队。移动时点相邻格预览精力，再点一次确认。要走到队友所在格，先点当前小队所在格。左栏可勾选同格角色同行。\n\n「行动」打开脚下的节点。歇脚点、药品和治疗技能恢复生命或魔力，结束一天恢复精力。灯铢由全队共享，买到的物品进入交易者背包。\n\n同地最多四人出战，候补换人占正常行动，终结技可插队。抵达归航站后可等待，只有主动确认才结束。")
+	_notice("点队友所在格切换小队。移动时点相邻格预览精力，再点一次确认。要走到队友所在格，先点当前小队所在格。左栏可勾选同格角色同行。\n\n「行动」打开脚下的节点。歇脚点、药品和治疗技能恢复生命或魔力，结束一天恢复精力。灯铢由全队共享，买到的物品进入交易者背包。\n\n同地最多四人出战，候补换人占正常行动，终结技可插队。从沿途的故事和遭遇里找线索，找到并击败战神。")
 
 func _settings_dialog() -> void:
 	var box = _modal("设置与操作", 650, 430)
@@ -1707,7 +1710,7 @@ func _settings_dialog() -> void:
 	_button(box, "制作与许可", _credits_dialog)
 	if screen_state == Screen.EXPEDITION and combat == null and run.data.status == "exploring":
 		_button(box, "放弃本次远征", func():
-			_confirm("结束本次远征？", "将按远征中断记录当前事实；已经交出的文书仍保留，不把异地角色写成成功归航。", _abandon_run))
+			_confirm("结束本次远征？", "这次旅程将在这里结束。", _abandon_run))
 	_button(box, "返回", _close_modal)
 
 func _abandon_run() -> void:
@@ -1720,7 +1723,7 @@ func _abandon_run() -> void:
 func _credits_dialog() -> void:
 	var box = _modal("制作与许可", 800, 650)
 	var content = _scroll_content(box)
-	_text(content, "《归灯之野》MVP 0.2.0\n原创世界观、角色与肖像；原创怪物、适配、特效及合成音效。肖像由内置图像生成工具制作。\n\n人形模型、动作与自然地景：Kay Lousberg，CC0。\n狼基础模型：crownjoshua，CC0；本项目修复绑定并制作动作。\n粒子纹理：Kenney，CC0。\n字体：Noto Sans SC，SIL Open Font License。\n引擎：Godot " + Engine.get_version_info().string + "\n完整来源、许可与适配说明随试玩包附带。", 18)
+	_text(content, "维洛丹 · 试玩\n原创世界观、角色与肖像；原创怪物、适配、特效及合成音效。肖像由内置图像生成工具制作。\n\n人形模型、动作与自然地景：Kay Lousberg，CC0。\n狼基础模型：crownjoshua，CC0；本项目修复绑定并制作动作。\n粒子纹理：Kenney，CC0。\n字体：Noto Sans SC，SIL Open Font License。\n引擎：Godot " + Engine.get_version_info().string + "\n完整来源、许可与适配说明随试玩包附带。", 18)
 	_text(content, Engine.get_license_text(), 14, muted)
 	_button(box, "返回设置", _settings_dialog)
 

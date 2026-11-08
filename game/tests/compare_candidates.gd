@@ -16,8 +16,8 @@ func execute() -> void:
 	var game = Main.instantiate()
 	root.add_child(game)
 	await process_frame
-	game.chosen_profession = "guardian"
 	game._start_new()
+	game.run.actor("hero").skill = "guard_all"
 	game.set_process(false)
 	var r = game.run
 	var p = r.actor("hero").position
