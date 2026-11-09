@@ -365,7 +365,10 @@ func check_personal_dialogue() -> void:
 	game._show_npc_encounter("hero")
 	await read_to_choices()
 	await click("和洛恩交谈")
-	expect(find_button(game.modal_layer, "邀请一起上路") == null, "Recruitment waits for the encounter introduction")
+	var initial = game.narrative.dialogue("hero", "lorne")
+	var join_line = option_label(initial, "join")
+	expect((find_button(game.modal_layer, join_line) != null) == (story_page().x == story_page().y),
+		"Recruitment choices only appear with the final introduction page")
 	var introduction = game.modal_layer.get_node("StoryScreen")
 	await click("历史对话")
 	await story_key(KEY_ESCAPE)
@@ -377,16 +380,28 @@ func check_personal_dialogue() -> void:
 	expect(game.modal_layer.get_child_count() == 0 and game.ui.visible and game.view.is_processing_unhandled_input(),
 		"Escape activates End Conversation and restores map input")
 	game._begin_dialogue("lorne")
-	await read_to_choices()
-	await click("邀请一起上路")
+	game._story_choice("unavailable_reply")
+	expect(contains_text(game.modal_layer, "现在无法这样做"), "A rejected reply shows a separate gameplay notice")
+	await click("知道了")
+	var introduction_text = await read_to_choices()
+	expect(compact(introduction_text) == compact(initial.text) and story_speaker() == "洛恩",
+		"Choices appear beside the NPC's final line without an extra prompt")
+	await click(join_line)
+	expect(story_speaker() == "旅人" and dialogue_contains(join_line) and not person.joined,
+		"The player speaks the selected line before the recruitment is applied")
+	await click("历史对话")
+	expect(contains_text(game.modal_layer.get_node("StoryHistory"), join_line), "The selected reply appears in dialogue history")
+	await click("关闭")
+	await click_story_blank()
 	expect(person.joined and "lorne" in game.moving_ids, "Actual recruitment checks the companion into the squad")
-	await read_to_choices()
+	var acceptance = await read_to_choices()
+	expect(story_speaker() == "洛恩" and acceptance.contains(Story.CHARACTER_BEHAVIOR.lorne[1]), "Recruitment receives an answer from the companion")
 	var quest = game.narrative.personal_quest("hero", "lorne")
 	var second = option_label(quest, "personal_b")
 	var first = option_label(quest, "personal_a")
 	await click(option_label(game.narrative.dialogue("hero", "lorne"), "quest"))
-	expect(not game.modal_layer.has_node("StoryScreen/StoryChoices") and find_button(game.modal_layer, first) == null
-		and find_button(game.modal_layer, second) == null, "Personal quest opens on full text, not choices")
+	await click_story_blank()
+	expect(story_page().x == 1 and story_speaker() == "洛恩", "The personal conversation opens with the NPC's first page")
 	var personal_text = await read_to_choices(func():
 		return str(run.data.story.lorne.get("personal_choice", "")).is_empty() and str(saved_run().get("story", {}).get("lorne", {}).get("personal_choice", "")).is_empty())
 	expect(compact(personal_text).contains(compact(quest.text)), "Complete personal quest precedes both options")
@@ -395,9 +410,12 @@ func check_personal_dialogue() -> void:
 	var actors = run.data.actors.duplicate(true)
 	var coins = run.data.lamp_coins
 	await click(second)
+	expect(story_speaker() == "旅人" and dialogue_contains(second) and str(run.data.story.lorne.get("personal_choice", "")).is_empty(),
+		"The chosen personal reply is spoken before its outcome")
+	await click_story_blank()
 	var response: String = Story.PERSONAL_QUESTS.lorne.personal_b.response
 	var aftermath = await read_to_choices()
-	expect(aftermath.contains(response) and run.data.actors == actors and run.data.lamp_coins == coins,
+	expect(story_speaker() == "洛恩" and aftermath.contains(response) and run.data.actors == actors and run.data.lamp_coins == coins,
 		"Personal choice gives its response without changing resources or actor state")
 	var choice = run.data.story.lorne.get("personal_choice", "")
 	expect(not str(choice).is_empty() and saved_run().get("story", {}).get("lorne", {}).get("personal_choice", "") == choice,
@@ -406,7 +424,7 @@ func check_personal_dialogue() -> void:
 	game._personal_quest()
 	await read_to_choices()
 	await story_key(KEY_ESCAPE)
-	expect(game.modal_layer.get_child_count() == 0, "Escape also works when End Conversation is a dialogue choice")
+	expect(game.modal_layer.get_child_count() == 0, "Escape can close a completed personal conversation")
 	await click("旅途手记")
 	expect(contains_text(game.modal_layer, "洛恩 · 已同行 · 已作出个人抉择"), "Journal indicates the companion's personal decision")
 	await click("合上手记")
@@ -430,7 +448,11 @@ func check_personal_dialogue() -> void:
 	expect(recalled.contains(response), "Normal conversation recalls the decision after reopening")
 	expect(find_button(game.modal_layer, first) == null and find_button(game.modal_layer, second) == null,
 		"Reopened conversation cannot select either branch again")
-	await click("结束交谈")
+	var farewell = option_label(game.narrative.dialogue("hero", "lorne"), "leave")
+	await click(farewell)
+	expect(story_speaker() == "旅人" and dialogue_contains(farewell), "Farewell is the player's line")
+	await click_story_blank()
+	expect(game.modal_layer.get_child_count() == 0, "Finishing a farewell returns to the map")
 
 func check_node_dialogs() -> void:
 	game._start_new()
@@ -560,6 +582,10 @@ func story_owns_focus() -> bool:
 	var story = game.modal_layer.get_node_or_null("StoryScreen")
 	var focused = root.gui_get_focus_owner()
 	return not game.ui.visible and story != null and focused != null and (story == focused or story.is_ancestor_of(focused))
+
+func story_speaker() -> String:
+	var label = game.modal_layer.get_node_or_null("StoryScreen/Dialogue/StorySpeaker") as Label
+	return label.text if label != null else ""
 
 func advance_story() -> void:
 	await process_frame

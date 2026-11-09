@@ -92,6 +92,8 @@ func check_personal_choices() -> void:
 			expect(quest.ok and quest.has_all(["title", "text", "options", "pose"])
 				and quest.get("title") == definition.title and quest.get("text") == definition.text
 				and has_option(quest, "personal_a") and has_option(quest, "personal_b"), id + " both choices follow the complete personal story")
+			expect(quest.options.all(func(option): return option.spoken and "我" in option.text),
+				id + " every personal choice is a spoken first-person line")
 			expect(unrelated_state(run) == before and str(run.data.story[id].get("personal_choice", "")).is_empty(), id + " reading personal quest does not spend or select")
 			var story_before = run.data.story.duplicate(true)
 			var result = story.choose(visitor, id, branch)
@@ -168,7 +170,7 @@ func check_personal_boundaries() -> void:
 		var legacy_story = Story.new(loaded)
 		var outcome = LegacyOutcomes.OUTCOMES.lorne[old_choice]
 		var recall = legacy_story.personal_quest("hero", "lorne")
-		expect(recall.ok and recall.title == LegacyOutcomes.OUTCOMES.lorne.title and outcome.response in recall.text,
+		expect(recall.ok and recall.title == LegacyOutcomes.OUTCOMES.lorne.title and spoken_from(outcome.response, recall.text),
 			"Old choice keeps its original title and response")
 		expect(not legacy_story.choose("hero", "lorne", "personal_a").ok and outcome.ending in legacy_story.character_ending("lorne").text,
 			"Old choice cannot be replaced and keeps its original ending")
@@ -180,7 +182,7 @@ func check_personal_boundaries() -> void:
 	var preview_story = Story.new(loaded)
 	var preview = LegacyOutcomes.PREVIEW_OUTCOMES.longroad
 	var recall = preview_story.personal_quest("hero", "longroad")
-	expect(recall.ok and recall.title == preview.title and preview.personal_b.response in recall.text
+	expect(recall.ok and recall.title == preview.title and spoken_from(preview.personal_b.response, recall.text)
 		and preview.personal_b.ending in preview_story.character_ending("longroad").text,
 		"The betrayal rewrite does not retroactively change a choice saved on the first draft")
 	for id in LegacyOutcomes.WAR_OUTCOMES:
@@ -191,9 +193,12 @@ func check_personal_boundaries() -> void:
 		var old_story = Story.new(loaded)
 		var prior = LegacyOutcomes.PREVIEW_OUTCOMES[id] if id == "seasons" else LegacyOutcomes.WAR_OUTCOMES[id]
 		var old_scene = old_story.personal_quest("hero", id)
-		expect(old_scene.ok and old_scene.title == prior.title and prior.personal_a.response in old_scene.text
+		expect(old_scene.ok and old_scene.title == prior.title and spoken_from(prior.personal_a.response, old_scene.text)
 			and prior.personal_a.ending in old_story.character_ending(id).text,
 			"The new god story preserves an earlier title, response and ending for " + id)
+
+func spoken_from(record: String, dialogue: String) -> bool:
+	return not dialogue.is_empty() and Array(dialogue.split("\n\n")).all(func(line): return ("「" + line + "」") in record)
 
 func check_hero_only_mystery() -> void:
 	for id in Catalog.COMPANIONS:
@@ -249,6 +254,8 @@ func execute() -> void:
 			r.data.tiles[person.position].enemies.clear()
 		var dialogue = story.dialogue("hero", id)
 		expect(dialogue.ok and dialogue.text.contains(Story.BACKGROUNDS[id]) and dialogue.text.contains(Story.COMPANION_LINES[id]), "Personal story and dialogue " + id)
+		expect(dialogue.speaker == person.name and dialogue.options.all(func(option): return option.spoken),
+			"First encounter uses the companion's voice and player replies " + id)
 		expect(story.choose("hero", id, "join").ok and person.squad_id == r.actor("hero").squad_id, "Actual recruitment " + id)
 
 	var haunt: String = r.data.nodes.keys().filter(func(cell): return r.node_at(cell).kind == "haunt")[0]

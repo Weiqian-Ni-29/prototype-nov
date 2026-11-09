@@ -41,8 +41,6 @@ var battle_timer = 0.0
 var toast_text = ""
 var narrative: RefCounted
 var dialogue_subject = ""
-var dialogue_response = ""
-var dialogue_ready = false
 var story_history: Array[Dictionary] = []
 var sound: Node
 var gold = Color("dec38e")
@@ -530,7 +528,8 @@ func _site_impression() -> void:
 	var cell: String = run.actor(selected_id).position
 	var terrain: String = run.data.tiles[cell].terrain
 	_show_story(_node_title(cell), "村民", "你回来啦。来喝口水吧。路上遇到难事的话，也可以坐下慢慢说。",
-		STORY_TERRAIN[terrain], [], [_node_option("leave", "返回地图")], func(_choice: String): _close_modal(), {}, _node_tint())
+		STORY_TERRAIN[terrain], [], [_node_option("leave", "谢谢，我得继续赶路了。", true)], func(_choice: String): _close_modal(),
+		{"结束交谈": _close_modal}, _node_tint())
 
 func _node_resolved(node: Dictionary, tile: Dictionary) -> bool:
 	return not node.result.is_empty() or (node.kind == "supply" and tile.quantity <= 0) \
@@ -551,8 +550,8 @@ func _node_description(node: Dictionary, tile: Dictionary, event: Dictionary) ->
 		return str(event.investigation)
 	return str(event.intro)
 
-func _node_option(id: String, label: String) -> Dictionary:
-	return {"id": id, "text": label}
+func _node_option(id: String, label: String, spoken: bool = false) -> Dictionary:
+	return {"id": id, "text": label, "spoken": spoken}
 
 func _node_dialog(feedback: String = "", ready: bool = false) -> void:
 	var cell: String = run.actor(selected_id).position
@@ -879,10 +878,10 @@ func _update_world_input() -> void:
 	view.set_world_input_enabled(screen_state == Screen.EXPEDITION and view.visible
 		and modal_layer.get_child_count() == 0 and (can_target or can_explore))
 
-func _notice(message: String) -> void:
+func _notice(message: String, dismiss: Callable = Callable()) -> void:
 	var box = _modal("旅途提示", 620, 270)
 	_text(box, message, 18)
-	_button(box, "知道了", _close_modal)
+	_button(box, "知道了", dismiss if dismiss.is_valid() else _close_modal)
 
 func _confirm(title: String, message: String, action: Callable) -> void:
 	var box = _modal(title, 700, 480)
@@ -1660,8 +1659,8 @@ func _show_chapter() -> bool:
 
 func _final_battle_page(index: int) -> void:
 	var pages = [
-		["旅人", "战神的武器亮起红光，朝你劈来。眼前这张脸，求他赐胜的人大多只在神像上见过。\n\n你想起来了。很久以前，酒杯还摆在停战桌上，他便这样举起了武器。那一击杀了你。"],
-		["旅人", "你是伊文洛，死亡之神。你记起从前那张脸，也记起那些在最后一段路上见过你的人。战士、平民、向别的神祈祷过的人，都曾握着你的手走向冥界。一路使碎石浮起、让脚步变轻的重力，就是你引渡亡魂的权能。\n\n恢复的权能让你感知到冥界留下的痕迹。神躯毁灭后，你的死亡本质重新凝成了肉身。连当年的你也不知道自己能够重生。后来，一次为逃难者求援的恶魔召唤意外将昏迷的你带到现世。村民救下了你。"],
+		["旅人", "这道红光……卡德兰，我见过你这样举起武器。那天侍从都退下了，停战桌上的酒还没碰过。是你杀了我。"],
+		["旅人", "我是伊文洛，死亡之神。我记得那些在最后一段路上握过我手的人。战士、平民、向别的神祈祷过的人，我都接过。你看见我让碎石浮起来，那就是我领亡魂归去的力量。\n\n你毁了我的神躯。我也以为自己死了，直到现在才知道，死亡能再凝成我的肉身。有些逃难的人召唤恶魔求援，把昏迷的我意外带了回来。后来是村民救了我。"],
 		["卡德兰", "我亲手毁掉了你的肉身。送葬的人照旧念着他们的词，死者却一个都走不了。活人为了水、粮食和报复打起来，城里求我赐他们勇气，城外也这么求。我全都给了。他们打得越久，我便越强。\n\n我不知道你还能重生。连你当年，也从未说过还有这一条退路。"],
 		["旁白", "你伸出手，用重力为亡魂指出通往冥界的方向。一名仍在挥舞断剑的士兵慢慢放下手。有人最后回头看了一眼岸上的人，也有人只是终于停止了徘徊。\n\n灾厄失去了源头，活人的伤口仍留在世上。此刻，你要先让眼前的战神失去继续逼迫诸方交战的力量。"],
 		["旁白", "你将冥界的一部分引到战场，收住河界，留出仍属现世的岸地。冥河能够洗刷、剥夺、吞噬一切，不会天然分辨敌友。你留在岸上，以归来的权能挡住攻击，将河水约束在卡德兰脚下。\n\n河水逐步剥离战神的力量。现在，要亲手结束这一战。"],
@@ -1705,8 +1704,6 @@ func _talk(id: String) -> void:
 
 func _begin_dialogue(id: String) -> void:
 	dialogue_subject = id
-	dialogue_response = ""
-	dialogue_ready = false
 	_render_dialogue()
 
 func _story_region(control: Control, left: float, top: float, right: float, bottom: float) -> void:
@@ -1830,6 +1827,7 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	overlay.add_child(dialogue)
 	_story_region(dialogue, 0.05, 0.74, 0.60, 0.955)
 	var speaker_label = _text(dialogue, speaker, 22, gold)
+	speaker_label.name = "StorySpeaker"
 	_story_region(speaker_label, 0, 0, 1, 0)
 	var separator = HSeparator.new()
 	separator.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1892,24 +1890,54 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	choices.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	choices.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	choices.alignment = BoxContainer.ALIGNMENT_END
-	choices.add_theme_constant_override("separation", 6)
+	choices.add_theme_constant_override("separation", 10)
 	option_scroll.add_child(choices)
 	var first_enabled: Button
 	for option in options:
 		if not option.get("enabled", true):
 			continue
-		var button = _button(choices, str(option.text), on_choice.bind(str(option.id)))
+		var choose = on_choice.bind(str(option.id))
+		if option.get("spoken", false):
+			choose = _speak_story_reply.bind(title, scene, portraits, str(option.text), choose, tint)
+		var button = _button(choices, str(option.text), choose)
 		if button.text == "结束交谈" and not actions.has("结束交谈"):
 			button.name = "StoryCancel"
-		button.custom_minimum_size.y = 43
-		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		button.add_theme_stylebox_override("normal", _style(Color("202b30f2"), Color("b4a079"), 2))
-		button.add_theme_stylebox_override("hover", _style(Color("37464b"), gold, 2))
+		_style_story_reply(button)
 		if first_enabled == null:
 			first_enabled = button
 	if first_enabled != null:
 		first_enabled.grab_focus()
+
+func _speak_story_reply(title: String, scene: String, portraits: Array, line: String, choose: Callable, tint: Color) -> void:
+	_show_story(title, run.actor(selected_id).name, line, scene, portraits, [],
+		func(_option: String): choose.call(), {}, tint)
+
+func _style_story_reply(button: Button) -> void:
+	button.custom_minimum_size.y = 60
+	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	button.add_theme_stylebox_override("normal", _story_reply_box(Color("171a18dc"), Color("8c7e669e")))
+	button.add_theme_stylebox_override("hover", _story_reply_box(Color("38342bdf"), Color("b7a584")))
+	button.add_theme_stylebox_override("pressed", _story_reply_box(Color("4d4232ef"), Color("dec38e")))
+	button.add_theme_stylebox_override("focus", _story_reply_box(Color("74644d7c"), Color("c6b391")))
+	var marker = ColorRect.new()
+	marker.color = Color("d9a45c")
+	marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	button.add_child(marker)
+	marker.set_anchors_and_offsets_preset(Control.PRESET_LEFT_WIDE)
+	marker.offset_left = 5
+	marker.offset_right = 9
+	marker.offset_top = 8
+	marker.offset_bottom = -8
+	marker.hide()
+	button.focus_entered.connect(marker.show)
+	button.focus_exited.connect(marker.hide)
+
+func _story_reply_box(background: Color, border: Color) -> StyleBoxFlat:
+	var style = _style(background, border, 2)
+	style.content_margin_left = 21
+	style.content_margin_right = 18
+	return style
 
 func _show_story_history(story: Control) -> void:
 	var previous_focus = get_viewport().gui_get_focus_owner()
@@ -1990,39 +2018,25 @@ func _story_portrait(id: String, pose: String = "") -> Texture2D:
 	var path = directory + id + ".png"
 	return load(path) if ResourceLoader.exists(path) else null
 
-func _render_dialogue() -> void:
+func _render_dialogue(response: String = "") -> void:
 	var d = narrative.dialogue(selected_id, dialogue_subject)
 	if not d.ok:
 		_notice(d.message)
 		return
-	var pose = "friendly" if not dialogue_response.is_empty() and run.actor(dialogue_subject).joined else str(d.get("pose", ""))
-	if run.actor(dialogue_subject).hp <= 0:
-		pose = "grief"
-	elif dialogue_ready and pose.is_empty():
-		pose = "serious"
-	var subject_portrait = _story_portrait(dialogue_subject, pose)
-	var speaker = str(d.title).get_slice(" · ", 0)
-	if subject_portrait == null or not dialogue_response.is_empty():
-		speaker = "旁白"
-	var text = d.text if dialogue_response.is_empty() else dialogue_response
-	var portraits = [_story_portrait(selected_id), subject_portrait]
+	var person = run.actor(dialogue_subject)
+	var pose = "grief" if person.hp <= 0 else str(d.pose)
+	var speaker: String = d.speaker if response.is_empty() else person.name
+	var text: String = d.text if response.is_empty() else response
+	var portraits = [_story_portrait(selected_id), _story_portrait(dialogue_subject, pose)]
 	var scene = _story_scene_at(run.actor(selected_id).position)
-	if not dialogue_ready:
+	if not response.is_empty() and not run.relic_intro().is_empty():
 		_show_story(d.title, speaker, text, scene, portraits, [],
-			func(_option: String):
-				dialogue_ready = true
-				_render_dialogue(), {"结束交谈": _close_modal})
-	elif dialogue_response.is_empty():
-		_show_story(d.title, "旁白", "你打算怎么回答？", scene, portraits, d.options, _story_choice, {"结束交谈": _close_modal})
+			func(_option: String): _show_relic_intro(_render_dialogue), {"结束交谈": _show_relic_intro})
 	else:
-		_show_story(d.title, speaker, text, scene, portraits, [],
-			func(_option: String):
-				dialogue_response = ""
-				_render_dialogue(),
-			{"结束交谈": _close_modal})
+		_show_story(d.title, speaker, text, scene, portraits, d.options, _story_choice, {"结束交谈": _close_modal})
 	run.save_game()
 
-func _personal_quest(ready: bool = false) -> void:
+func _personal_quest() -> void:
 	var quest = narrative.personal_quest(selected_id, dialogue_subject)
 	if not quest.ok:
 		_notice(quest.message)
@@ -2030,19 +2044,16 @@ func _personal_quest(ready: bool = false) -> void:
 	var person = run.actor(dialogue_subject)
 	var portraits = [_story_portrait(selected_id), _story_portrait(dialogue_subject, quest.get("pose", "serious"))]
 	var scene = _story_scene_at(person.position)
-	if ready:
-		_show_story(quest.title, person.name, "这次，你们决定怎么做？", scene, portraits, quest.options,
-			_story_choice, {"再想一想": _render_dialogue})
-	else:
-		_show_story(quest.title, person.name, quest.text, scene, portraits, [],
-			func(_option: String): _personal_quest(true), {"返回交谈": _render_dialogue})
+	var actions = {"结束交谈": _close_modal} if quest.options.size() == 1 else {"再想一想": _render_dialogue}
+	_show_story(quest.title, person.name, quest.text, scene, portraits, quest.options,
+		_story_choice, actions)
 
 func _story_choice(option_id: String) -> void:
 	if option_id == "duel":
 		var person = run.actor(dialogue_subject)
 		var scene = _story_scene_at(person.position)
-		_show_story(person.name, person.name, "「真要交手？双方都可能受伤。」", scene, [_story_portrait(dialogue_subject, "battle")],
-			[_node_option("start_duel", "开始交手"), _node_option("back", "先不打")],
+		_show_story(person.name, person.name, "真要交手？双方都可能受伤。", scene, [_story_portrait(dialogue_subject, "battle")],
+			[_node_option("start_duel", "我想清楚了，来吧。", true), _node_option("back", "我收回刚才的话，今天先不打。", true)],
 			func(choice: String):
 				if choice == "start_duel":
 					_story_choice(choice)
@@ -2051,15 +2062,13 @@ func _story_choice(option_id: String) -> void:
 		return
 	var result = narrative.choose(selected_id, dialogue_subject, "duel" if option_id == "start_duel" else option_id)
 	if not result.ok:
-		dialogue_response = result.message
-		_render_dialogue()
+		_notice(result.message, _render_dialogue)
 		return
 	if option_id == "join":
 		moving_ids.append(dialogue_subject)
 	run.save_game()
-	if _show_relic_intro(func():
-		dialogue_response = ""
-		_render_dialogue()):
+	var response: String = result.get("response", "")
+	if response.is_empty() and _show_relic_intro(_render_dialogue):
 		return
 	if result.get("close", false):
 		_close_modal()
@@ -2073,9 +2082,8 @@ func _story_choice(option_id: String) -> void:
 	elif result.has("heal_dialog"):
 		_healing_dialog()
 	else:
-		dialogue_response = str(result.get("response", "同行状态已更新。"))
 		_refresh()
-		_render_dialogue()
+		_render_dialogue(response)
 
 func _show_relic_intro(after: Callable = Callable()) -> bool:
 	var intro = run.relic_intro()
