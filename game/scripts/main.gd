@@ -286,10 +286,14 @@ func _village_page(terrain: String, index: int) -> void:
 	var local = OpeningStory.village(terrain)
 	var villager = "villager_" + str(local[1])
 	var poses = ["concerned", "", "serious", "serious", "", "farewell", "farewell"]
+	var pose: String = poses[index]
+	# The dwarf's serious pose includes a bridge sketch.
+	if villager == "villager_dwarf" and pose == "serious":
+		pose = ""
 	var pages = OpeningStory.dialogue(terrain)
 	var page = pages[index]
 	_show_story(local[0], page[0], page[1], "village_" + terrain,
-		[_story_portrait("hero", "serious")] if page[0] == "旅人" else [_story_portrait(villager, poses[index])], [],
+		[_story_portrait("hero", "serious")] if page[0] == "旅人" else [_story_portrait(villager, pose)], [],
 		func(_option: String):
 			if index + 1 < pages.size():
 				_village_page(terrain, index + 1)
