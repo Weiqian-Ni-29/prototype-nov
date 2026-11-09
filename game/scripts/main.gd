@@ -1829,7 +1829,7 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	var pages = _story_text_pages(body, text_label)
 	text_label.text = pages[page_index].strip_edges()
 	if history_entry.is_empty():
-		history_entry = {"title": title, "speaker": speaker, "pages": {}}
+		history_entry = {"speaker": speaker, "pages": {}}
 		story_history.append(history_entry)
 	history_entry.pages[page_index] = pages[page_index]
 	var counter = _text(header, "第 %d / %d 页" % [page_index + 1, pages.size()], 15, muted)
@@ -1945,7 +1945,7 @@ func _show_story_history(story: Control) -> void:
 		for index in page_numbers:
 			text += entry.pages[index]
 		if not text.strip_edges().is_empty():
-			_text(content, "%s  ·  %s" % [entry.speaker, entry.title], 15, gold)
+			_text(content, entry.speaker, 15, gold)
 			_text(content, text.strip_edges(), 17)
 			content.add_child(HSeparator.new())
 	var bar = scroll.get_v_scroll_bar()

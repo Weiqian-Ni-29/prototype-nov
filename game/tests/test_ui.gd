@@ -622,8 +622,10 @@ func check_story_history() -> void:
 	if history == null:
 		game._close_modal()
 		return
-	expect(contains_text(history, "村民  ·  旧对话 0") and contains_text(history, "旅人  ·  当前对话"),
-		"History identifies earlier and current speakers and scenes")
+	var history_labels = history.find_children("*", "Label", true, false).map(func(label): return label.text)
+	expect("村民" in history_labels and "旅人" in history_labels
+		and not contains_text(history, "旧对话 0") and not contains_text(history, "当前对话"),
+		"History headings show just the speaker's name")
 	expect(contains_text(history, first_page) and not contains_text(history, "尚未阅读的最后一句"),
 		"History only shows pages that have appeared in the reader")
 	expect(not story_text().is_visible_in_tree(), "Current dialogue does not show through the translucent history")
