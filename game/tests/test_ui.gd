@@ -390,6 +390,8 @@ func check_node_dialogs() -> void:
 	hero.position = shop_cell
 	run.reveal(shop_cell)
 	game._select_actor("hero")
+	var balance = game.ui.find_child("LampCoinBalance", true, false) as Label
+	expect(balance != null and balance.text == "8", "The header displays the starting wallet balance")
 	var salves: int = int(hero.inventory.salve)
 	await press("行动")
 	await press("查看节点剧情")
@@ -399,6 +401,8 @@ func check_node_dialogs() -> void:
 	await press("确认 · 6 灯铢")
 	expect(run.data.lamp_coins == 2 and hero.inventory.salve == salves + 1, "The shop UI buys into the trader's inventory")
 	expect(saved_run().get("lamp_coins") == 2, "The shop UI saves the transaction")
+	balance = game.ui.find_child("LampCoinBalance", true, false) as Label
+	expect(balance != null and balance.text == "2", "The header balance updates after a purchase")
 	await press("返回节点")
 	await read_to_choices()
 	await click("返回地图")
