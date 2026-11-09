@@ -555,20 +555,20 @@ func advance_story() -> void:
 	check_story_layout()
 	await click_story_blank()
 
-func click_story_blank() -> void:
+func click_story_blank(relative_position: Vector2 = Vector2(0.76, 0.30)) -> void:
 	for pressed in [true, false]:
 		var event = InputEventMouseButton.new()
 		event.button_index = MOUSE_BUTTON_LEFT
 		event.pressed = pressed
-		event.position = root.get_visible_rect().size * Vector2(0.76, 0.30)
+		event.position = root.get_visible_rect().size * relative_position
 		root.push_input(event, true)
 	await process_frame
 
-func enter_story(echo_event: bool = false) -> void:
+func story_key(key: Key, echo_event: bool = false) -> void:
 	for pressed in [true, false]:
 		var event = InputEventKey.new()
-		event.keycode = KEY_ENTER
-		event.physical_keycode = KEY_ENTER
+		event.keycode = key
+		event.physical_keycode = key
 		event.pressed = pressed
 		event.echo = echo_event and pressed
 		root.push_input(event, true)
@@ -606,6 +606,67 @@ func check_pagination_helpers() -> void:
 					check_label_fit(label, bounds)
 			label.free()
 
+func check_story_history() -> void:
+	var completed = func(_choice: String): expect(false, "History cannot finish the active story")
+	for index in range(12):
+		game._show_story("旧对话 %d" % index, "村民", "这是先前读到的内容。".repeat(3), "road", [], [], completed, {})
+	var body = "这一句话只有第一页能看到。\n\n" + "这是一段需要分多页阅读的正文。".repeat(50) + "\n\n尚未阅读的最后一句。"
+	game._show_story("当前对话", "旅人", body, "road", [], [], completed, {})
+	await process_frame
+	var first_page = story_text().text
+	var page = story_page()
+	expect(page.y >= 3, "History fixture contains multiple unread pages")
+	await click("历史对话")
+	var history = game.modal_layer.get_node_or_null("StoryHistory")
+	expect(history != null, "The story button opens a history overlay")
+	if history == null:
+		game._close_modal()
+		return
+	var history_labels = history.find_children("*", "Label", true, false).map(func(label): return label.text)
+	expect("村民" in history_labels and "旅人" in history_labels
+		and not contains_text(history, "旧对话 0") and not contains_text(history, "当前对话"),
+		"History headings show just the speaker's name")
+	expect(contains_text(history, first_page) and not contains_text(history, "尚未阅读的最后一句"),
+		"History only shows pages that have appeared in the reader")
+	expect(not story_text().is_visible_in_tree(), "Current dialogue does not show through the translucent history")
+	var panel: PanelContainer = history.get_node("HistoryPanel")
+	var style: StyleBoxFlat = panel.get_theme_stylebox("panel")
+	expect(style.bg_color.a < 1.0 and absf(style.bg_color.r - style.bg_color.b) < 0.04,
+		"History uses a translucent gray background")
+	var scroll = panel.find_child("HistoryScroll", true, false) as ScrollContainer
+	var bar = scroll.get_v_scroll_bar()
+	var latest = scroll.scroll_vertical
+	expect(latest > 0 and is_equal_approx(float(latest), bar.max_value - bar.page), "Opening history scrolls to the latest dialogue")
+	var wheel = InputEventMouseButton.new()
+	wheel.button_index = MOUSE_BUTTON_WHEEL_UP
+	wheel.pressed = true
+	wheel.position = scroll.get_global_rect().get_center()
+	root.push_input(wheel, true)
+	await process_frame
+	expect(scroll.scroll_vertical < latest, "Scrolling can move back to older dialogue")
+	await click_story_blank(Vector2(0.96, 0.30))
+	await story_key(KEY_TAB)
+	expect(story_page() == page and history.is_ancestor_of(root.gui_get_focus_owner()),
+		"Mouse and keyboard stay in the history overlay")
+	await story_key(KEY_ESCAPE)
+	expect(not game.modal_layer.has_node("StoryHistory") and story_page() == page and story_text().text == first_page
+		and story_text().is_visible_in_tree(),
+		"Escape closes history and restores the same story page")
+
+	await click_story_blank()
+	var second_page = story_text().text
+	await click("上一页")
+	await click("历史对话")
+	history = game.modal_layer.get_node("StoryHistory")
+	var current_entries = history.find_children("*", "Label", true, false).filter(func(label):
+		return first_page in label.text)
+	expect(current_entries.size() == 1 and second_page in current_entries[0].text,
+		"Rereading an earlier page leaves one entry with both viewed pages")
+	await click("关闭")
+	expect(not game.modal_layer.has_node("StoryHistory") and story_page() == page,
+		"The close button also keeps the reader on its current page")
+	game._close_modal()
+
 func check_story_pagination() -> void:
 	var calls = {"count": 0, "choice": ""}
 	var completed = func(choice: String):
@@ -616,9 +677,9 @@ func check_story_pagination() -> void:
 	await process_frame
 	check_story_layout()
 	expect(story_page() == Vector2i(1, 1) and story_text().text == "短句。", "Short story is a complete single page")
-	await enter_story(true)
+	await story_key(KEY_ENTER, true)
 	expect(calls.count == 0, "Key repeat cannot advance or complete a story")
-	await enter_story()
+	await story_key(KEY_ENTER)
 	expect(calls.count == 1 and calls.choice == "" and not game.modal_layer.has_node("StoryScreen"), "Enter completes a single-page story exactly once")
 
 	var old_status = game.run.data.status
@@ -632,7 +693,7 @@ func check_story_pagination() -> void:
 	expect(pages.size() >= 2 and compact("".join(pages)) == compact(body), "Every long-story word is read in order without repeating the speaker")
 	if pages.size() >= 2:
 		await click("上一页")
-		await enter_story()
+		await story_key(KEY_ENTER)
 		check_story_layout()
 		expect(story_page() == Vector2i(pages.size(), pages.size()) and story_text().text == pages[-1]
 			and calls.count == 0, "Enter turns one page without completing the story")
@@ -663,6 +724,11 @@ func check_story_pagination() -> void:
 	await click_story_blank()
 	await click_story_blank()
 	expect(calls.count == 0, "Blank click on a decision page cannot skip its options")
+	var choice_position = find_button(game.modal_layer, "确认完成").get_global_rect().get_center()
+	await click("历史对话")
+	await click_story_blank(choice_position / root.get_visible_rect().size)
+	expect(calls.count == 0 and game.modal_layer.has_node("StoryHistory"), "A click cannot select a story choice through history")
+	await click("关闭")
 	await click("确认完成")
 	expect(calls.count == 1 and calls.choice == "finish", "Actual choice click invokes exactly its callback")
 
@@ -686,11 +752,17 @@ func execute() -> void:
 	expect(story_owns_focus(), "Opening retains the story interface and focus")
 	await advance_until_text("你醒了")
 	expect(dialogue_contains("你醒了"), "Reading reaches the hero waking without assuming a page count")
+	await click("历史对话")
+	var history = game.modal_layer.get_node("StoryHistory")
+	expect(contains_text(history, "维洛丹的人们") and contains_text(history, "你醒了"),
+		"History carries over from the world introduction into the village")
+	await click("关闭")
 	await advance_until_text("愿你一路平安")
 	expect(dialogue_contains("愿你一路平安"), "The villager sends off the traveler with supplies")
 	await finish_linear_story()
 	expect(game.modal_layer.get_child_count() == 0 and game.run.actor("hero").name == "旅人", "Departure enters the map as the fixed traveler")
 	expect(saved_run().get("actors", {}).get("hero", {}).get("inventory", {}).get("salve") == 3, "Village supplies are saved on departure")
+	await check_story_history()
 	await check_story_pagination()
 	await check_personal_dialogue()
 	await check_backpack_use()

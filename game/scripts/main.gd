@@ -43,6 +43,7 @@ var narrative: RefCounted
 var dialogue_subject = ""
 var dialogue_response = ""
 var dialogue_ready = false
+var story_history: Array[Dictionary] = []
 var sound: Node
 var gold = Color("dec38e")
 var ink = Color("e8e4d1")
@@ -248,6 +249,7 @@ func _seed_dialog() -> void:
 		_close_modal())
 
 func _begin_opening_story() -> void:
+	story_history.clear()
 	_show_opening(Screen.OPENING_STORY)
 	opening_seed = randi() if chosen_seed.is_empty() else _seed_value()
 	var generated = Hex.generate(opening_seed)
@@ -290,6 +292,8 @@ func _seed_value() -> int:
 
 func _start_new() -> void:
 	_close_modal()
+	if screen_state != Screen.OPENING_STORY:
+		story_history.clear()
 	var value = opening_seed if screen_state == Screen.OPENING_STORY else _seed_value()
 	run.new_run(value, "wayfarer")
 	combat = null
@@ -310,6 +314,7 @@ func _continue_run() -> void:
 	if not result.ok:
 		_notice(result.message)
 		return
+	story_history.clear()
 	combat = null
 	_clear_map_move()
 	toast_text = ""
@@ -1734,7 +1739,8 @@ func _story_text_pages(body: String, label: Label) -> PackedStringArray:
 	return pages if not pages.is_empty() else PackedStringArray([""])
 
 func _show_story(title: String, speaker: String, body: String, scene: String,
-		portraits: Array, options: Array, on_choice: Callable, actions: Dictionary, tint: Color = Color.WHITE, page_index: int = 0) -> void:
+		portraits: Array, options: Array, on_choice: Callable, actions: Dictionary, tint: Color = Color.WHITE,
+		page_index: int = 0, history_entry: Dictionary = {}) -> void:
 	_clear_map_move()
 	move_preview.hide()
 	_clear(modal_layer)
@@ -1822,15 +1828,20 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	text_label.offset_top = separator.position.y + separator.get_minimum_size().y + 8
 	var pages = _story_text_pages(body, text_label)
 	text_label.text = pages[page_index].strip_edges()
+	if history_entry.is_empty():
+		history_entry = {"speaker": speaker, "pages": {}}
+		story_history.append(history_entry)
+	history_entry.pages[page_index] = pages[page_index]
 	var counter = _text(header, "第 %d / %d 页" % [page_index + 1, pages.size()], 15, muted)
 	counter.name = "PageCounter"
 	counter.autowrap_mode = TextServer.AUTOWRAP_OFF
 	counter.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	header.add_spacer(false).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_button(header, "历史对话", _show_story_history.bind(overlay))
 	for label in actions:
 		_button(header, label, actions[label])
 	var turn_page = func(index: int):
-		_show_story(title, speaker, body, scene, portraits, options, on_choice, actions, tint, index)
+		_show_story(title, speaker, body, scene, portraits, options, on_choice, actions, tint, index, history_entry)
 	var navigation = HBoxContainer.new()
 	navigation.name = "StoryNavigation"
 	navigation.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -1881,6 +1892,65 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 			first_enabled = button
 	if first_enabled != null:
 		first_enabled.grab_focus()
+
+func _show_story_history(story: Control) -> void:
+	var previous_focus = get_viewport().gui_get_focus_owner()
+	story.focus_behavior_recursive = Control.FOCUS_BEHAVIOR_DISABLED
+	var story_controls = [story.get_node("Dialogue"), story.get_node("StoryNavigation")]
+	var choices = story.get_node_or_null("StoryChoices")
+	if choices != null:
+		story_controls.append(choices)
+	for control in story_controls:
+		control.hide()
+	var backdrop = ColorRect.new()
+	backdrop.name = "StoryHistory"
+	backdrop.color = Color(0, 0, 0, 0.20)
+	backdrop.mouse_force_pass_scroll_events = false
+	modal_layer.add_child(backdrop)
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var panel = PanelContainer.new()
+	panel.name = "HistoryPanel"
+	panel.add_theme_stylebox_override("panel", _style(Color("353638de"), Color("898b90"), 12))
+	backdrop.add_child(panel)
+	_story_region(panel, 0.18, 0.12, 0.82, 0.88)
+	var box = VBoxContainer.new()
+	box.add_theme_constant_override("separation", 12)
+	panel.add_child(box)
+	var header = HBoxContainer.new()
+	box.add_child(header)
+	_text(header, "历史对话", 25, ink)
+	var close = _button(header, "关闭", func():
+		modal_layer.remove_child(backdrop)
+		backdrop.queue_free()
+		story.focus_behavior_recursive = Control.FOCUS_BEHAVIOR_INHERITED
+		for control in story_controls:
+			control.show()
+		if is_instance_valid(previous_focus):
+			previous_focus.grab_focus())
+	var escape = InputEventKey.new()
+	escape.keycode = KEY_ESCAPE
+	close.shortcut = Shortcut.new()
+	close.shortcut.events = [escape]
+	box.add_child(HSeparator.new())
+
+	var content = _scroll_content(box)
+	var scroll: ScrollContainer = content.get_parent()
+	scroll.name = "HistoryScroll"
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	for entry in story_history:
+		var page_numbers = entry.pages.keys()
+		page_numbers.sort()
+		var text = ""
+		for index in page_numbers:
+			text += entry.pages[index]
+		if not text.strip_edges().is_empty():
+			_text(content, entry.speaker, 15, gold)
+			_text(content, text.strip_edges(), 17)
+			content.add_child(HSeparator.new())
+	var bar = scroll.get_v_scroll_bar()
+	bar.changed.connect(func(): scroll.scroll_vertical = int(bar.max_value), CONNECT_ONE_SHOT)
+	close.grab_focus()
 
 func _story_texture(scene: String) -> Texture2D:
 	var path = "res://assets/story/" + scene + ".png"
