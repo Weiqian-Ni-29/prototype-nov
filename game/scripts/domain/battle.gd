@@ -42,7 +42,7 @@ func begin(expedition: RefCounted, encounter: Dictionary, formation: Array) -> D
 	for id in formation:
 		var a = expedition.actor(id)
 		if unique.has(id) or a.is_empty() or not a.joined or a.position != position or a.hp <= 0:
-			return {"ok": false, "message": "出战角色须健康、同地且不重复。"}
+			return {"ok": false, "message": "只能选同一地块的健康队员出战，每人选一次。"}
 		if not can_deploy(a, encounter):
 			return {"ok": false, "message": "%s 参战精力不足。" % a.name}
 		unique[id] = true
@@ -95,7 +95,7 @@ func begin(expedition: RefCounted, encounter: Dictionary, formation: Array) -> D
 		if type.begins_with("npc:"):
 			e = run.actor(npc).duplicate(true)
 			e["hp_max"] = e.hp_max
-			e["role"] = "误会中的普通交战 · 需要实际救援"
+			e["role"] = "因误会交手 · 重伤后需要救治"
 			e["skill"] = "ignite" if npc == "ember" else "attack"
 		else:
 			e = run.war_god_stats() if type == "war_god" else Catalog.ENEMIES[type].duplicate(true)
@@ -368,13 +368,13 @@ func use_item(item: String, target_id: String) -> Dictionary:
 
 func swap(incoming: String) -> Dictionary:
 	if outcome != "" or enemies.has(current) or current.is_empty() or madness.has(current) or incoming not in reserves():
-		return _fail("只能在己方正常行动时换入合格同地候补。")
+		return _fail("等轮到己方行动时，才能换上同一地块可以出战的候补。")
 	var outgoing = current
 	var index = active.find(outgoing)
 	active[index] = incoming
 	_deploy(incoming)
 	next_time.erase(outgoing)
-	_log("%s 换下，%s 上场；换人消耗本次正常行动。" % [unit(outgoing).name, unit(incoming).name])
+	_log("%s 换下，%s 上场。换人用掉了这次正常行动。" % [unit(outgoing).name, unit(incoming).name])
 	current = ""
 	_settle_fire()
 	resolve_queued()
@@ -602,7 +602,7 @@ func check_end() -> bool:
 			active[0] = incoming
 			next_time.erase(replaced)
 			_deploy(incoming)
-			_log("场上倒下；同地候补 %s 接替继续。" % unit(incoming).name)
+			_log("场上的队员倒下了，同一地块的候补 %s 接着上场。" % unit(incoming).name)
 		else:
 			# User-confirmed: a simultaneous wipe is a defeat, never a free victory revive.
 			_finish("defeat")
@@ -707,7 +707,7 @@ func _finish(result: String) -> void:
 			+ ("获得 %d 灯铢。" % coins if coins > 0 else ""))
 	elif result == "retreat":
 		run.retreat_squad(pending.get("movers", []), pending.get("origin", position))
-		_log("撤退，不返还精力、不发胜利奖励；未出战异地角色不受影响。")
+		_log("队伍撤退了。花过的精力不退，这场也没有胜利奖励。异地没参战的队员不受影响。")
 	else:
 		_log("战败。重伤者留在遭遇地点。")
 	run.data.pending_battle = {}
@@ -720,7 +720,7 @@ func _finish(result: String) -> void:
 		run.data.erase("pending_arrival")
 	if result == "defeat" and paid.has("hero"):
 		run.data.status = "failed"
-		run.data.flags["failure_reason"] = "主角参与的战斗中，友方与合格同地候补均无法继续。"
+		run.data.flags["failure_reason"] = "旅人所在的队伍已经无人能继续战斗，同一地块也没有能上场的候补。"
 	run.check_global_failure()
 	for id in paid:
 		unit(id).shield = 0
@@ -731,7 +731,7 @@ func _finish(result: String) -> void:
 	items.fields.clear()
 	var saved = run.save_game()
 	if not saved.ok:
-		_log("战斗已结算，但存档失败：" + str(saved.message))
+		_log("战斗已结束，游戏没能保存。 " + str(saved.message))
 	run.changed.emit()
 
 func _weakest(ids: Array) -> String:

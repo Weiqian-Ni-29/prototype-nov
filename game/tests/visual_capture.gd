@@ -568,7 +568,7 @@ func capture_finale() -> void:
 	expect(game.modal_layer.has_node("StoryScreen") and battle.reveal_pending and not battle.river,
 		"The old strike triggers the flashback before the river")
 	await capture("story-final-memory")
-	await advance_until_text("你将冥界的一部分")
+	await advance_until_text("你把冥河引到战场")
 	await capture("story-final-river")
 	await finish_linear_story()
 	await process_frame
@@ -596,7 +596,9 @@ func execute() -> void:
 	await capture("story-village-waking")
 	await advance_until_text("一点也想不起来")
 	await capture("story-village-traveler")
-	await advance_until_text("愿你一路平安")
+	await advance_until_text("我也想帮帮其他人")
+	await capture("story-village-decision")
+	await advance_until_text("一路平安")
 	await capture("story-village-farewell")
 	await click_story_button("历史对话")
 	expect(game.modal_layer.has_node("StoryHistory/HistoryPanel"), "Story history opens over the village illustration")
@@ -717,11 +719,10 @@ func execute() -> void:
 	await await_story_choices()
 	await capture("story-lorne-personal-choices")
 	game._close_modal()
+	# Recruit Eve for the first time, without the earlier battle fixtures' relic rewards.
+	game._start_new()
 	game.run.actor("hero").position = game.run.actor("eve").position
 	game.run.data.tiles[game.run.actor("eve").position].enemies.clear()
-	game.run.actor("eve").joined = false
-	game.run.data.story.eve.met = false
-	game.run.data.story.eve.relation = "unmet"
 	game._talk("eve")
 	await capture("story-eve-first-meeting")
 	await await_story_choices()
@@ -737,7 +738,7 @@ func execute() -> void:
 	await click_story_button(quest_option_label(game.narrative.dialogue("hero", "eve"), "join"))
 	await advance_story()
 	expect(story_contains(Story.CHARACTER_BEHAVIOR.eve[1]), "A companion replies before opening the recruitment relic")
-	await advance_story()
+	await advance_until_text(Relics.DATA.tender_gauze.story)
 	expect(story_contains(Relics.DATA.tender_gauze.story), "The recruitment relic follows the companion's reply")
 	game._close_modal()
 	# Instantiate every remaining enemy art family and verify its skeleton in the tree.
