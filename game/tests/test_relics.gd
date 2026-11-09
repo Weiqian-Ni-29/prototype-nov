@@ -20,7 +20,7 @@ func expect(condition: bool, label: String) -> void:
 
 func roll(seed_value: int, source: String) -> float:
 	var rng = RandomNumberGenerator.new()
-	rng.seed = hash("relic:%d:%s" % [seed_value, source])
+	rng.seed = hash("relic:4:%d:%s" % [seed_value, source])
 	return rng.randf()
 
 func check_effects(run: RefCounted) -> void:
@@ -34,10 +34,13 @@ func check_effects(run: RefCounted) -> void:
 	expect(run.move_cost("hero", mountain) == 2 and run.grant_relic("trail_boots", "hero", start)
 		and run.move_cost("hero", mountain) == 1, "Boots reduce the actual cost of every costly move")
 	run.grant_relic("ranged_sight", "hero", start)
-	expect(run.stat("hero", "attack") == roundi(initial_attack * 1.15), "Ranged attack scales after equipment")
+	expect(run.stat("hero", "attack") == initial_attack, "Ranged relic modifies battle damage, not the attack stat")
 	hero.hp = 18
 	run.grant_relic("life_seed", "hero", start)
-	expect(hero.hp_max == 114 and hero.hp == 18 and not run.grant_relic("life_seed", "hero", start), "Life seed applies once and keeps current HP")
+	expect(hero.hp_max == 95 and run.use_relic("hero", "life_seed").ok and hero.hp_max == 114 and hero.hp == 18,
+		"Life seed waits for explicit use and keeps current HP")
+	run.grant_relic("life_seed", "hero", start)
+	expect(not run.use_relic("hero", "life_seed").ok and run.data.relic_inventory.life_seed == 1, "A duplicate seed cannot reapply permanent growth")
 	later.position = start
 	run.join_companion("lorne")
 	expect(later.hp_max == roundi(later_max * 1.20), "Later recruits inherit the team max HP bonus")
@@ -52,14 +55,16 @@ func check_effects(run: RefCounted) -> void:
 	grit.mp = 0
 	run.grant_relic("road_hourglass", "hero", start)
 	run.grant_relic("stillwater_stone", "hero", start)
-	expect(hero.ap == 3 and hero.mp == roundi(hero.mp_max * 0.40) and grit.ap == 0 and grit.mp == 0, "Instant restoration only applies to able allies")
+	expect(hero.ap == 1 and hero.mp == 0 and run.use_relic("hero", "road_hourglass").ok and run.use_relic("hero", "stillwater_stone").ok
+		and hero.ap == 3 and hero.mp == roundi(hero.mp_max * 0.40) and grit.ap == 0 and grit.mp == 0, "Explicit restoration only applies to able allies")
 	run.grant_relic("herbal_case", "hero", start)
 	expect(run.use_item("hero", "hero", "salve").ok and hero.hp == 74, "Health items use the relic multiplier")
 	run.grant_relic("rainstone", "hero", start)
 	var weather = run.next_weather()
 	expect(is_equal_approx(run.rain_chance(), 0.48) and run.end_day().ok and run.data.weather == weather, "Forecast and day settlement use the adjusted rain probability")
 	run.grant_relic("rain_bell", "hero", start)
-	expect(run.data.weather == "rain", "Rain bell immediately changes the current weather")
+	run.data.weather = "sun"
+	expect(run.use_relic("hero", "rain_bell").ok and run.data.weather == "rain", "Rain bell changes the current weather when used")
 	run.grant_relic("lamp_badge", "hero", start)
 	run.data.tiles[start].enemies = ["boar"]
 	var combat = Battle.new()
@@ -74,18 +79,19 @@ func check_effects(run: RefCounted) -> void:
 
 func check_battle_drop(run: RefCounted) -> void:
 	var seed_value = 1
-	while roll(seed_value, "battle:0,0:") >= 0.20:
+	while roll(seed_value, "battle:0,0:") >= 0.30:
 		seed_value += 1
 	run.new_run(seed_value, "wayfarer")
 	run.actor("hero").position = "0,0"
 	run.reveal("0,0")
 	run.data.tiles["0,0"].enemies = ["archer"]
+	var expected: String = run.relic_offer("battle:0,0:", Relics.DATA.keys(), 0.30)
 	var combat = Battle.new()
 	expect(combat.begin(run, {"position": "0,0", "origin": "0,0", "ambush": false, "npc": "", "movers": []}, ["hero"]).ok, "Archer encounter begins")
 	combat.enemies.enemy_0.hp = 0
 	combat.check_end()
-	expect(combat.outcome == "victory" and run.has_relic("ranged_sight") and run.relic_intro().id == "ranged_sight", "Victory rolls the eligible ranged reward")
-	expect(run.load_game().ok and run.data.relic_checks["battle:0,0:"] == "ranged_sight"
+	expect(combat.outcome == "victory" and not expected.is_empty() and run.data.relic_inventory.has(expected) and run.relic_intro().id == expected, "Victory rolls once from the shared pool")
+	expect(run.load_game().ok and run.data.relic_claims["battle:0,0:"].relic_id == expected
 		and run.roll_relic("battle:0,0:", ["lamp_badge"], 1.0, "hero", "0,0").is_empty(), "Battle settlement and reward are saved together without a reroll")
 
 func check_victory_intro(save_path: String) -> void:
@@ -101,7 +107,7 @@ func check_victory_intro(save_path: String) -> void:
 			if button.text == "继续远征":
 				button.pressed.emit()
 				break
-		expect(game.modal_layer.has_node("StoryScreen") and game.run.relic_intro().get("id") == "ranged_sight",
+		expect(game.modal_layer.has_node("StoryScreen") and not game.run.relic_intro().is_empty(),
 			"Acknowledging victory opens the earned relic introduction")
 	game.queue_free()
 
@@ -173,13 +179,13 @@ func check_exploration() -> void:
 	game._inventory_dialog("hero", 2)
 	var tabs = game.modal_layer.find_child("InventoryTabs", true, false)
 	expect(tabs != null and tabs.get_tab_count() == 3 and tabs.get_tab_title(2) == "遗器"
-		and tabs.get_child(2).find_children("*", "Label", true, false).any(func(label): return "望远镜 · 持续生效" in label.text), "Backpack exposes the team relic in its own tab")
+		and tabs.get_child(2).find_children("*", "Button", true, false).any(func(button): return "望远镜" in button.text), "Backpack exposes the team relic in its own tab")
 	game.queue_free()
 
 func execute() -> void:
 	var run = Run.new()
 	run.save_path = "user://test-relic-domain.json"
-	expect(Relics.DATA.size() == 10, "Ten distinct relics are defined")
+	expect(Relics.DATA.size() == 100, "One hundred distinct relics are defined")
 	check_effects(run)
 	check_battle_drop(run)
 	await check_victory_intro(run.save_path)

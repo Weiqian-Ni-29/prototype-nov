@@ -5,6 +5,8 @@ const Hex = preload("res://scripts/domain/hex_map.gd")
 const Combat = preload("res://scripts/domain/battle.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
+const Gear = preload("res://scripts/domain/gear_catalog.gd")
+var item_operation_serial = 0
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const OpeningStory = preload("res://scripts/domain/opening_story.gd")
 const StoryPortrait = preload("res://scripts/presentation/story_portrait.gdshader")
@@ -469,7 +471,7 @@ func _cell_actions() -> void:
 		_text(box, "可采集：%s ×%d" % [Catalog.item_name(t.resource), t.quantity], 16, muted)
 		_button(box, "采集 · 1 精力", func(): _close_modal(); _run_action(run.collect(selected_id)))
 	var relic: String = run.relic_sites.get(cell, "")
-	if node.get("kind") != "cache" and not relic.is_empty() and not run.has_relic(relic) and t.enemies.is_empty() and not run.data.relic_checks.has("site:" + cell):
+	if node.get("kind") != "cache" and not relic.is_empty() and t.enemies.is_empty() and not run.data.relic_claims.has("site:" + cell):
 		_button(box, "调查" + Relics.SITES[relic][0], func():
 			_close_modal()
 			var result = run.investigate_relic(selected_id)
@@ -577,7 +579,8 @@ func _node_dialog(feedback: String = "", ready: bool = false) -> void:
 func _node_choice(option: String) -> void:
 	match option:
 		"leave":
-			_close_modal()
+			if not _show_relic_intro():
+				_close_modal()
 		"trade":
 			_shop_dialog()
 		"talk":
@@ -587,7 +590,7 @@ func _node_choice(option: String) -> void:
 		_:
 			var result = run.use_node(selected_id, option)
 			_run_action(result)
-			if result.ok and _show_relic_intro(func(): _node_dialog(str(result.get("message", "")))):
+			if result.ok and option == "search" and _show_relic_intro(func(): _node_dialog(str(result.get("message", "")))):
 				return
 			_node_dialog("" if result.ok and option == "inspect" else str(result.get("message", "")))
 
@@ -599,29 +602,71 @@ func _shop_dialog(feedback: String = "") -> void:
 	if not feedback.is_empty():
 		_text(box, feedback, 15, muted)
 	var list = _scroll_content(box)
-	_text(list, "买入", 20, gold)
-	for item in node.stock:
-		var price: int = Nodes.PRICES[item]
-		var stock: int = int(node.stock[item])
-		_button(list, "%s · %d 灯铢 · 余 %d" % [Catalog.item_name(item), price, stock],
-			_trade_item.bind(item, true), stock <= 0 or run.data.lamp_coins < price)
-	_text(list, "卖出", 20, gold)
-	var sale_count = 0
-	for item in Nodes.PRICES:
-		var available = int(trader.inventory.get(item, 0)) - int(item in trader.equipment.values())
-		if available <= 0:
-			continue
-		sale_count += 1
-		_button(list, "%s · 得 %d 灯铢 · 可售 %d" % [Catalog.item_name(item), floori(Nodes.PRICES[item] / 2.0), available],
-			_trade_item.bind(item, false))
-	if sale_count == 0:
-		_text(list, "交易者手上暂无可出售的普通物品。", 15, muted)
+	for buying in [true, false]:
+		_text(list, "买入" if buying else "卖出", 20, gold)
+		var supplies: Dictionary = node.stock if buying else trader.inventory
+		_text(list, "补给", 16, muted)
+		for id in supplies:
+			if not Nodes.PRICES.has(id) or int(supplies[id]) <= 0:
+				continue
+			_shop_row(list, id, Catalog.item_name(id), Nodes.PRICES[id], int(supplies[id]), buying)
+		_text(list, "装备", 16, muted)
+		for uid in run.gear_owned("shop" if buying else "actor", trader.position if buying else selected_id):
+			if not buying and uid in trader.equipment.values():
+				continue
+			var item = run.data.gear_instances[uid]
+			_shop_row(list, uid, Gear.label(item), Gear.price(item), 1, buying, true)
+		_text(list, "遗器", 16, muted)
+		var relics: Dictionary = node.relic_stock if buying else run.data.relic_inventory
+		for id in relics:
+			if int(relics[id]) > 0:
+				_shop_row(list, id, Relics.DATA[id].name, Relics.DATA[id].price, int(relics[id]), buying)
 	_button(box, "返回节点", _node_dialog)
 
-func _trade_item(item: String, buying: bool) -> void:
-	var result = run.trade(selected_id, item, buying)
-	_run_action(result)
-	_shop_dialog(result.message)
+func _shop_row(list: Node, id: String, label: String, base: int, count: int, buying: bool, gear: bool = false) -> void:
+	var quote = run.item_quote(base, "shop_buy" if buying else "shop_sell", id if gear else "")
+	var detail = "%s · %d 灯铢 · %d 件" % [label, quote.price, count]
+	if run.has_relic("price_pair_slip"):
+		var buy_price = run.item_quote(base, "shop_buy", id if gear else "").price
+		var sell_price = run.item_quote(base, "shop_sell", id if gear else "").price
+		detail += " · 买 %d / 卖 %d" % [buy_price, sell_price]
+	_button(list, detail,
+		_shop_confirm.bind(id, label, base, buying, gear), buying and run.data.lamp_coins < quote.price and _vouchers("shop_buy").is_empty())
+
+func _shop_confirm(id: String, label: String, base: int, buying: bool, gear: bool) -> void:
+	var actor_id = selected_id
+	var box = _modal(("买入 " if buying else "卖出 ") + label, 590, 420)
+	if gear:
+		_text(box, Gear.DATA[run.data.gear_instances[id].definition_id].effect, 16)
+	elif Relics.DATA.has(id):
+		_text(box, Relics.DATA[id].effect, 16)
+		if not buying and run.has_relic(id) and int(run.data.relic_inventory[id]) == 1:
+			_text(box, "售出最后一件会解除共鸣。", 17, gold)
+	var channel = "shop_buy" if buying else "shop_sell"
+	var vouchers = [""] + (_vouchers(channel) if buying else [])
+	for voucher in vouchers:
+		var quote = run.item_quote(base, channel, id if gear else "", voucher)
+		if not quote.ok:
+			continue
+		var action = run.gear_trade.bind(actor_id, id, buying, voucher) if gear else run.trade.bind(actor_id, id, buying, voucher)
+		var execute = _item_command(action)
+		_button(box, "确认 · %d 灯铢%s" % [quote.price, " · " + Relics.DATA[voucher].name if not voucher.is_empty() else ""], func():
+			var result = execute.call()
+			_run_action(result)
+			var message: String = result.get("message", "已完成。")
+			if not result.ok or not _show_relic_intro(_shop_dialog.bind(message)):
+				_shop_dialog(message), buying and run.data.lamp_coins < quote.price)
+	_button(box, "返回商摊", _shop_dialog)
+
+func _item_command(action: Callable) -> Callable:
+	item_operation_serial += 1
+	var id = "%d:%d" % [Time.get_ticks_usec(), item_operation_serial]
+	return run.commit_item_operation.bind(id, int(run.data.item_revision), action)
+
+func _vouchers(channel: String) -> Array:
+	return run.data.relic_inventory.keys().filter(func(id):
+		var entry = Relics.DATA[id]
+		return entry.hook == "transaction_use" and entry.params.channel == channel)
 
 func _split_squad_dialog() -> void:
 	var members: Array = run.squad_members(selected_id)
@@ -738,11 +783,15 @@ func _move_selected() -> void:
 		_formation_dialog()
 	elif not _show_chapter():
 		_show_npc_encounter(selected_id if selected_id in moving_ids else moving_ids[0])
+		if modal_layer.get_child_count() == 0:
+			_show_relic_intro()
 
 func _run_action(result: Dictionary) -> void:
 	toast_text = "已完成。" if result.ok else str(result.get("message", "无法执行。"))
 	if result.ok and run.data.status != "battle":
-		run.save_game()
+		var saved = run.save_game()
+		if not saved.ok:
+			toast_text = "操作已结算，但存档失败：" + str(saved.message)
 	_refresh()
 	if not result.ok and combat == null and run.data.status == "exploring" and modal_layer.get_child_count() == 0:
 		_notice(toast_text)
@@ -796,11 +845,6 @@ func _end_day_dialog() -> void:
 			remaining.append("%s %d 精力" % [run.actor(id).name, run.actor(id).ap])
 	_confirm("结束这一天？", "尚余：" + " / ".join(remaining) + "\n\n全队进入次日，精力回各自上限。次日天气可能变化。生命与魔力靠节点、物资和治疗恢复。", func(): _run_action(run.end_day()))
 
-func _inventory_tab(item: String) -> int:
-	if Catalog.ITEMS.get(item, {}).has("slot"):
-		return 1
-	return 0
-
 func _inventory_dialog(id: String, current_tab: int = 0, selected_consumable: String = "") -> void:
 	var a = run.actor(id)
 	var box = _modal(a.name + " · 背包与装备", 850, 670)
@@ -808,7 +852,7 @@ func _inventory_dialog(id: String, current_tab: int = 0, selected_consumable: St
 	var slots: Array[String] = []
 	for slot in ["weapon", "armor", "accessory"]:
 		var item = str(a.equipment.get(slot, ""))
-		slots.append({"weapon": "武器", "armor": "防具", "accessory": "饰品"}[slot] + "：" + (Catalog.item_name(item) if item != "" else "空"))
+		slots.append({"weapon": "武器", "armor": "防具", "accessory": "饰品"}[slot] + "：" + (Gear.label(run.data.gear_instances[item]) if item != "" else "空"))
 	_text(box, "  ·  ".join(slots), 17, gold)
 	if id != "hero" and Story.BACKGROUNDS.has(id):
 		_text(box, "%s · %s" % [a.race, Story.CHARACTER_BEHAVIOR[id][0]], 15, muted)
@@ -853,64 +897,278 @@ func _inventory_dialog(id: String, current_tab: int = 0, selected_consumable: St
 	for item in a.inventory:
 		if a.inventory[item] <= 0:
 			continue
-		var tab = _inventory_tab(item)
 		var definition = Catalog.ITEMS.get(item, {})
 		var row = HBoxContainer.new()
-		if tab == 0:
-			var card = PanelContainer.new()
-			card.focus_mode = Control.FOCUS_ALL
-			card.add_theme_stylebox_override("panel", row_style)
-			card.focus_entered.connect(select_consumable.bind(item))
-			card.gui_input.connect(func(event: InputEvent):
-				if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-					card.accept_event()
-					card.grab_focus()
-					select_consumable.call(item))
-			cards[item] = card
-			lists[tab].add_child(card)
-			row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			card.add_child(row)
-		else:
-			lists[tab].add_child(row)
+		var card = PanelContainer.new()
+		card.focus_mode = Control.FOCUS_ALL
+		card.add_theme_stylebox_override("panel", row_style)
+		card.focus_entered.connect(select_consumable.bind(item))
+		card.gui_input.connect(func(event: InputEvent):
+			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+				card.accept_event()
+				card.grab_focus()
+				select_consumable.call(item))
+		cards[item] = card
+		lists[0].add_child(card)
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card.add_child(row)
 		var item_label = _text(row, Catalog.item_name(item) + " ×%d" % a.inventory[item], 16)
-		if tab == 0:
-			item_label.size_flags_horizontal = Control.SIZE_FILL
-			item_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-			item_label.autowrap_mode = TextServer.AUTOWRAP_OFF
-			var holder = PanelContainer.new()
-			holder.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-			holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			var tag_style = _style(Color("2a4038"), Color("64725e"), 6)
-			tag_style.content_margin_top = 3
-			tag_style.content_margin_bottom = 3
-			holder.add_theme_stylebox_override("panel", tag_style)
-			row.add_child(holder)
-			_text(holder, "持有者 · " + a.name, 13, gold).autowrap_mode = TextServer.AUTOWRAP_OFF
-			var spacer = Control.new()
-			spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			row.add_child(spacer)
-			if definition.has("hp") or definition.has("mp"):
-				_button(row, "使用", _item_dialog.bind(id, item), a.hp <= 0 or run.data.status != "exploring")
-		if definition.has("slot"):
-			_button(row, "卸下" if item in a.equipment.values() else "装备", func(): _run_action(run.equip(id, item)); _inventory_dialog(id, 1))
+		item_label.size_flags_horizontal = Control.SIZE_FILL
+		item_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		item_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+		var holder = PanelContainer.new()
+		holder.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var tag_style = _style(Color("2a4038"), Color("64725e"), 6)
+		tag_style.content_margin_top = 3
+		tag_style.content_margin_bottom = 3
+		holder.add_theme_stylebox_override("panel", tag_style)
+		row.add_child(holder)
+		_text(holder, "持有者 · " + a.name, 13, gold).autowrap_mode = TextServer.AUTOWRAP_OFF
+		var spacer = Control.new()
+		spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(spacer)
+		if definition.has("hp") or definition.has("mp"):
+			_button(row, "使用", _item_dialog.bind(id, item), a.hp <= 0 or run.data.status != "exploring")
 		if run.same_cell(a.position).size() > 1:
 			_button(row, "交接", _transfer_dialog.bind(id, item))
-	for i in range(2):
-		if lists[i].get_child_count() == 0:
-			_text(lists[i], "暂无物品。", 16, muted)
+	_gear_list(lists[1], id)
+	if lists[0].get_child_count() == 0:
+		_text(lists[0], "暂无物品。", 16, muted)
 	if cards.is_empty():
 		detail_panel.hide()
 	elif cards.has(selected_consumable):
 		select_consumable.call(selected_consumable)
-	_text(lists[2], "全队共享 · 本局有效", 17, gold)
-	if run.data.relics.is_empty():
-		_text(lists[2], "本次远征尚未获得遗器。", 16, muted)
-	for relic in run.data.relics:
-		var definition = Relics.DATA[relic]
-		_text(lists[2], "%s · %s" % [definition.name, "已触发" if definition.once else "持续生效"], 17, gold)
-		_text(lists[2], definition.effect, 16)
+	_relic_list(lists[2], id)
 	_button(box, "关闭", _close_modal)
+
+func _gear_list(list: VBoxContainer, id: String) -> void:
+	var filter = OptionButton.new()
+	for label in ["所有槽位", "武器", "护甲", "饰品"]:
+		filter.add_item(label)
+	list.add_child(filter)
+	var set_filter = OptionButton.new()
+	set_filter.add_item("所有套装")
+	for set_id in Gear.SETS:
+		set_filter.add_item(Gear.SETS[set_id].name)
+	list.add_child(set_filter)
+	var rows = VBoxContainer.new()
+	list.add_child(rows)
+	var refresh_rows = func(_index: int):
+		_clear(rows)
+		var instances: Array = run.gear_owned("actor", id)
+		instances.sort_custom(func(a, b):
+			var left: int = Gear.QUALITIES.find(run.data.gear_instances[a].quality)
+			var right: int = Gear.QUALITIES.find(run.data.gear_instances[b].quality)
+			return int(a) < int(b) if left == right else left > right)
+		for uid in instances:
+			var item = run.data.gear_instances[uid]
+			var def = Gear.DATA[item.definition_id]
+			if filter.selected > 0 and def.slot != Gear.SLOTS[filter.selected - 1]:
+				continue
+			if set_filter.selected > 0 and def.set_id != Gear.SETS.keys()[set_filter.selected - 1]:
+				continue
+			var equipped: bool = uid in run.actor(id).equipment.values()
+			var suffix: String = (" · " + Gear.SETS[def.set_id].name) if not def.set_id.is_empty() else ""
+			_button(rows, "%s%s%s" % [Gear.label(item), suffix, " · 已装备" if equipped else ""], _gear_detail.bind(id, uid))
+		if rows.get_child_count() == 0:
+			_text(rows, "暂无符合条件的装备。", 16, muted)
+	filter.item_selected.connect(refresh_rows)
+	set_filter.item_selected.connect(refresh_rows)
+	refresh_rows.call(0)
+
+func _gear_detail(id: String, uid: String, feedback: String = "") -> void:
+	var item = run.data.gear_instances[uid]
+	var definition = Gear.DATA[item.definition_id]
+	var a = run.actor(id)
+	var box = _modal(Gear.label(item), 780, 640)
+	var content = _scroll_content(box)
+	if not feedback.is_empty():
+		_text(content, feedback, 16, gold)
+	var current_uid: String = a.equipment[definition.slot]
+	var stat_labels = {"attack": "攻击", "defense": "防御", "speed": "速度"}
+	for stat in definition.stats:
+		var current_value = 0 if current_uid.is_empty() else Gear.bonus(run.data.gear_instances[current_uid], stat)
+		_text(content, "%s +%d · 当前同槽 +%d · 持有者 %s" % [stat_labels[stat], Gear.bonus(item, stat), current_value, a.name], 17, gold)
+	_text(content, definition.effect, 16)
+	if not definition.set_id.is_empty():
+		var pieces: int = run.set_count(id, definition.set_id)
+		var suite = Gear.SETS[definition.set_id]
+		_text(content, "%s · %d / 3" % [suite.name, pieces], 18, gold)
+		_text(content, ("已激活 · " if pieces >= 2 else "未激活 · ") + suite.two, 16)
+		_text(content, ("已激活 · " if pieces >= 3 else "未激活 · ") + suite.three, 16)
+	_button(content, "阅读装备故事", func():
+		_show_story(definition.name, "器物故事", definition.story, _story_scene_at(a.position),
+			[], [], func(_option: String): _gear_detail(id, uid), {}))
+	var equip_action = _item_command(run.equip.bind(id, uid))
+	_button(content, "卸下" if current_uid == uid else "装备", func():
+		var result = equip_action.call()
+		_run_action(result)
+		_gear_detail(id, uid, result.get("message", "")))
+	for other in run.same_cell(a.position):
+		if other == id or current_uid == uid:
+			continue
+		var transfer_action = _item_command(run.gear_transfer.bind(id, other, uid))
+		_button(content, "交给 " + run.actor(other).name, func():
+			var result = transfer_action.call()
+			_run_action(result)
+			if result.ok:
+				_inventory_dialog(id, 1)
+			else:
+				_gear_detail(id, uid, result.get("message", "")))
+	_text(content, "持有 %d 灯铢" % run.data.lamp_coins, 16, gold)
+	for voucher in [""] + _vouchers("enhancement_fee"):
+		var quote = run.enhancement_quote(id, uid, voucher)
+		if not quote.ok:
+			if voucher.is_empty():
+				_text(content, quote.message, 15, muted)
+			continue
+		var stat: String = definition.stats.keys()[0]
+		var next_value = Gear.bonus(item, stat, int(item.enhance_level) + 1)
+		var enhance_action = _item_command(run.enhance.bind(id, uid, voucher))
+		_button(content, "强化至 +%d · %s +%d → +%d · %d 灯铢%s" % [
+			int(item.enhance_level) + 1, stat_labels[stat], Gear.bonus(item, stat), next_value, quote.price,
+			" · " + Relics.DATA[voucher].name if not voucher.is_empty() else ""], func():
+			var result = enhance_action.call()
+			_run_action(result)
+			_gear_detail(id, uid, result.get("message", "")), run.data.lamp_coins < quote.price)
+	_button(box, "返回装备", _inventory_dialog.bind(id, 1))
+
+func _relic_list(list: VBoxContainer, id: String) -> void:
+	_text(list, "全队共鸣 · %d / 6" % run.data.relic_attunement.size(), 18, gold)
+	for i in 6:
+		var label = "%d. 空位" % (i + 1)
+		if i < run.data.relic_attunement.size():
+			var relic: String = run.data.relic_attunement[i]
+			_button(list, "%d. %s" % [i + 1, Relics.DATA[relic].name], _relic_detail.bind(id, relic))
+		else:
+			_text(list, label, 15, muted)
+	if run.data.relic_seen.is_empty():
+		_text(list, "本次远征尚未获得遗器。", 16, muted)
+	for type in ["P", "C", "L"]:
+		_text(list, {"P": "持续", "C": "消耗", "L": "永久"}[type], 17, gold)
+		for relic in Relics.DATA:
+			var entry = Relics.DATA[relic]
+			if entry.type != type or not run.data.relic_seen.has(relic):
+				continue
+			var count: int = int(run.data.relic_inventory.get(relic, 0))
+			var status = " · 共鸣中" if run.has_relic(relic) else ""
+			_button(list, "%s · %s%s" % [entry.name, "×%d" % count if count > 0 else "已发现", status], _relic_detail.bind(id, relic))
+
+func _relic_detail(id: String, relic: String, feedback: String = "") -> void:
+	var entry = Relics.DATA[relic]
+	var a = run.actor(id)
+	var box = _modal(entry.name, 700, 590)
+	var content = _scroll_content(box)
+	if not feedback.is_empty():
+		_text(content, feedback, 16, gold)
+	_text(content, entry.effect, 17)
+	_text(content, "主要来源 · " + _relic_source(entry.source), 15, muted)
+	if run.has_relic(relic):
+		_relic_information(content, id, relic)
+	_button(content, "阅读遗器故事", func():
+		_show_story(entry.name, "器物故事", entry.story, _story_scene_at(a.position),
+			[], [], func(_option: String): _relic_detail(id, relic), {}))
+	var count: int = int(run.data.relic_inventory.get(relic, 0))
+	if count > 0:
+		if entry.type == "P":
+			var execute = _item_command(run.attune_relic.bind(id, relic))
+			_button(content, "解除共鸣" if run.has_relic(relic) else "共鸣", func():
+				var result = execute.call()
+				_run_action(result)
+				_relic_detail(id, relic, result.get("message", "")))
+		elif entry.hook == "transaction_use":
+			_text(content, "在交易或强化时选择使用此凭券。", 16, muted)
+		else:
+			_relic_use_buttons(content, id, relic)
+	_button(box, "返回遗器", _inventory_dialog.bind(id, 2))
+
+func _relic_information(content: VBoxContainer, actor_id: String, relic: String) -> void:
+	var a = run.actor(actor_id)
+	var origin: String = a.position
+	var entry = Relics.DATA[relic]
+	match relic:
+		"survey_tally":
+			var visits: int = run.data.visited.size()
+			var upcoming: Array = [20, 60, 100].filter(func(value): return value > visits)
+			_text(content, "已实际到访 %d 格 · %s" % [visits, "里程碑已全部达成" if upcoming.is_empty() else "下一个 %d 格" % upcoming[0]], 16, gold)
+		"market_window":
+			for cell in run.data.explored:
+				var shop = run.node_at(cell)
+				if shop.get("kind") != "trade":
+					continue
+				var labels: Array[String] = []
+				for item in shop.stock:
+					if shop.stock[item] > 0:
+						labels.append("%s %d 灯铢" % [Catalog.item_name(item), run.item_quote(Nodes.PRICES[item], "shop_buy").price])
+				for uid in run.gear_owned("shop", cell):
+					var gear = run.data.gear_instances[uid]
+					labels.append("%s %d 灯铢" % [Gear.label(gear), run.item_quote(Gear.price(gear), "shop_buy", uid).price])
+				for id in shop.relic_stock:
+					if shop.relic_stock[id] > 0:
+						labels.append("%s %d 灯铢" % [Relics.DATA[id].name, run.item_quote(Relics.DATA[id].price, "shop_buy").price])
+				_text(content, "%s · %s" % [cell, "、".join(labels)], 15, muted)
+		"caution_compass":
+			var candidates: Array = run.data.explored.keys().filter(func(cell):
+				return not run.data.tiles[cell].hidden and run.node_at(cell).get("kind") == "elite" and not run.data.tiles[cell].enemies.is_empty() \
+					and Hex.distance(Hex.coord(origin), Hex.coord(cell)) <= entry.params.radius)
+			candidates.sort_custom(func(left, right):
+				var ld = Hex.distance(Hex.coord(origin), Hex.coord(left))
+				var rd = Hex.distance(Hex.coord(origin), Hex.coord(right))
+				return left < right if ld == rd else ld < rd)
+			if candidates.is_empty():
+				_text(content, "附近未发现可公开的精英节点。", 16, muted)
+			else:
+				var cell: String = candidates[0]
+				var offset = Hex.coord(cell) - Hex.coord(origin)
+				_text(content, "最近精英方向 %+d,%+d · 相距 %d 格" % [offset.x, offset.y, Hex.distance(Hex.coord(origin), Hex.coord(cell))], 16, gold)
+		"terrain_caliper":
+			for cell in run.data.explored:
+				if cell != origin and Hex.is_land(run.data.tiles, cell) and Hex.distance(Hex.coord(origin), Hex.coord(cell)) <= entry.params.radius:
+					var terrain: String = run.data.tiles[cell].terrain
+					_text(content, "%s · %s · 基础 %d → 实际 %d 精力" % [cell, Catalog.terrain_name(terrain), Catalog.TERRAIN[terrain].cost, run.move_cost(actor_id, cell)], 15, muted)
+		"cloud_almanac":
+			var forecast: Array = run.weather_forecast(2)
+			_text(content, "明天预计%s · 后天预计%s" % ["有雨" if forecast[0] == "rain" else "无雨", "有雨" if forecast[1] == "rain" else "无雨"], 16, gold)
+		"honest_ledger":
+			var node = run.node_at(origin)
+			if node.get("kind") == "choice":
+				_text(content, "当地委托 · " + ("已领取" if not node.result.is_empty() else "同地且需要 1 精力"), 16, gold)
+		"witness_slate":
+			for record in run.data.map_intel.get("observed_enemy_actions", []):
+				_text(content, "%s → %s · %s · HP −%d · 护盾 −%d" % [record.name, record.target,
+					Catalog.ELEMENT_NAMES.get(record.element, record.element), record.damage, record.absorbed], 15, muted)
+
+func _relic_source(source: String) -> String:
+	if source.begins_with("recruit:"):
+		return "指定伙伴首次同行"
+	return {"shop": "商店", "commission": "委托", "field_cache": "藏物点",
+		"exploration_milestone": "探索里程碑", "spirit_farewell": "亡灵送别"}.get(source, "探索")
+
+func _relic_use_buttons(content: VBoxContainer, id: String, relic: String) -> void:
+	var entry = Relics.DATA[relic]
+	var targets = [""]
+	if entry.params.get("targets") == "selected_other_healthy_joined_same_cell":
+		targets = run.same_cell(run.actor(id).position, true)
+		targets.erase(id)
+	elif entry.hook in ["encounter_info_use", "route_use"]:
+		targets = run.data.explored.keys().filter(func(cell): return Hex.is_land(run.data.tiles, cell) and cell != run.actor(id).position)
+		targets.sort()
+		if entry.hook == "encounter_info_use":
+			var nearby = Hex.neighbors(run.actor(id).position, run.data.tiles)
+			targets = targets.filter(func(cell): return cell in nearby and run.knows_encounter(cell))
+	if targets.is_empty():
+		_text(content, "当前没有可用目标。", 16, muted)
+	for target in targets:
+		var label = "使用"
+		if not target.is_empty():
+			label += " · " + (run.actor(target).name if run.data.actors.has(target) else Catalog.terrain_name(run.data.tiles[target].terrain) + " " + target)
+		var execute = _item_command(run.use_relic.bind(id, relic, target))
+		_button(content, label, func():
+			var result = execute.call()
+			_run_action(result)
+			_relic_detail(id, relic, result.get("message", "")))
 
 func _transfer_dialog(owner: String, item: String) -> void:
 	var box = _modal("同地交接 · " + Catalog.item_name(item), 650, 540)
@@ -922,10 +1180,10 @@ func _transfer_dialog(owner: String, item: String) -> void:
 				var result = run.transfer(owner, other, item, 1)
 				if result.ok:
 					_run_action(result)
-					_inventory_dialog(owner, _inventory_tab(item), item)
+					_inventory_dialog(owner, 0, item)
 				else:
 					_text(content, result.message, 16, gold))
-	_button(box, "返回背包", _inventory_dialog.bind(owner, _inventory_tab(item), item))
+	_button(box, "返回背包", _inventory_dialog.bind(owner, 0, item))
 
 func _item_dialog(user_id: String, item_id: String = "") -> void:
 	var from_backpack = not item_id.is_empty()
@@ -1132,12 +1390,26 @@ func _battle_ui(screen: Vector2) -> void:
 	retreat.tooltip_text = retreat_hint
 	var field = combat.field_view()
 	var context = "场地：" + Catalog.terrain_name(field.terrain)
+	var field_names = {"frozen": "冰面", "charged": "导电", "wind_barrier": "风障", "root_cover": "根掩"}
+	for state in field_names:
+		if field.fields.has(state):
+			context += " · %s %d 行动" % [field_names[state], field.fields[state]]
 	if combat.madness.has(combat.current):
 		context += " · 当前角色失去判断，将自行攻击"
 	if field.burning:
 		context += " · 燃烧"
+		if run.has_relic("field_dial"):
+			context += "（持续至战斗结束，双方下一次灼烧 %.1f）" % maxf(0.0, combat.fire_tick - combat.clock)
 	if field.wet:
-		context += " · 潮湿"
+		context += " · 潮湿 %d 行动" % int(field.fields.get("wet", 0))
+	if is_friendly:
+		var suites: Array[String] = []
+		for id in Gear.SETS:
+			var pieces: int = run.set_count(actor_id, id)
+			if pieces >= 2:
+				suites.append("%s %d 件" % [Gear.SETS[id].name, pieces])
+		if not suites.is_empty():
+			context += "\n生效套装 · " + "、".join(suites)
 	if field.get("river", false):
 		context += " · 冥河正在削弱战神"
 	if is_friendly:
@@ -1178,6 +1450,10 @@ func _select_battle_target(id: String) -> void:
 
 func _combat_skill_hint(skill_id: String, actor_id: String) -> String:
 	var hint = Catalog.skill_description(skill_id)
+	if not actor_id.is_empty():
+		var price: int = combat.skill_cost(actor_id, skill_id)
+		if price != int(Catalog.SKILLS[skill_id].mp):
+			hint = hint.replace("%d MP" % Catalog.SKILLS[skill_id].mp, "%d MP" % price)
 	if not actor_id.is_empty() and selected_target in combat.alive_enemies() and Catalog.SKILLS[skill_id].target == "enemy":
 		hint += " · 预计基础伤害 %d（护盾和防守另计）" % combat.damage_preview(actor_id, selected_target, skill_id)
 	return hint
@@ -1253,7 +1529,7 @@ func _victory_dialog() -> void:
 	if not result.salve_receiver.is_empty():
 		_text(content, "疗伤药 ×1 · %s 收入背包" % run.actor(result.salve_receiver).name, 17)
 	if not result.relic.is_empty():
-		_text(content, "发现遗器 · " + Relics.DATA[result.relic].name, 17, gold)
+		_text(content, ("新增副本 · " if result.get("relic_duplicate", false) else "发现遗器 · ") + Relics.DATA[result.relic].name, 17, gold)
 	if result.get("coins", 0) > 0:
 		_text(content, "获得 %d 灯铢" % result.coins, 17, gold)
 	if result.salve_receiver.is_empty() and result.relic.is_empty() and result.get("coins", 0) <= 0:
@@ -1680,7 +1956,7 @@ func _show_relic_intro(after: Callable = Callable()) -> bool:
 	var body: String = definition.effect if effect_page else definition.story
 	if not effect_page and not intro.lead.is_empty():
 		body = intro.lead + "\n\n" + body
-	var speaker = ("已触发" if definition.once else "持续生效") if effect_page else "旁白"
+	var speaker = ("已共鸣" if run.has_relic(intro.id) else "遗器效果") if effect_page else "旁白"
 	_show_story("获得遗器 · " + definition.name, speaker, body, scene, portraits, [], func(_option: String):
 		if not effect_page:
 			intro.stage = 1
@@ -1701,6 +1977,19 @@ func _journal() -> void:
 	var content = _scroll_content(box)
 	_text(content, _expedition_objective(), 23, gold)
 	_text(content, "地图种子 %s" % run.data.seed, 15, muted)
+	for key in run.data.map_intel:
+		if str(key).begins_with("cache:"):
+			_text(content, "藏物点标记 · " + str(key).trim_prefix("cache:"), 15, muted)
+		elif str(key).begins_with("encounter:"):
+			var info = run.data.map_intel[key]
+			var elements: Array = info.elements.map(func(element): return Catalog.ELEMENT_NAMES.get(element, element))
+			_text(content, "遭遇拓片 · %s · %d 个敌人 · %s" % [str(key).trim_prefix("encounter:"), info.count, "、".join(elements)], 15, muted)
+	var route = run.data.route_records.get(selected_id, {})
+	if not route.is_empty():
+		var steps: Array[String] = []
+		for i in route.steps.size():
+			steps.append("%s（%d）" % [route.path[i + 1], route.steps[i]])
+		_text(content, "引路绳路线 · %d 精力 · %s → %s" % [route.cost, route.origin, " → ".join(steps)], 15, muted)
 	if run.boss_known():
 		_button(content, "在地图上定位战神", func(): _close_modal(); selected_cell = run.data.boss; view.focus_cell(selected_cell); _refresh())
 	for chapter in range(int(run.data.chapter)):

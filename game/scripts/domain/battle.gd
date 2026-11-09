@@ -3,6 +3,8 @@ extends RefCounted
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
+const ItemEffects = preload("res://scripts/domain/battle_items.gd")
+var items = ItemEffects.new()
 var run: RefCounted
 var position = ""
 var active: Array[String] = []
@@ -46,6 +48,14 @@ func begin(expedition: RefCounted, encounter: Dictionary, formation: Array) -> D
 		unique[id] = true
 	run = expedition
 	pending = encounter.duplicate(true)
+	var npc_id = str(pending.get("npc", ""))
+	var reward_tier: String = "elite" if run.node_at(position).get("kind") == "elite" or pending.get("reward_tier") == "elite" else "ordinary"
+	var reward_source = "battle:%s:%s" % [position, npc_id]
+	if not run.data.battle_offers.has(reward_source):
+		run.data.battle_offers[reward_source] = run.relic_offer(reward_source, Relics.DATA.keys(), 1.0 if reward_tier == "elite" else 0.30)
+	pending["battle_uid"] = reward_source
+	pending["reward_tier"] = reward_tier
+	pending["relic_offer"] = run.data.battle_offers[reward_source]
 	run.data.pending_battle = pending.duplicate(true)
 	# The stable checkpoint precedes the one-time deployment charges.
 	var saved = run.save_game()
@@ -60,6 +70,7 @@ func begin(expedition: RefCounted, encounter: Dictionary, formation: Array) -> D
 	events.clear()
 	event_serial = 0
 	clock = 0.0
+	items = ItemEffects.new()
 	war_boss = ""
 	reveal_pending = false
 	river = false
@@ -89,6 +100,8 @@ func begin(expedition: RefCounted, encounter: Dictionary, formation: Array) -> D
 		else:
 			e = run.war_god_stats() if type == "war_god" else Catalog.ENEMIES[type].duplicate(true)
 			e["hp_max"] = e.hp
+		if not e.has("attack_delivery"):
+			e["attack_delivery"] = Catalog.ENEMIES[type].attack_delivery
 		e["id"] = "enemy_%d" % i
 		if type == "war_god":
 			war_boss = e.id
@@ -131,25 +144,31 @@ func reserves() -> Array[String]:
 
 func _deploy(id: String) -> void:
 	var a = unit(id)
-	if not paid.has(id):
+	var first = not paid.has(id)
+	if first:
 		a.ap = maxi(0, int(a.ap) - Catalog.BATTLE_AP)
-		a.shield = roundi(a.hp_max * 0.12) if run.has_relic("lamp_badge") else 0
+		a.shield = 0
+		if run.has_relic("lamp_badge"):
+			items.shield_gain(self, id, roundi(a.hp_max * 0.12))
 		a.slow = 0
 		a.guard = false
 		paid[id] = true
 	# An incoming character always waits a personal interval; no swap loop grants turns.
 	_schedule_action(id)
+	if first:
+		next_time[id] = clock + (next_time[id] - clock) * items.deployment(self, id)
 
 func _schedule_action(id: String) -> void:
 	var remaining = int(haste_turns.get(id, 0))
-	next_time[id] = clock + _delay(id, remaining > 0)
+	next_time[id] = clock + _delay(id, remaining > 0) * float(items.post_delay.get(id, 1.0))
+	items.post_delay.erase(id)
 	if remaining > 1:
 		haste_turns[id] = remaining - 1
 	else:
 		haste_turns.erase(id)
 
 func _delay(id: String, hastened: bool = false) -> float:
-	var speed = float(unit(id).speed) if enemies.has(id) else float(run.stat(id, "speed"))
+	var speed: float = items.stat(self, id, "speed")
 	if unit(id).get("slow", 0) > 0:
 		speed *= 0.7
 	if hastened:
@@ -181,9 +200,15 @@ func seek_next() -> void:
 	if check_end():
 		return
 	var order = timeline(1)
+	clock = maxf(clock, float(order[0].time))
+	_settle_fire(false)
+	if check_end():
+		return
+	order = timeline(1)
 	current = str(order[0].id)
 	clock = maxf(clock, float(order[0].time))
 	unit(current).guard = false
+	items.action_start(self, current)
 
 func act(skill_id: String, target_id: String = "") -> Dictionary:
 	if reveal_pending or not outcome.is_empty() or current.is_empty() or enemies.has(current):
@@ -195,16 +220,19 @@ func act(skill_id: String, target_id: String = "") -> Dictionary:
 	var allowed = ["attack", "guard", str(unit(id).skill)]
 	if skill_id not in allowed:
 		return _fail("该角色没有这个普通指令。")
+	var started_frozen: bool = items.present("frozen")
 	if skill_id == "guard":
+		var snap = items.snapshot(self, id, [])
 		unit(id).guard = true
 		unit(id).energy = mini(100, int(unit(id).energy) + 10)
 		_log("%s 防守，下次正常行动前减伤。" % unit(id).name)
+		items.guard(self, id, snap)
 		_emit_event({"actor":id,"targets":[id],"kind":"guard","skill_id":"guard","element":"normal","results":[]})
 	else:
 		var result = _cast(id, skill_id, target_id)
 		if not result.ok:
 			return result
-	_complete_action(id)
+	_complete_action(id, started_frozen)
 	return {"ok": true}
 
 func _cast(id: String, skill_id: String, target_id: String, ultimate: bool = false) -> Dictionary:
@@ -217,7 +245,8 @@ func _cast(id: String, skill_id: String, target_id: String, ultimate: bool = fal
 	if skill.has("haste"): effects.append("haste")
 	if skill.has("power") and not skill.get("healing",false): effects.append("damage")
 	var caster = unit(id)
-	if caster.hp <= 0 or int(caster.mp) < int(skill.get("mp", 0)):
+	var price = skill_cost(id, skill_id)
+	if caster.hp <= 0 or int(caster.mp) < price:
 		return _fail("无法施放：重伤或魔力不足。")
 	var targets: Array = []
 	match skill.target:
@@ -233,7 +262,8 @@ func _cast(id: String, skill_id: String, target_id: String, ultimate: bool = fal
 			targets = alive_enemies()
 		"all_allies":
 			targets = active.duplicate()
-	caster.mp -= int(skill.get("mp", 0))
+	var snap = items.snapshot(self, id, targets)
+	caster.mp -= items.cost(self, id, skill_id, true)
 	if ultimate:
 		caster.energy = 0
 	else:
@@ -243,19 +273,28 @@ func _cast(id: String, skill_id: String, target_id: String, ultimate: bool = fal
 		var before = _unit_view(t)
 		if skill.get("healing", false):
 			var was_down = t.hp <= 0
-			t.hp = mini(int(t.hp_max), int(t.hp) + int(skill.power))
+			var amount: int = items.heal_amount(self, id, target, int(skill.power), snap)
+			t.hp = mini(int(t.hp_max), int(t.hp) + amount)
+			if not was_down and t.hp > before.hp:
+				snap.heals.append({"target": target, "over": amount - int(t.hp - before.hp), "gain": int(t.hp - before.hp)})
 			if was_down and t.hp > 0:
 				_schedule_action(target)
-			_log("%s → %s：恢复 %d HP。" % [caster.name, t.name, skill.power])
+			_log("%s → %s：恢复 %d HP。" % [caster.name, t.name, int(t.hp - before.hp)])
 		elif skill.has("power") and t.hp > 0:
-			var damage = damage_preview(id, target, skill_id)
+			var damage = _direct_damage(id, target, skill_id, snap, true)
 			_hurt(target, damage)
 			if skill.has("slow") and t.hp > 0:
 				var duration = int(skill.slow) + int(skill.element == "ice" and wet)
-				t.slow = maxi(int(t.slow), duration)
+				var keys = items._keys(self, id, "grave:slow", "grave_wayfarer")
+				if skill.element == "gravity" and not river and duration < 3 and items.has_set(self, id, "grave_wayfarer", 3) \
+						and not snap.has("gravity_slow") and items._ready(self, keys, 2) and t.slow < duration + 1:
+					duration += 1
+					items._count(self, keys)
+					snap.gravity_slow = true
+				t.slow = maxi(int(t.slow), items.reduce_slow(self, target, duration))
 			_log("%s · %s → %s：%d 伤害。" % [caster.name, skill.name, t.name, damage])
 		if skill.has("shield") and t.hp > 0:
-			t.shield = mini(60, int(t.get("shield", 0)) + int(skill.shield))
+			items.shield_gain(self, target, int(skill.shield))
 			_log("%s 获得护盾。" % t.name)
 		var result = _visual_result(target, before)
 		if skill.element == "ice" and skill.has("slow") and t.hp > 0:
@@ -265,19 +304,28 @@ func _cast(id: String, skill_id: String, target_id: String, ultimate: bool = fal
 			result["haste"] = haste_turns[target]
 			_log("%s 获得提速。" % t.name)
 		results.append(result)
-	if skill.has("environment"):
+	if skill.has("environment") and results.any(func(result):
+			return result.damage + result.absorbed + result.healing + result.shield_gain > 0):
 		_apply_field_effect(skill.environment)
+	items.cast_done(self, id, skill_id, ultimate, price, snap, results)
 	_emit_event({"actor": id, "targets": targets, "kind": "ultimate" if ultimate else "cast" if skill_id != "attack" else "attack", "element": skill.element, "skill": skill.name, "skill_id":skill_id,"effects":effects,"results":results,"environment_before":environment_before,"environment_after":field_view()})
 	return {"ok": true}
 
+func skill_cost(id: String, skill_id: String) -> int:
+	return items.cost(self, id, skill_id)
+
 func damage_preview(source: String, target: String, skill_id: String) -> int:
+	return _direct_damage(source, target, skill_id, items.snapshot(self, source, [target]))
+
+func _direct_damage(source: String, target: String, skill_id: String, snap: Dictionary, landed: bool = false) -> int:
 	var skill = Catalog.SKILLS[skill_id]
-	var attack_value = run.stat(source, "attack")
+	var attack_value: float = items.stat(self, source, "attack")
 	if river and source == "hero":
 		attack_value *= 3
-	var defense_value = int(unit(target).defense) if enemies.has(target) else run.stat(target, "defense")
+	var defense_value: float = items.stat(self, target, "defense")
 	var multiplier = environment_multiplier(str(skill.element), str(unit(target).get("element", "normal")))
-	return maxi(1, floori((attack_value * float(skill.get("power", 1.0)) - defense_value * 0.6) * multiplier))
+	var base = (attack_value * float(skill.get("power", 1.0)) - defense_value * 0.6) * multiplier
+	return maxi(1, floori(items.damage(self, source, target, skill_id, skill.element, base, snap, landed)))
 
 func environment_multiplier(element: String, target_element: String) -> float:
 	var multiplier = 1.0
@@ -299,14 +347,20 @@ func environment_multiplier(element: String, target_element: String) -> float:
 		multiplier *= 0.8
 	if wet and element == "lightning":
 		multiplier *= 1.25
+	if items.present("charged") and element == "lightning":
+		multiplier += 0.10
 	return clampf(multiplier, 0.5, 1.5)
 
 func use_item(item: String, target_id: String) -> Dictionary:
 	if outcome != "" or enemies.has(current) or current.is_empty() or madness.has(current) or target_id not in active:
 		return _fail("只在我方本人正常行动窗口使用道具，目标须在场。")
 	var before = _unit_view(unit(target_id))
-	var result = run.use_item(current, target_id, item, true)
+	var received_pp = 20 if before.hp > 0 and run.has_relic("tender_gauze") and before.hp * 100 <= unit(target_id).hp_max * 30 else 0
+	var result = run.use_item(current, target_id, item, true, received_pp)
 	if result.ok:
+		if result.hp_gain > 0 and before.hp > 0:
+			var healing = [{"target": target_id, "over": result.hp_over, "gain": result.hp_gain}]
+			items.after_nonrelic_heal(self, current, healing)
 		if unit(target_id).hp > 0 and float(next_time.get(target_id, 0.0)) < clock:
 			_schedule_action(target_id)
 		_emit_event({"actor": current, "targets": [target_id], "kind": "heal", "skill_id":"item:"+item,"element": "normal","results":[_visual_result(target_id,before)]})
@@ -345,7 +399,11 @@ func resolve_queued() -> void:
 	while not reveal_pending and not queue.is_empty() and outcome == "":
 		var request = queue.pop_front()
 		if request.id in active and unit(request.id).hp > 0 and not madness.has(request.id) and unit(request.id).energy >= 100:
-			_cast(request.id, unit(request.id).ultimate, request.target, true)
+			var starting_ice: bool = items.present("frozen")
+			var starting_slow: bool = unit(request.id).slow > 0
+			var cast = _cast(request.id, unit(request.id).ultimate, request.target, true)
+			if cast.ok:
+				items.end_action(self, request.id, starting_ice, starting_slow)
 			check_end()
 
 func step_auto() -> void:
@@ -379,7 +437,7 @@ func step_auto() -> void:
 				lowest_ratio = ratio
 				target = id
 		var choice = str(caster.skill)
-		if caster.mp < skill.mp or (skill.get("healing", false) and lowest_ratio > 0.65):
+		if caster.mp < skill_cost(current, caster.skill) or (skill.get("healing", false) and lowest_ratio > 0.65):
 			choice = "attack"
 		if Catalog.SKILLS[choice].target == "enemy":
 			target = _weakest(alive_enemies())
@@ -422,23 +480,40 @@ func _enemy_action(id: String) -> void:
 				_emit_event({"actor":id,"targets":[id],"kind":"cast","skill_id":"enemy_charge","element":"normal","results":[]})
 		"slow":
 			_enemy_hit(id, target, 1.0)
-			unit(target).slow = 2
+			unit(target).slow = maxi(int(unit(target).slow), items.reduce_slow(self, target, 2))
 		"ignite", "wet":
 			var environment_before = field_view()
-			_enemy_hit(id, target, 1.15, "fire" if a.skill == "ignite" else "water")
-			_apply_field_effect(a.skill)
+			var snap = items.snapshot(self, id, [target])
+			var element = "fire" if a.skill == "ignite" else "water"
+			var hit = _enemy_hit(id, target, 1.15, element, a.skill)
+			if hit:
+				_apply_field_effect(a.skill)
+				items._fields_after(self, id, element, snap, true, false, [target])
 			events[-1].environment_before = environment_before
 			events[-1].environment_after = field_view()
 		_:
 			_enemy_hit(id, target, 1.0)
 	_complete_action(id)
 
-func _enemy_hit(id: String, target: String, power: float, element: String = "normal") -> void:
+func _enemy_hit(id: String, target: String, power: float, element: String = "normal", delivery: String = "attack") -> bool:
 	var before = _unit_view(unit(target))
-	var damage = maxi(1, floori((unit(id).attack * power - run.stat(target, "defense") * 0.6) * environment_multiplier(element, unit(target).element)))
+	var snap = items.snapshot(self, id, [target])
+	var base: float = (items.stat(self, id, "attack") * power - items.stat(self, target, "defense") * 0.6) * environment_multiplier(element, unit(target).element)
+	var damage = maxi(1, floori(items.damage(self, id, target, delivery, element, base, snap, true)))
 	_hurt(target, damage)
+	var result = _visual_result(target, before)
+	items.enemy_damage(self, id, target, result, snap)
 	_log("%s → %s：%d 伤害。" % [unit(id).name, unit(target).name, damage])
-	_emit_event({"actor": id, "targets": [target], "kind": "attack", "skill_id":"enemy_attack","element": element,"results":[_visual_result(target,before)]})
+	_emit_event({"actor": id, "targets": [target], "kind": "attack", "skill_id":"enemy_attack","element": element,"results":[result]})
+	if run.has_relic("witness_slate"):
+		if not run.data.map_intel.has("observed_enemy_actions"):
+			run.data.map_intel.observed_enemy_actions = []
+		var observed: Array = run.data.map_intel.observed_enemy_actions
+		observed.append({"name": unit(id).name, "element": element, "target": unit(target).name,
+			"damage": result.damage, "absorbed": result.absorbed, "field": field_view()})
+		if observed.size() > 100:
+			observed.pop_front()
+	return result.damage + result.absorbed > 0
 
 func _unit_view(a: Dictionary) -> Dictionary:
 	return {"hp":int(a.hp),"shield":int(a.get("shield",0)),"mp":int(a.get("mp",0))}
@@ -448,7 +523,7 @@ func _visual_result(id: String, before: Dictionary) -> Dictionary:
 	return {"target":id,"hp_before":before.hp,"hp_after":after.hp,"shield_before":before.shield,"shield_after":after.shield,"damage":maxi(0,before.hp-after.hp),"healing":maxi(0,after.hp-before.hp),"shield_gain":maxi(0,after.shield-before.shield),"absorbed":maxi(0,before.shield-after.shield),"mp_gain":maxi(0,after.mp-before.mp)}
 
 func field_view() -> Dictionary:
-	return {"terrain": run.data.tiles[position].terrain, "burning": burning, "wet": wet, "river": river}
+	return {"terrain": run.data.tiles[position].terrain, "burning": burning, "wet": wet, "river": river, "fields": items.view()}
 
 func _apply_field_effect(effect: String) -> void:
 	match effect:
@@ -457,6 +532,7 @@ func _apply_field_effect(effect: String) -> void:
 				burning = true
 		"wet":
 			wet = true
+			items.fields.wet = maxi(int(items.fields.get("wet", 0)), items.index + 5)
 
 func _emit_event(event: Dictionary) -> void:
 	event_serial += 1
@@ -471,15 +547,17 @@ func _hurt(id: String, damage: int) -> void:
 		damage = ceili(damage * 0.8)
 	if target.get("guard", false):
 		damage = ceili(damage * 0.55)
-	var absorbed = mini(int(target.get("shield", 0)), damage)
-	target.shield = int(target.get("shield", 0)) - absorbed
+	var shield_before = int(target.get("shield", 0))
+	var absorbed = mini(shield_before, damage)
+	target.shield = shield_before - absorbed
+	items.absorb(id, shield_before, absorbed)
 	var minimum = ceili(target.hp_max * 0.55) if id == war_boss and not river else 0
 	target.hp = maxi(minimum, int(target.hp) - damage + absorbed)
 
-func _complete_action(id: String) -> void:
-	if unit(id).get("slow", 0) > 0:
+func _complete_action(id: String, started_frozen: bool = true) -> void:
+	var started_slow: bool = unit(id).slow > 0
+	if started_slow:
 		unit(id).slow -= 1
-	_schedule_action(id)
 	current = ""
 	if river and not war_boss.is_empty() and unit(war_boss).hp > 0:
 		var boss = unit(war_boss)
@@ -491,13 +569,15 @@ func _complete_action(id: String) -> void:
 		boss.hp = maxi(0, int(boss.hp) - 9)
 		_emit_event({"actor": "", "kind": "environment", "targets": [war_boss], "skill_id": "river", "element": "normal", "results": [_visual_result(war_boss, before)]})
 	_settle_fire()
+	items.end_action(self, id, started_frozen, started_slow)
+	_schedule_action(id)
 	if check_end():
 		return
 	resolve_queued()
 	seek_next()
 
-func _settle_fire() -> void:
-	while clock >= fire_tick:
+func _settle_fire(include_current: bool = true) -> void:
+	while fire_tick < clock or (include_current and fire_tick == clock):
 		fire_tick += 10.0
 		if not burning:
 			continue
@@ -506,7 +586,7 @@ func _settle_fire() -> void:
 		var victims = alive_allies() + alive_enemies()
 		for id in victims:
 			var before = _unit_view(unit(id))
-			_hurt(id, ceili(unit(id).hp_max * 0.08))
+			_hurt(id, items.reduce_fire(self, id, ceili(unit(id).hp_max * 0.08)))
 			results.append(_visual_result(id,before))
 		_emit_event({"actor":"","targets":victims,"kind":"environment","skill_id":"fire_tick","element":"fire","results":results})
 		_log("火场灼伤在场双方。")
@@ -589,10 +669,12 @@ func _finish(result: String) -> void:
 			run.data.flags["duel_won_" + npc] = true
 	var reward_key = position + ":" + npc
 	if result == "victory":
+		items.victory(self)
 		run.record_story_progress(position, false)
 		var revived: Array[String] = []
 		var receiver = ""
 		var relic = ""
+		var duplicate = false
 		var coins = 0
 		for id in paid:
 			if unit(id).hp <= 0:
@@ -613,13 +695,13 @@ func _finish(result: String) -> void:
 			if npc.is_empty():
 				var types = enemies.values().map(func(enemy): return enemy.type)
 				var elite = Nodes.is_elite(types)
-				coins = Nodes.battle_coins(int(run.data.seed), position, elite)
+				coins = run.reward_coins("battle", Nodes.battle_coins(int(run.data.seed), position, elite))
 				run.data.lamp_coins += coins
-				var candidates = Relics.battle_rewards(types)
-				if not candidates.is_empty():
-					relic = run.roll_relic("battle:" + reward_key, candidates, 0.40 if elite else 0.20, receiver, position)
+			duplicate = run.data.relic_seen.has(pending.relic_offer)
+			relic = run.claim_relic_reward(pending.battle_uid, pending.relic_offer, receiver, position)
+			run.data.item_revision += 1
 		run.data.pending_victory = {"enemies": enemies.size(), "members": paid.keys(), "revived": revived,
-			"salve_receiver": receiver, "relic": relic, "coins": coins}
+			"salve_receiver": receiver, "relic": relic, "relic_duplicate": duplicate, "coins": coins}
 		_log("战斗胜利。" + ("本战倒下的队员恢复至 1 HP。" if not revived.is_empty() else "")
 			+ ("获得一份疗伤药。" if not receiver.is_empty() else "")
 			+ ("获得 %d 灯铢。" % coins if coins > 0 else ""))
@@ -629,6 +711,10 @@ func _finish(result: String) -> void:
 	else:
 		_log("战败。重伤者留在遭遇地点。")
 	run.data.pending_battle = {}
+	run.data.last_move_windows.clear()
+	for key in run.data.item_effect_counts.keys():
+		if str(key).begins_with("uphill_ready:"):
+			run.data.item_effect_counts.erase(key)
 	run.data.status = "won" if result == "victory" and not war_boss.is_empty() else "exploring"
 	if result == "defeat" and paid.has("hero"):
 		run.data.status = "failed"
@@ -638,7 +724,12 @@ func _finish(result: String) -> void:
 		unit(id).shield = 0
 		unit(id).slow = 0
 		unit(id).guard = false
-	run.save_game()
+	burning = false
+	wet = false
+	items.fields.clear()
+	var saved = run.save_game()
+	if not saved.ok:
+		_log("战斗已结算，但存档失败：" + str(saved.message))
 	run.changed.emit()
 
 func _weakest(ids: Array) -> String:
