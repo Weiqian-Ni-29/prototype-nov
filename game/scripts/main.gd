@@ -16,6 +16,7 @@ const FontAsset = preload("res://assets/fonts/NotoSansSC.ttf")
 const Sound = preload("res://scripts/presentation/sound.gd")
 enum Screen { MENU, OPENING_STORY, EXPEDITION }
 const OBJECTIVE_ICON = preload("res://assets/ui/expedition-objective.svg")
+const LAMP_COIN_ICON = preload("res://assets/ui/lamp-coin.svg")
 const STORY_TERRAIN = {
 	"plains": "road", "forest": "woodland", "mountain": "highland", "ruins": "ruins",
 	"desert": "drylands", "swamp": "wetlands",
@@ -332,7 +333,30 @@ func _header(screen: Vector2) -> void:
 	var row = HBoxContainer.new()
 	row.add_theme_constant_override("separation", 20)
 	box.add_child(row)
-	_text(row, "维洛丹", 29, gold).custom_minimum_size.x = 190
+	var title = VBoxContainer.new()
+	title.custom_minimum_size.x = 190
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.alignment = BoxContainer.ALIGNMENT_CENTER
+	title.add_theme_constant_override("separation", 0)
+	row.add_child(title)
+	_text(title, "维洛丹", 29, gold)
+	var wallet = HBoxContainer.new()
+	wallet.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	wallet.add_theme_constant_override("separation", 6)
+	wallet.tooltip_text = "远征队灯铢"
+	title.add_child(wallet)
+	var coin = TextureRect.new()
+	coin.texture = LAMP_COIN_ICON
+	coin.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	coin.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	coin.custom_minimum_size = Vector2(22, 22)
+	coin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	wallet.add_child(coin)
+	var balance = _text(wallet, str(int(run.data.lamp_coins)), 16, gold)
+	balance.name = "LampCoinBalance"
+	balance.autowrap_mode = TextServer.AUTOWRAP_OFF
+	balance.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	balance.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var weather = "细雨" if run.data.weather == "rain" else "晴朗"
 	var exploration = floori(100.0 * run.data.explored.size() / run.data.tiles.size())
 	var conditions = HBoxContainer.new()
@@ -385,7 +409,7 @@ func _crew_panel(screen: Vector2) -> void:
 	if crew_collapsed:
 		return
 	var hint = "点相邻格预览 · 再点确认" if move_from_current_cell else "点箭头选队 · 点相邻格移动"
-	_text(box, hint + "\n远征队持有 %d 灯铢" % run.data.lamp_coins, 13, muted)
+	_text(box, hint, 13, muted)
 	var scroll = ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(scroll)
