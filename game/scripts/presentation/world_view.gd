@@ -246,10 +246,8 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 		var borders: Array = []
 		for next in Hex.neighbors(id, current_tiles):
 			borders.append(visible_layout.get(next, []))
-		var site: String = t.site if visited else ""
-		if t.site == "boss":
-			site = "boss" if run.boss_known() else ""
-		var signature = JSON.stringify([visible_layout[id], borders, site])
+		var name_on_map = run.location_name(id) if visited or (id == run.data.boss and run.boss_known()) else ""
+		var signature = JSON.stringify([visible_layout[id], borders, name_on_map])
 		if tile_signatures.get(id, "") != signature:
 			dirty_details[Board.chunk_for(id)] = true
 			if tile_nodes.has(id):
@@ -259,9 +257,9 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 			map_root.add_child(node)
 			node.position = Hex.world(id)
 			Terrain.board_details(node, t, id, visual_seed, board_surface)
-			if not site.is_empty():
+			if not name_on_map.is_empty():
 				var height = board_surface.height_at(node.position)
-				_label(node, _site_name(site), Vector3(0, height + 1.03, 0), Color("eee0b8"), 0.0041)
+				_label_location(node, name_on_map, height)
 			tile_nodes[id] = node
 			tile_signatures[id] = signature
 	if not dirty_details.is_empty():
@@ -888,20 +886,19 @@ static func _actor_offset(index: int, total: int) -> Vector3:
 	var angle = TAU * float(slot) / slots
 	return Vector3(cos(angle), 0, sin(angle)) * radius
 
-static func _site_name(site: String) -> String:
-	return {"start": "村庄", "boss": "战神卡德兰"}.get(site, "路途")
-
-static func _label(parent: Node3D, text: String, point: Vector3, color: Color, pixel_size: float = 0.006) -> void:
+static func _label_location(parent: Node3D, text: String, height: float) -> void:
 	var label = Label3D.new()
+	label.name = "LocationName"
 	label.text = text
 	var font = FontVariation.new()
 	font.base_font = FontAsset
 	font.variation_opentype = {TextServerManager.get_primary_interface().name_to_tag("wght"): 600.0}
 	label.font = font
 	label.font_size = 40
-	label.pixel_size = pixel_size
+	label.pixel_size = minf(0.0032, 1.2 / font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size).x)
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	label.modulate = color
+	label.no_depth_test = true
+	label.modulate = Color("eee0b8")
 	label.outline_size = 7
-	label.position = point
+	label.position.y = height + 0.04
 	parent.add_child(label)

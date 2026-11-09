@@ -55,6 +55,8 @@ func execute():
 	await press("撤退")
 	await press("确认")
 	expect(game.combat == null and run.data.status == "exploring", "retreat confirmation completes _finish_battle")
+	expect(not run.data.has("pending_arrival") and not game.modal_layer.has_node("StoryScreen"),
+		"Retreat clears the abandoned encounter's arrival story")
 	expect(run.actor("hero").position == origin and run.actor("grit").position == origin, "actual battle retreat relocates movers")
 	expect(run.actor("lorne").position == destination, "resident remains at encounter")
 	expect(run.actor("grit").hp == 0, "retreat can incapacitate squad member")

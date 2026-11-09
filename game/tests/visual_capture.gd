@@ -80,15 +80,15 @@ func inspect_story_layout() -> void:
 	var counter = stage.find_child("PageCounter", true, false) as Label
 	expect(counter != null and not dialogue.is_ancestor_of(counter)
 		and counter.get_global_rect().end.y < frame.position.y, "Page counter is in the header")
+	for actor in stage.find_children("StoryActor*", "TextureRect", true, false):
+		var portrait_rect: Rect2 = actor.get_global_rect()
+		expect(portrait_rect.position.y < stage.size.y * 0.31 and portrait_rect.end.y > frame.position.y,
+			"Portrait reaches into the scene above and the shaded dialogue area below")
 	expect((story_button("上一页") != null) == (page.x > 1), "Previous page is shown only after page one")
-	expect((story_button("下一页") != null) == (page.x < page.y), "Next page is shown only before the last page")
+	expect(story_button("下一页") == null and story_button("继续") == null, "Story has no redundant forward buttons")
 	var column = stage.get_node_or_null("StoryChoices") as Control
 	if page.x < page.y:
-		expect(column == null and story_button("继续") == null, "Intermediate screenshots expose no decisions or completion")
-	elif column == null:
-		expect(story_button("继续") != null, "Last linear screenshot includes a continue button")
-	else:
-		expect(story_button("继续") == null, "Decision screenshot cannot skip choices")
+		expect(column == null, "Intermediate screenshots expose no decisions")
 	if column != null:
 		var choices = column.get_global_rect()
 		expect(choices.position.x > stage.size.x * 0.5 and root.get_visible_rect().encloses(choices), "Choices stay in the right column")
@@ -109,7 +109,7 @@ func advance_story() -> void:
 	if stage == null or stage.has_node("StoryChoices"):
 		return
 	inspect_story_layout()
-	await click_story_button("下一页" if story_page().x < story_page().y else "继续")
+	await click_at(root.get_visible_rect().size * Vector2(0.76, 0.30))
 
 func advance_until_text(fragment: String) -> void:
 	for index in range(128):
@@ -146,12 +146,12 @@ func capture_story_body(prefix: String, expected: String) -> PackedStringArray:
 			await click_story_button("上一页")
 			expect(story_page() == Vector2i(1, first.y) and story_text().text == pages[0], "Mouse previous restores the complete first page")
 			await capture(prefix + "-previous")
-			await click_story_button("下一页")
+			await click_at(root.get_visible_rect().size * Vector2(0.76, 0.30))
 			expect(story_page() == Vector2i(2, first.y) and story_text().text == pages[1], "Returning to next page preserves the text")
 		if index == first.y - 1:
 			await capture(prefix + "-last")
 		else:
-			await click_story_button("下一页")
+			await click_at(root.get_visible_rect().size * Vector2(0.76, 0.30))
 	expect("".join(pages).replace("\n", "") == expected.replace("\n", ""), "Captured pages preserve every word, including the final paragraph: " + prefix)
 	return pages
 
@@ -391,7 +391,10 @@ func click_story_button(prefix: String) -> bool:
 			parent.ensure_control_visible(button)
 		parent = parent.get_parent()
 	await process_frame
-	var point = button.get_global_rect().get_center()
+	await click_at(button.get_global_rect().get_center())
+	return true
+
+func click_at(point: Vector2) -> void:
 	for pressed in [true, false]:
 		var event = InputEventMouseButton.new()
 		event.button_index = MOUSE_BUTTON_LEFT
@@ -399,7 +402,6 @@ func click_story_button(prefix: String) -> bool:
 		event.position = point
 		root.push_input(event, true)
 	await process_frame
-	return true
 
 func await_story_choices() -> bool:
 	for index in range(128):
@@ -493,24 +495,49 @@ func capture_branch_examples() -> void:
 	var ending_pages = await capture_story_body("story-main-ending", ending)
 	expect(ending_pages.size() >= 2 and "".join(ending_pages).ends_with(ending.split("\n\n")[-1]),
 		"Ending screenshots reach the final paragraph across multiple pages")
-	await click_story_button("继续")
+	await click_at(root.get_visible_rect().size * Vector2(0.76, 0.30))
 	await capture_story_body("story-companion-ending", epilogue)
 	await click_story_button("返回远征记录")
+
+func inspect_portrait_silhouette(portrait: Texture2D, key: String) -> void:
+	if portrait == null:
+		return
+	var pixels = portrait.get_image()
+	var size = pixels.get_size()
+	var has_head = false
+	var has_hem = false
+	for y in range(0, size.y, 4):
+		var height = float(y) / size.y
+		if height >= 0.18 and height <= 0.91:
+			continue
+		var opaque = 0
+		for x in range(0, size.x, 4):
+			if pixels.get_pixel(x, y).a > 0.65:
+				opaque += 1
+		if opaque >= 4:
+			has_head = has_head or height < 0.18
+			has_hem = has_hem or height > 0.91
+	expect(has_head and has_hem, "The visible silhouette reaches both framing bands: " + key)
 
 func inspect_character_poses() -> void:
 	var ids = Catalog.COMPANIONS.keys() + ["hero", "war_god"]
 	for id in ids:
-		expect(game._story_portrait(id) is Texture2D, "Normal portrait is available " + id)
+		var portrait = game._story_portrait(id)
+		expect(portrait is Texture2D, "Normal portrait is available " + id)
+		inspect_portrait_silhouette(portrait, id)
 		var regions: Array[Rect2] = []
 		for pose in ["serious", "friendly", "grief", "anger", "surprise", "battle"]:
-			var portrait = game._story_portrait(id, pose)
-			expect(portrait is AtlasTexture, "Pose loads from a distinct cell " + id + "/" + pose)
-			if portrait is AtlasTexture:
-				expect(not regions.has(portrait.region), "Pose is a separate illustration " + id + "/" + pose)
-				regions.append(portrait.region)
+			var posed = game._story_portrait(id, pose)
+			expect(posed is AtlasTexture, "Pose loads from a distinct cell " + id + "/" + pose)
+			if posed is AtlasTexture:
+				expect(not regions.has(posed.region), "Pose is a separate illustration " + id + "/" + pose)
+				regions.append(posed.region)
+				inspect_portrait_silhouette(posed, id + "/" + pose)
 	for group in ["human", "elf", "dwarf"]:
-		for pose in ["concerned", "serious", "farewell", "grief", "battle"]:
-			expect(game._story_portrait("villager_" + group, pose) is AtlasTexture, "Village pose is available " + group + "/" + pose)
+		for pose in ["", "concerned", "serious", "farewell", "grief", "battle"]:
+			var portrait = game._story_portrait("villager_" + group, pose)
+			expect(portrait is AtlasTexture, "Village pose is available " + group + "/" + pose)
+			inspect_portrait_silhouette(portrait, group + "/" + pose)
 
 func capture_finale() -> void:
 	game._close_modal()
@@ -560,11 +587,22 @@ func execute() -> void:
 	await capture("story-world-intro")
 	await advance_until_text("你醒了")
 	await capture("story-village-waking")
+	await advance_until_text("一点也想不起来")
+	await capture("story-village-traveler")
 	await advance_until_text("愿你一路平安")
 	await capture("story-village-farewell")
 	await finish_linear_story()
 	await create_timer(0.5).timeout
 	await capture("02-exploration")
+	var arrival_run = game.run
+	var first_tile: String = Hex.neighbors(arrival_run.data.start, arrival_run.data.tiles).filter(func(cell):
+		return Hex.is_land(arrival_run.data.tiles, cell) and arrival_run.data.tiles[cell].enemies.is_empty())[0]
+	game._select_cell(first_tile)
+	game._select_cell(first_tile)
+	await capture("node-first-arrival")
+	await click_story_button("返回地图")
+	await create_timer(0.9).timeout
+	await capture("map-visited-locations")
 	game.crew_collapsed = true
 	game._refresh()
 	await capture("02-exploration-folded")

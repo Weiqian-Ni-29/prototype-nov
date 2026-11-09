@@ -159,18 +159,18 @@ func check_story_layout() -> void:
 	expect(counter != null and not dialogue.is_ancestor_of(counter)
 		and counter.get_global_rect().end.y < frame.position.y, "Page counter stays in the header")
 	var page = story_page()
-	var next = find_button(stage, "下一页")
 	var previous = find_button(stage, "上一页")
 	var choices = stage.get_node_or_null("StoryChoices") as Control
 	expect((previous != null) == (page.x > 1), "Only subsequent pages offer previous page")
-	expect((next != null) == (page.x < page.y), "Only non-final pages offer next page")
+	expect(find_button(stage, "下一页") == null and find_button(stage, "继续") == null, "Story advances without redundant forward buttons")
 	if page.x < page.y:
-		expect(choices == null and find_button(stage, "继续") == null, "Intermediate pages expose neither choices nor completion")
-	elif choices == null:
-		expect(find_button(stage, "继续") != null, "Final linear page offers continue")
-	else:
-		expect(find_button(stage, "继续") == null, "Final decision page cannot skip its choices")
+		expect(choices == null, "Intermediate pages expose no decisions")
+	if choices != null:
 		expect(not frame.intersects(choices.get_global_rect()), "Choice column does not overlap dialogue")
+	var exit = find_button(stage, "返回主菜单")
+	if exit != null:
+		expect(exit.get_global_rect().end.x >= stage.size.x * 0.94 and exit.position.y < stage.size.y * 0.10,
+			"Return to main menu sits at the upper right")
 	var leaves: Array[Control] = []
 	for control in stage.find_children("*", "Control", true, false):
 		if (control is Label or control is Button) and control.is_visible_in_tree():
@@ -179,9 +179,6 @@ func check_story_layout() -> void:
 				if not control.is_ancestor_of(other) and not other.is_ancestor_of(control):
 					expect(not control.get_global_rect().intersects(other.get_global_rect()), "Story controls do not overlap: %s / %s" % [control.name, other.name])
 			leaves.append(control)
-	if next != null:
-		expect(next.get_global_rect().position.x > stage.size.x * 0.5
-			and next.get_global_rect().position.y > stage.size.y * 0.8, "Next page is in the lower right")
 
 func read_to_choices(unchanged: Callable = Callable()) -> String:
 	var pages = ""
@@ -224,11 +221,11 @@ func read_current_body(revisit: bool = false, unchanged: Callable = Callable()) 
 			expect(story_page() == Vector2i(index, first.y) and story_text().text == pages[index - 1], "Previous page restores the exact earlier text")
 			if unchanged.is_valid():
 				expect(unchanged.call(), "Previous page cannot complete the story")
-			await click("下一页")
+			await click_story_blank()
 			check_story_layout()
 			expect(story_page() == Vector2i(index + 1, first.y) and story_text().text == pages[index], "Re-reading neither loses nor changes text")
 		if index + 1 < first.y:
-			await click("下一页")
+			await click_story_blank()
 	return pages
 
 func advance_until_text(fragment: String) -> void:
@@ -246,6 +243,74 @@ func finish_linear_story() -> void:
 			return
 		await advance_story()
 	expect(false, "Linear story closes within the bounded page count")
+
+func check_node_arrival() -> void:
+	game._start_new()
+	var run = game.run
+	var start: String = run.data.start
+	var cells = Hex.neighbors(start, run.data.tiles).filter(func(cell):
+		return Hex.is_land(run.data.tiles, cell) and run.data.tiles[cell].enemies.is_empty() and run.data.tiles[cell].npc.is_empty())
+	expect(not cells.is_empty(), "Arrival fixture has a safe neighboring land tile")
+	if cells.is_empty():
+		return
+	var cell: String = cells[0]
+	var title: String = run.location_name(cell)
+	var names: Array = run.location_names.values()
+	expect(names.size() == run.data.nodes.size() and names.size() == names.reduce(func(unique, item):
+		unique[item] = true
+		return unique, {}).size(), "Each land tile has its own name")
+	expect(run.data.explored.has(cell) and not game.view.tile_nodes[cell].has_node("LocationName"),
+		"Visible land stays unnamed before arrival")
+	var village: Label3D = game.view.tile_nodes[start].get_node("LocationName")
+	expect(village.text == "村庄" and village.position.x == 0 and village.position.z == 0,
+		"Village name is centered on the village tile")
+	game._select_cell(cell)
+	expect(game.modal_layer.get_child_count() == 0, "Previewing movement cannot open a story")
+	game._select_cell(cell)
+	expect(game.modal_layer.has_node("StoryScreen") and contains_text(game.modal_layer, title),
+		"Confirmed first arrival opens this tile's story immediately")
+	var marker: Label3D = game.view.tile_nodes[cell].get_node("LocationName")
+	expect(marker.text == title and marker.position.x == 0 and marker.position.z == 0,
+		"The same name appears at the visited tile's center")
+	await click("返回地图")
+	game._continue_run()
+	expect(game.view.tile_nodes[cell].get_node("LocationName").text == title and not game.modal_layer.has_node("StoryScreen"),
+		"Loading preserves the visited name without reopening its story")
+	run.actor("hero").ap = run.actor("hero").ap_max
+	game._select_cell(start)
+	game._select_cell(start)
+	run.actor("hero").ap = run.actor("hero").ap_max
+	game._select_cell(cell)
+	game._select_cell(cell)
+	expect(run.actor("hero").position == cell and not game.modal_layer.has_node("StoryScreen"),
+		"Returning to an already visited tile does not reopen its story")
+
+func check_arrival_after_victory() -> void:
+	game._start_new()
+	var run = game.run
+	var cells = run.data.nodes.keys().filter(func(cell):
+		return run.node_at(cell).kind == "battle" and not run.data.tiles[cell].enemies.is_empty())
+	expect(not cells.is_empty(), "Battle arrival fixture has an ordinary encounter")
+	if cells.is_empty():
+		return
+	var cell: String = cells[0]
+	var from: String = Hex.neighbors(cell, run.data.tiles).filter(func(id): return Hex.is_land(run.data.tiles, id))[0]
+	run.actor("hero").position = from
+	run.reveal(from)
+	game._select_actor("hero")
+	game._select_cell(cell)
+	game._select_cell(cell)
+	expect(find_button(game.modal_layer, "开始战斗") != null and run.data.get("pending_arrival", {}).get("cell") == cell,
+		"An encounter takes precedence and remembers the new tile")
+	game._continue_run()
+	await press("开始战斗")
+	game.combat._finish("victory")
+	game._finish_battle()
+	game._continue_run()
+	await press("继续远征")
+	expect(game.modal_layer.has_node("StoryScreen") and contains_text(game.modal_layer, run.location_name(cell)),
+		"After resuming from victory, continuing opens the arrival story")
+	await click("返回地图")
 
 func check_haunt_dialogue() -> void:
 	game._start_new()
@@ -488,7 +553,7 @@ func advance_story() -> void:
 	if story == null or story.has_node("StoryChoices"):
 		return
 	check_story_layout()
-	await click("下一页" if story_page().x < story_page().y else "继续")
+	await click_story_blank()
 
 func click_story_blank() -> void:
 	for pressed in [true, false]:
@@ -571,7 +636,7 @@ func check_story_pagination() -> void:
 		check_story_layout()
 		expect(story_page() == Vector2i(pages.size(), pages.size()) and story_text().text == pages[-1]
 			and calls.count == 0, "Enter turns one page without completing the story")
-	await click("继续")
+	await click_story_blank()
 	expect(calls.count == 1, "Only explicit completion on the last page invokes the linear callback")
 
 	calls.count = 0
@@ -595,7 +660,7 @@ func check_story_pagination() -> void:
 	await click("上一页")
 	expect(not game.modal_layer.has_node("StoryScreen/StoryChoices") and find_button(game.modal_layer, "确认完成") == null,
 		"Returning from the final page hides and removes actionable choices")
-	await click("下一页")
+	await click_story_blank()
 	await click_story_blank()
 	expect(calls.count == 0, "Blank click on a decision page cannot skip its options")
 	await click("确认完成")
@@ -630,6 +695,8 @@ func execute() -> void:
 	await check_personal_dialogue()
 	await check_backpack_use()
 	await check_node_dialogs()
+	await check_node_arrival()
+	await check_arrival_after_victory()
 	await check_haunt_dialogue()
 	expect(game._expedition_objective() == "踏出旅程的第一步", "HUD shows the departure objective")
 	var chapter_run = game.run
@@ -660,7 +727,7 @@ func execute() -> void:
 		var chapter_pages = await read_current_body(true, func():
 			return int(chapter_run.data.chapter) == index and game._expedition_objective() == objective and int(saved_run().get("chapter", 0)) == index)
 		expect(compact("".join(chapter_pages)) == compact(pages[index][1]), "Chapter reading preserves its entire body before completion")
-		await click("继续")
+		await click_story_blank()
 		expect(int(chapter_run.data.chapter) == index + 1 and game._expedition_objective() == next_objectives[index],
 			"HUD changes only after confirming the final chapter page")
 	game._close_modal()
@@ -688,10 +755,10 @@ func execute() -> void:
 	var ending_pages = await read_current_body(true, func(): return chapter_run.data == ending_before)
 	expect(ending_pages.size() >= 2 and compact("".join(ending_pages)) == compact(ending), "Main ending is read completely across at least two pages")
 	expect("".join(ending_pages).ends_with(ending.split("\n\n")[-1]), "The main ending's final paragraph is actually reached")
-	await click("继续")
+	await click_story_blank()
 	var epilogue_pages = await read_current_body(true, func(): return chapter_run.data == ending_before)
 	expect(compact("".join(epilogue_pages)) == compact(epilogue), "The companion's complete epilogue is read in the same paginated reader")
-	await click("继续")
+	await click_story_blank()
 	expect(not game.modal_layer.has_node("StoryScreen") and game.ui.visible, "Completing the last epilogue returns to the summary")
 	await click("查看结局剧情")
 	expect(story_page().x == 1, "Reopening the ending starts on its first page")

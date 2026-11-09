@@ -314,9 +314,9 @@ func _continue_run() -> void:
 	_clear_map_move()
 	toast_text = ""
 	view.reset()
-	selected_id = "hero"
-	moving_ids = _squad_movers("hero")
-	selected_cell = run.actor("hero").position
+	selected_id = run.data.get("pending_arrival", {}).get("actor", "hero")
+	moving_ids = _squad_movers(selected_id)
+	selected_cell = run.actor(selected_id).position
 	screen_state = Screen.EXPEDITION
 	view.refresh(run, selected_id, selected_cell)
 	view.focus_cell(selected_cell)
@@ -325,8 +325,8 @@ func _continue_run() -> void:
 		_formation_dialog()
 	elif run.data.has("pending_victory"):
 		_victory_dialog()
-	elif not _show_chapter() and not _show_relic_intro():
-		_show_npc_encounter(selected_id)
+	elif run.data.status == "exploring":
+		_show_arrival()
 
 func _header(screen: Vector2) -> void:
 	var box = _panel(ui, Rect2(20, 17, screen.x - 40, 88))
@@ -505,10 +505,7 @@ func _cell_actions() -> void:
 	_button(dialog, "关闭", _close_modal)
 
 func _node_title(cell: String) -> String:
-	var tile = run.data.tiles[cell]
-	if not tile.site.is_empty() and (tile.site != "boss" or run.boss_known()):
-		return World._site_name(tile.site)
-	return Nodes.story(run.node_at(cell)).get("title", Catalog.terrain_name(tile.terrain))
+	return run.location_name(cell)
 
 func _site_impression() -> void:
 	var cell: String = run.actor(selected_id).position
@@ -557,8 +554,9 @@ func _node_dialog(feedback: String = "", ready: bool = false) -> void:
 		text += "\n已把这里的线索记进手记。"
 	if not feedback.is_empty():
 		text += "\n" + feedback
+	var title = "%s · %s" % [_node_title(cell), event.title]
 	if node.kind in ["choice", "haunt"] and not _node_resolved(node, tile) and not ready and feedback.is_empty():
-		_show_story(event.title, Catalog.terrain_name(tile.terrain), text, STORY_TERRAIN[tile.terrain], [], [],
+		_show_story(title, Catalog.terrain_name(tile.terrain), text, STORY_TERRAIN[tile.terrain], [], [],
 			func(_option: String): _node_dialog("", true), {"返回地图": _close_modal}, _node_tint())
 		return
 	var options: Array = []
@@ -593,7 +591,7 @@ func _node_dialog(feedback: String = "", ready: bool = false) -> void:
 	if not tile.npc.is_empty() and tile.npc != selected_id and run.actor(tile.npc).position == cell and tile.enemies.is_empty():
 		options.append(_node_option("talk", "和%s交谈" % run.actor(tile.npc).name))
 	options.append(_node_option("leave", "返回地图"))
-	_show_story(event.title, Catalog.terrain_name(tile.terrain) + " · " + Nodes.label(node.kind),
+	_show_story(title, Catalog.terrain_name(tile.terrain) + " · " + Nodes.label(node.kind),
 		text, STORY_TERRAIN[tile.terrain], [], options, _node_choice, {}, _node_tint())
 
 func _node_choice(option: String) -> void:
@@ -788,12 +786,15 @@ func _show_move_preview() -> void:
 func _move_selected() -> void:
 	var destination = move_target
 	var mover: String = selected_id if selected_id in moving_ids else moving_ids[0]
+	var first_visit = not run.has_visited(destination)
 	_clear_map_move()
 	var result = run.move(moving_ids, destination)
 	if result.ok:
 		selected_id = mover
 		selected_cell = run.actor(mover).position
 		moving_ids = _squad_movers(mover)
+		if first_visit and not Nodes.story(run.node_at(destination)).is_empty():
+			run.data.pending_arrival = {"actor": mover, "cell": destination}
 	_run_action(result)
 	if not result.ok:
 		return
@@ -801,10 +802,22 @@ func _move_selected() -> void:
 		view.follow_map_movement(selected_id)
 	if result.get("battle", false):
 		_formation_dialog()
-	elif not _show_chapter():
-		_show_npc_encounter(selected_id if selected_id in moving_ids else moving_ids[0])
-		if modal_layer.get_child_count() == 0:
-			_show_relic_intro()
+	else:
+		_show_arrival()
+
+func _show_arrival() -> void:
+	if not _show_chapter() and not _show_relic_intro(_show_arrival_node):
+		_show_arrival_node()
+
+func _show_arrival_node() -> void:
+	if not run.data.has("pending_arrival"):
+		_show_npc_encounter(selected_id)
+		return
+	var arrival: Dictionary = run.data.pending_arrival
+	run.data.erase("pending_arrival")
+	run.save_game()
+	if selected_id == arrival.actor and run.actor(selected_id).position == arrival.cell:
+		_node_dialog()
 
 func _run_action(result: Dictionary) -> void:
 	toast_text = "已完成。" if result.ok else str(result.get("message", "无法执行。"))
@@ -1280,7 +1293,7 @@ func _formation_dialog() -> void:
 		scene.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 		scene.modulate = _node_tint()
 		box.add_child(scene)
-		_text(box, event.title + " · " + _node_description(node, tile, event), 15, gold)
+		_text(box, "%s · %s\n%s" % [_node_title(encounter.position), event.title, _node_description(node, tile, event)], 15, gold)
 	var surprise = encounter.ambush or encounter.get("surprise", false)
 	_text(box, "每人本场首次上场支付 2 精力；同地候补可换入。" + ("\n突发遭遇：精力不足仍可出战，最多扣至 0。" if surprise else ""), 17, muted)
 	var chosen: Array = []
@@ -1576,8 +1589,8 @@ func _victory_dialog() -> void:
 		_refresh()
 		if run.data.status == "won":
 			_ending_story()
-		elif not _show_chapter() and not _show_relic_intro(_show_npc_encounter.bind(selected_id)):
-			_show_npc_encounter(selected_id))
+		else:
+			_show_arrival())
 	next.grab_focus()
 
 func _process(delta: float) -> void:
@@ -1623,8 +1636,7 @@ func _show_chapter() -> bool:
 			run.save_game()
 			_close_modal()
 			_refresh()
-			if not _show_chapter() and not _show_relic_intro():
-				_show_npc_encounter(selected_id), {})
+			_show_arrival(), {})
 	return true
 
 func _final_battle_page(index: int) -> void:
@@ -1745,18 +1757,27 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	overlay.add_child(background)
 	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
+	var has_pair = portraits.size() - portraits.count(null) > 1
+	var portrait_width = 0.39 if has_pair else 0.43
+	var portrait_top = 0.24 if has_pair else 0.20
 	for i in portraits.size():
 		if portraits[i] == null:
 			continue
+		var slot = AspectRatioContainer.new()
+		slot.ratio = float(portraits[i].get_width()) / portraits[i].get_height()
+		slot.alignment_vertical = AspectRatioContainer.ALIGNMENT_END
+		slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		overlay.add_child(slot)
+		var center = 0.23 + 0.30 * i
+		# Keep the head in the scene and the cut edge beneath the dialogue shade.
+		_story_region(slot, center - portrait_width * 0.5, portrait_top, center + portrait_width * 0.5, 0.88)
 		var actor_image = TextureRect.new()
 		actor_image.name = "StoryActor%d" % i
 		actor_image.texture = portraits[i]
 		actor_image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		actor_image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		actor_image.stretch_mode = TextureRect.STRETCH_SCALE
 		actor_image.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		overlay.add_child(actor_image)
-		var left = 0.10 + 0.28 * i
-		_story_region(actor_image, left, 0.10, left + 0.28, 0.78)
+		slot.add_child(actor_image)
 
 	var gradient = Gradient.new()
 	gradient.offsets = PackedFloat32Array([0.0, 0.14, 0.53, 0.78, 1.0])
@@ -1775,12 +1796,13 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 	var header = HBoxContainer.new()
+	header.mouse_filter = Control.MOUSE_FILTER_PASS
 	header.add_theme_constant_override("separation", 10)
 	overlay.add_child(header)
 	_story_region(header, 0.05, 0.035, 0.95, 0.087)
-	_text(header, "剧情  /  " + title, 17, gold)
-	for label in actions:
-		_button(header, label, actions[label])
+	var heading = _text(header, "剧情  /  " + title, 17, gold)
+	heading.autowrap_mode = TextServer.AUTOWRAP_OFF
+	heading.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 
 	var dialogue = Control.new()
 	dialogue.name = "Dialogue"
@@ -1790,6 +1812,7 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	var speaker_label = _text(dialogue, speaker, 22, gold)
 	_story_region(speaker_label, 0, 0, 1, 0)
 	var separator = HSeparator.new()
+	separator.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	dialogue.add_child(separator)
 	separator.position.y = speaker_label.get_minimum_size().y + 8
 	separator.size.x = dialogue.size.x
@@ -1801,10 +1824,16 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	text_label.text = pages[page_index].strip_edges()
 	var counter = _text(header, "第 %d / %d 页" % [page_index + 1, pages.size()], 15, muted)
 	counter.name = "PageCounter"
+	counter.autowrap_mode = TextServer.AUTOWRAP_OFF
+	counter.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	header.add_spacer(false).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for label in actions:
+		_button(header, label, actions[label])
 	var turn_page = func(index: int):
 		_show_story(title, speaker, body, scene, portraits, options, on_choice, actions, tint, index)
 	var navigation = HBoxContainer.new()
 	navigation.name = "StoryNavigation"
+	navigation.mouse_filter = Control.MOUSE_FILTER_PASS
 	navigation.alignment = BoxContainer.ALIGNMENT_END
 	navigation.add_theme_constant_override("separation", 12)
 	overlay.add_child(navigation)
@@ -1817,8 +1846,6 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 				turn_page.call(page_index + 1)
 			else:
 				on_choice.call("")
-		_button(navigation, "下一页" if page_index < pages.size() - 1 else "继续", advance)
-		header.mouse_filter = Control.MOUSE_FILTER_PASS
 		overlay.focus_mode = Control.FOCUS_ALL
 		overlay.gui_input.connect(func(event: InputEvent):
 			var mouse_release = event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed

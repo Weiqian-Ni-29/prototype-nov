@@ -142,7 +142,7 @@ func check_catalog() -> void:
 		for event in entries:
 			expect(not ids.has(event.id), "Catalog id remains unique: " + event.id)
 			ids[event.id] = true
-			var fields = ["title", "intro", "resolved"]
+			var fields = ["location", "title", "intro", "resolved"]
 			if kind == "haunt":
 				fields.append_array(["investigation_label", "investigation", "evidence", "work", "alternative", "alternative_resolved"])
 			elif kind == "choice":

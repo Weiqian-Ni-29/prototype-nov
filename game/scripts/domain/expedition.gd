@@ -13,6 +13,7 @@ var data: Dictionary = {}
 var rng = RandomNumberGenerator.new()
 var save_path = "user://expedition.json"
 var relic_sites: Dictionary = {}
+var location_names: Dictionary = {}
 
 func new_run(seed_value: int, profession: String) -> void:
 	assert(Catalog.PROFESSIONS.has(profession))
@@ -349,9 +350,28 @@ func _initialize_nodes() -> void:
 	data.merge({"lamp_coins": Nodes.STARTING_COINS})
 	if not data.has("nodes"):
 		data.nodes = Nodes.generate(data.tiles, int(data.seed), relic_sites, data.rewards, {})
+	location_names.clear()
+	var by_title: Dictionary = {}
+	var cells = data.nodes.keys()
+	cells.sort()
+	for cell in cells:
+		var tile = data.tiles[cell]
+		var title: String = "村庄" if tile.site == "start" else Nodes.story(node_at(cell)).get("location", Catalog.terrain_name(tile.base_terrain))
+		if not by_title.has(title):
+			by_title[title] = []
+		by_title[title].append(cell)
+	for title in by_title:
+		var matches: Array = by_title[title]
+		for index in matches.size():
+			location_names[matches[index]] = title if matches.size() == 1 else "%s %d" % [title, index + 1]
 
 func node_at(cell: String) -> Dictionary:
 	return data.nodes.get(cell, {})
+
+func location_name(cell: String) -> String:
+	if cell == data.boss and boss_known():
+		return "战神卡德兰"
+	return location_names.get(cell, Catalog.terrain_name(data.tiles[cell].terrain))
 
 func _node_access(id: String, cost: int) -> Dictionary:
 	var check = _map_action(id, cost)
@@ -1326,6 +1346,11 @@ func _validate_save(loaded: Dictionary) -> String:
 		for k in loaded.visited:
 			if not loaded.explored.has(k):
 				return "到访记录越界"
+	if loaded.has("pending_arrival"):
+		var arrival = loaded.pending_arrival
+		if not arrival is Dictionary or not arrival.get("actor") is String or not arrival.get("cell") is String \
+				or not loaded.actors.has(arrival.actor) or not loaded.get("visited", {}).has(arrival.cell):
+			return "到达剧情记录无效"
 	var coordinate = RegEx.new()
 	coordinate.compile("^-?[0-9]+,-?[0-9]+$")
 	for k in loaded.tiles:
