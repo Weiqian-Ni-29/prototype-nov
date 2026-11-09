@@ -367,7 +367,7 @@ func _expedition_objective() -> String:
 		"踏出旅程的第一步",
 		"帮助被亡灵困扰的地方",
 		"查清谁在延长战争",
-		"找到亡军的集结地",
+		"找到战神的驻地",
 		"击败战神卡德兰",
 	][int(run.data.chapter)]
 
@@ -504,7 +504,14 @@ func _node_tint() -> Color:
 	return Color.WHITE
 
 func _node_description(node: Dictionary, tile: Dictionary, event: Dictionary) -> String:
-	return event.resolved if _node_resolved(node, tile) else event.intro
+	if _node_resolved(node, tile):
+		var conclusion = Nodes.resolution(node)
+		if node.kind == "haunt":
+			return "旅人顺着灵魂牵动的方向伸手，周围的碎石微微浮起。一条肉眼看不见的归路，在亡者面前展开。\n\n" + conclusion
+		return conclusion
+	if node.get("investigated", false):
+		return str(event.investigation)
+	return str(event.intro)
 
 func _node_option(id: String, label: String) -> Dictionary:
 	return {"id": id, "text": label}
@@ -544,14 +551,18 @@ func _node_dialog(feedback: String = "", ready: bool = false) -> void:
 				options.append(_node_option("mp", "在此调息 · 同格可行动队员恢复 %d%% 魔力" % run.recovery_percent(cell, "mp")))
 				options.append(_node_option("pack", "带走一份" + Catalog.item_name(node.item)))
 			"choice":
-				options.append(_node_option("work", "%s · 1 精力 · 得 %d 灯铢" % [event.get("work", "出手帮忙"), node.coins]))
+				options.append(_node_option("work", "%s · 1 精力 · 得 %d 灯铢" % [event.work, node.coins]))
+				options.append(_node_option("work_alternative", "%s · 1 精力 · 得 %d 灯铢" % [event.alternative, node.coins]))
 			"clue":
 				options.append(_node_option("record", "记入旅途手记"))
 			"haunt":
-				if "hero" in run.same_cell(cell, true):
-					options.append(_node_option("settle", event.get("work", "帮亡者了结心事")))
+				if not node.get("investigated", false):
+					options.append(_node_option("inspect", event.investigation_label))
+				elif "hero" in run.same_cell(cell, true):
+					options.append(_node_option("settle", event.work))
+					options.append(_node_option("settle_alternative", event.alternative))
 				else:
-					text += "\n等旅人到场，再一起处理这里的事。"
+					text += "\n证据已经核实，等旅人到场再陪亡者告别。"
 			"cache":
 				options.append(_node_option("search", "搜寻旧物 · 1 精力"))
 			"battle", "elite":
@@ -578,7 +589,7 @@ func _node_choice(option: String) -> void:
 			_run_action(result)
 			if result.ok and _show_relic_intro(func(): _node_dialog(str(result.get("message", "")))):
 				return
-			_node_dialog(str(result.get("message", "")))
+			_node_dialog("" if result.ok and option == "inspect" else str(result.get("message", "")))
 
 func _shop_dialog(feedback: String = "") -> void:
 	var trader = run.actor(selected_id)
@@ -1297,17 +1308,19 @@ func _process(delta: float) -> void:
 	elif was_playing and battle_timer <= 0:
 		_refresh()
 
+func _chapter_pages() -> Array:
+	return [
+		["留下的人", "路边的行人指给你看：一位亡者反复走向断掉的路，却怎么也离不开。行人认得对方，说活人早已安葬了遗体，魂魄却仍留着。\n\n你想伸手接住那踉跄的身影，脚边的碎石竟随手势轻轻浮起。记忆里也曾有一只手握着你。你答应过，要让无处可去的亡者有一个归处。"],
+		["失去的制衡", "两名逃难者在路边争抢水源。你把横在他们之间的刀压进土里，请双方说清来路：一边的井被滞留的亡魂困住，另一边的粮道毁于诸神交战。原本互通有无的村落，如今都怕先饿死。\n\n他们随身的旧约抄本提到，过去另有一股神明的势力约束诸方。那股力量消失后，卡德兰从扩大的纷争中不断获益。你记起了怎样将压住刀锋的力量铺开。"],
+		["未完成的停战会", "一名保存旧碑拓片的行者请你辨认残字：卡德兰邀另一位神赴停战会，记录却止于神躯被毁的那天。碑文边的祭祀记录显示，从那以后，亡者再没有被接走。名字所在的一角早已破损。\n\n你记起自己曾走进同样的会场。你不是去夺取领地，而是要求诸方停止把灾难推给活人与亡者。那份承诺，至今还没有履行完。"],
+		["找到战神", "一名刚离开卡德兰驻地的信使拦住你。信使带着盖有战神印记的征调书，也画下了亲自走过的道路。你们把图上的山口、河岸与已探明的地貌逐一核对，确认了驻地的位置。\n\n征调书要求继续争夺粮道。亡魂造成的灾厄没有受到约束，各方的恐惧与报复仍在滋养战神。你把驻地标进地图：要恢复制衡，也要让无处可去的亡者得到安息。"],
+	]
+
 func _show_chapter() -> bool:
 	var chapter = run.pending_chapter()
-	if chapter == 0:
+	if chapter == 0 or selected_id != "hero" or run.actor("hero").hp <= 0:
 		return false
-	var pages = [
-		["留下的人", "走过几处聚落以后，你发现人们怕的不只是下一场战斗。还有些死去的人留在原地，重复着最后一天发生的事。\n\n你记起自己曾经握过一个陌生人的手，答应陪他走到路尽头。你想不起那条路通往哪里。"],
-		["活人和死者", "前线传来的消息渐渐对得上。有人亲眼看见死去的士兵重新站起来，也有人看见原本还能说话的两队人突然杀成一团。战神在让这场仗继续。只要有人不停地打下去，他的力量就会越来越强。\n\n你想起自己曾在一场争执里把一柄刀压在地上。那时候，你也只想让双方停手。"],
-		["曾经答应的事", "越来越多的记录提到一场没能谈完的停战会。那一天，有人死在了会场。\n\n你记起自己也赴过一场这样的会。出门前，你答应过某个人，会回来把事情讲清楚。剩下的，你还是想不起来。"],
-		["找到战神", "沿途听来的消息终于指向同一处。那里聚着战神召来的亡兵，他本人也在那里。\n\n你把地点标在地图上。现在，该去结束这场战争了。"],
-	]
-	var page = pages[chapter - 1]
+	var page = _chapter_pages()[chapter - 1]
 	_show_story(page[0], "旅人", page[1], _story_scene_at(run.actor(selected_id).position), [_story_portrait("hero")], [],
 		func(_option: String):
 			run.finish_chapter(chapter)
@@ -1321,10 +1334,10 @@ func _show_chapter() -> bool:
 func _final_battle_page(index: int) -> void:
 	var pages = [
 		["旅人", "战神的武器亮起红光，朝你劈来。\n\n你想起来了。很久以前，他也是这样举起武器的。那一击杀了你。"],
-		["旅人", "你是伊文洛，死亡之神。你终于明白自己为何还能回来。你的身体在冥界重新长成，一次偶然的恶魔召唤把昏迷的你带到了村外。直到村屋里睁开眼，你才恢复意识。\n\n记起自己是谁以后，你的力量也回来了。"],
-		["卡德兰", "我看着你一次次把我的士兵接走。只要他们还能离开，一场仗就有打完的时候。我费了那么大的力气才杀了你。其他神有的顾着自己的领地，有的怕我，世人早就忘了你。你竟然还活着。"],
-		["旁白", "你伸出手。那些在世间等了太久的死者，终于看见了回家的路。他们一起走过你打开的门。每送走一个人，你就更清楚自己该怎么使用这份力量。"],
-		["旁白", "黑色的河水漫过战场。这里有一部分已经是冥界，是你掌管的地方。你站在水里，战神的力量却在一点点被河水带走。"],
+		["旅人", "你是伊文洛，死亡之神。你既掌握死亡本身，也负责把亡魂引渡到冥界。一路使碎石浮起、让脚步变轻的重力，本就是你引导灵魂的权能。\n\n恢复的权能让你感知到冥界留下的痕迹：神躯毁灭后，只有你的死亡本质重新凝成肉身。这种特殊性，连当年的你自己也不知道。后来，一次为逃难者求援的恶魔召唤意外将昏迷的你带到现世。村民救下了你。"],
+		["卡德兰", "你的肉体已经被我彻底摧毁，引渡也真的停止了。我亲自确认过！没有你的势力制衡，亡者滞留造成灾厄，活人为了水、粮食和报复打得更凶。我只需让纷争继续。\n\n我不知道你还能重生。连你当年，也从未说过还有这一条退路。"],
+		["旁白", "你伸出手，用重力为亡魂指出通往冥界的方向。那些留在现世的灵魂终于有了归处；你没有把它们变成兵器，而是履行让亡者安息的承诺。\n\n灾厄失去了源头，但活人的伤口不会因此消失。此刻，你要先让眼前的战神失去继续逼迫诸方交战的力量。"],
+		["旁白", "你将冥界的一部分引到战场，收住河界，留出仍属现世的岸地。冥河能够洗刷、剥夺、吞噬一切，不会天然分辨敌友。你留在岸上，以归来的权能挡住攻击，将河水约束在卡德兰脚下。\n\n河水逐步剥离战神的力量。现在，要亲手结束这一战。"],
 	]
 	var page = pages[index]
 	var met_demon = Catalog.COMPANIONS.keys().any(func(id): return Catalog.COMPANIONS[id].race == "恶魔" and run.data.story[id].met)
@@ -1375,8 +1388,45 @@ func _story_region(control: Control, left: float, top: float, right: float, bott
 	control.set_anchor_and_offset(SIDE_LEFT, left, 0)
 	control.set_anchor_and_offset(SIDE_TOP, top, 0)
 
+func _story_text_pages(body: String, label: Label) -> PackedStringArray:
+	var pages = PackedStringArray()
+	var remaining = body
+	var font = label.get_theme_font("font")
+	var font_size = label.get_theme_font_size("font_size")
+	var spacing = label.get_theme_constant("line_spacing")
+	while not remaining.is_empty():
+		var paragraph = TextParagraph.new()
+		paragraph.width = label.size.x
+		paragraph.break_flags = TextServer.BREAK_MANDATORY | TextServer.BREAK_WORD_BOUND | TextServer.BREAK_ADAPTIVE
+		paragraph.add_string(remaining, font, font_size)
+		var height = 0.0
+		var end = 0
+		for line in paragraph.get_line_count():
+			var line_height = paragraph.get_line_size(line).y + (spacing if line > 0 else 0)
+			if line > 0 and height + line_height > label.size.y:
+				break
+			height += line_height
+			end = paragraph.get_line_range(line).y
+		if end < remaining.length():
+			var fitted_end = end
+			var boundary = remaining.left(end).rfind("\n\n")
+			if boundary >= end / 2:
+				end = boundary + 2
+			else:
+				for index in range(end - 1, end / 2, -1):
+					if remaining[index] in "。！？!?":
+						end = index + 1
+						if end < fitted_end and remaining[end] in "」』”\"":
+							end += 1
+						break
+			while end < remaining.length() and remaining[end] in "\n\r \t":
+				end += 1
+		pages.append(remaining.left(end))
+		remaining = remaining.substr(end)
+	return pages if not pages.is_empty() else PackedStringArray([""])
+
 func _show_story(title: String, speaker: String, body: String, scene: String,
-		portraits: Array, options: Array, on_choice: Callable, actions: Dictionary, tint: Color = Color.WHITE) -> void:
+		portraits: Array, options: Array, on_choice: Callable, actions: Dictionary, tint: Color = Color.WHITE, page_index: int = 0) -> void:
 	_clear_map_move()
 	move_preview.hide()
 	_clear(modal_layer)
@@ -1436,31 +1486,49 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	for label in actions:
 		_button(header, label, actions[label])
 
-	var dialogue = VBoxContainer.new()
+	var dialogue = Control.new()
 	dialogue.name = "Dialogue"
-	dialogue.add_theme_constant_override("separation", 8)
+	dialogue.mouse_filter = Control.MOUSE_FILTER_PASS
 	overlay.add_child(dialogue)
 	_story_region(dialogue, 0.05, 0.74, 0.60, 0.955)
-	_text(dialogue, speaker, 22, gold)
-	dialogue.add_child(HSeparator.new())
-	var text_content = _scroll_content(dialogue)
-	text_content.get_parent().horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_text(text_content, body, 20, ink)
-
-	if options.is_empty():
-		dialogue.mouse_filter = Control.MOUSE_FILTER_PASS
-		text_content.mouse_filter = Control.MOUSE_FILTER_PASS
-		text_content.get_parent().mouse_filter = Control.MOUSE_FILTER_PASS
+	var speaker_label = _text(dialogue, speaker, 22, gold)
+	_story_region(speaker_label, 0, 0, 1, 0)
+	var separator = HSeparator.new()
+	dialogue.add_child(separator)
+	separator.position.y = speaker_label.get_minimum_size().y + 8
+	separator.size.x = dialogue.size.x
+	var text_label = _text(dialogue, "", 20, ink)
+	text_label.name = "StoryText"
+	text_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	text_label.offset_top = separator.position.y + separator.get_minimum_size().y + 8
+	var pages = _story_text_pages(body, text_label)
+	text_label.text = pages[page_index].strip_edges()
+	var counter = _text(header, "第 %d / %d 页" % [page_index + 1, pages.size()], 15, muted)
+	counter.name = "PageCounter"
+	var turn_page = func(index: int):
+		_show_story(title, speaker, body, scene, portraits, options, on_choice, actions, tint, index)
+	var navigation = HBoxContainer.new()
+	navigation.name = "StoryNavigation"
+	navigation.alignment = BoxContainer.ALIGNMENT_END
+	navigation.add_theme_constant_override("separation", 12)
+	overlay.add_child(navigation)
+	_story_region(navigation, 0.64, 0.90, 0.95, 0.955)
+	if page_index > 0:
+		_button(navigation, "上一页", turn_page.bind(page_index - 1))
+	if page_index < pages.size() - 1 or options.is_empty():
+		var advance = func():
+			if page_index < pages.size() - 1:
+				turn_page.call(page_index + 1)
+			else:
+				on_choice.call("")
+		_button(navigation, "下一页" if page_index < pages.size() - 1 else "继续", advance)
 		header.mouse_filter = Control.MOUSE_FILTER_PASS
-		var hint = _text(overlay, "点击画面继续", 15, muted)
-		hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		_story_region(hint, 0.68, 0.914, 0.95, 0.955)
 		overlay.focus_mode = Control.FOCUS_ALL
 		overlay.gui_input.connect(func(event: InputEvent):
 			var mouse_release = event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed
 			if mouse_release or (event.is_action_pressed("ui_accept") and not event.is_echo()):
 				overlay.accept_event()
-				on_choice.call(""))
+				advance.call())
 		overlay.grab_focus()
 		return
 
@@ -1469,7 +1537,7 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	option_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	option_scroll.follow_focus = true
 	overlay.add_child(option_scroll)
-	_story_region(option_scroll, 0.64, 0.43, 0.95, 0.955)
+	_story_region(option_scroll, 0.64, 0.43, 0.95, 0.88)
 	var choices = VBoxContainer.new()
 	choices.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	choices.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -1546,6 +1614,21 @@ func _render_dialogue() -> void:
 			{"结束交谈": _close_modal})
 	run.save_game()
 
+func _personal_quest(ready: bool = false) -> void:
+	var quest = narrative.personal_quest(selected_id, dialogue_subject)
+	if not quest.ok:
+		_notice(quest.message)
+		return
+	var person = run.actor(dialogue_subject)
+	var portraits = [_story_portrait(selected_id), _story_portrait(dialogue_subject, quest.get("pose", "serious"))]
+	var scene = _story_scene_at(person.position)
+	if ready:
+		_show_story(quest.title, person.name, "这次，你们决定怎么做？", scene, portraits, quest.options,
+			_story_choice, {"再想一想": _render_dialogue})
+	else:
+		_show_story(quest.title, person.name, quest.text, scene, portraits, [],
+			func(_option: String): _personal_quest(true), {"返回交谈": _render_dialogue})
+
 func _story_choice(option_id: String) -> void:
 	if option_id == "duel":
 		var person = run.actor(dialogue_subject)
@@ -1573,6 +1656,8 @@ func _story_choice(option_id: String) -> void:
 	if result.get("close", false):
 		_close_modal()
 		_refresh()
+	elif result.get("quest", false):
+		_personal_quest()
 	elif result.get("battle", false):
 		_formation_dialog()
 	elif result.has("rescue"):
@@ -1618,16 +1703,30 @@ func _journal() -> void:
 	_text(content, "地图种子 %s" % run.data.seed, 15, muted)
 	if run.boss_known():
 		_button(content, "在地图上定位战神", func(): _close_modal(); selected_cell = run.data.boss; view.focus_cell(selected_cell); _refresh())
+	for chapter in range(int(run.data.chapter)):
+		var page = _chapter_pages()[chapter]
+		_text(content, page[0], 20, gold)
+		_text(content, page[1], 16, muted)
 	for id in Catalog.COMPANIONS:
 		if run.data.story[id].met:
-			_text(content, "%s · %s" % [run.actor(id).name, "已同行" if run.actor(id).joined else "已见过"], 18, muted)
+			var relation = "已同行" if run.actor(id).joined else "已见过"
+			if run.actor(id).joined:
+				relation += " · 已作出个人抉择" if not str(run.data.story[id].get("personal_choice", "")).is_empty() else " · 可同地谈谈心事"
+			_text(content, "%s · %s" % [run.actor(id).name, relation], 18, muted)
 	var clues: Array[String] = []
 	for cell in run.data.nodes:
 		var node = run.node_at(cell)
 		if not run.data.leads.has(cell):
 			continue
 		var event = Nodes.story(node)
-		clues.append(str(event.title))
+		if event.is_empty():
+			continue
+		var entry = str(event.title)
+		if node.result == "record" or node.get("investigated", false):
+			entry += "\n" + str(event.evidence)
+		if not node.result.is_empty() and node.result != "record":
+			entry += "\n" + Nodes.resolution(node)
+		clues.append(entry)
 	if not clues.is_empty():
 		_text(content, "路上记录的线索", 20, gold)
 		_text(content, "\n".join(clues), 16, muted)
@@ -1641,16 +1740,9 @@ func _summary(screen: Vector2) -> void:
 	if run.data.status == "failed":
 		_text(box, run.data.flags.get("failure_reason", "远征失败。"), 20, muted)
 	else:
-		var ending = narrative.main_ending()
-		_text(box, ending.title, 25, gold)
-		_text(box, ending.text, 18)
-	var content = _scroll_content(box)
-	for id in Catalog.COMPANIONS:
-		var ending = narrative.character_ending(id)
-		if not run.data.story[id].met:
-			continue
-		_text(content, ending.name, 20, gold)
-		_text(content, ending.text, 17, muted)
+		_text(box, narrative.main_ending().title, 25, gold)
+	var met_count = Catalog.COMPANIONS.keys().filter(func(id): return run.data.story[id].met).size()
+	_text(box, "主线结局与 %d 位相识者的后续已记下。查看结局剧情，逐页读完这段旅途。" % met_count, 18, muted)
 	_button(box, "查看结局剧情", _ending_story)
 	_button(box, "返回主菜单", _to_menu)
 

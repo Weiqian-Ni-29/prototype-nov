@@ -253,17 +253,31 @@ func recovery_percent(cell: String, resource: String) -> int:
 	return percent
 
 func use_node(id: String, option: String) -> Dictionary:
-	var cost = 1 if option in ["work", "search"] else 0
+	var cost = 1 if option in ["work", "work_alternative", "search"] else 0
 	var check = _node_access(id, cost)
 	if not check.ok:
 		return check
 	var visitor = actor(id)
 	var cell: String = visitor.position
 	var node = node_at(cell)
-	if option == "settle" and "hero" not in same_cell(cell, true):
-		return fail("等旅人到场，再一起处理这里的事。")
 	if node.is_empty() or not node.result.is_empty():
 		return fail("这里的事件已经处理完毕。")
+	var event = Nodes.story(node)
+	if option in ["settle", "settle_alternative"]:
+		if "hero" not in same_cell(cell, true):
+			return fail("等旅人到场，再一起处理这里的事。")
+		if not node.get("investigated", false):
+			return fail("先核实眼前的证据，不能把未经确认的消息告诉亡者。")
+	if option in ["work_alternative", "settle_alternative"] and not event.has("alternative"):
+		return fail("这里没有这种处理方式。")
+	if node.kind == "haunt" and option == "inspect":
+		if node.get("investigated", false):
+			return fail("此处证据已经核实，可在手记中回看。")
+		node["investigated"] = true
+		record_story_progress(cell, false)
+		note("核实见闻：" + str(event.title))
+		changed.emit()
+		return {"ok": true, "message": event.investigation}
 	var message = ""
 	match [node.kind, option]:
 		["supply", "collect"]:
@@ -291,17 +305,17 @@ func use_node(id: String, option: String) -> Dictionary:
 				message = "%s 取得%s ×1。" % [visitor.name, Catalog.item_name(item)]
 			else:
 				message = "发现遗器「%s」。" % Relics.DATA[relic].name
-		["choice", "work"]:
+		["choice", "work"], ["choice", "work_alternative"]:
 			data.lamp_coins += int(node.coins)
 			message = "%s 完成委托，得到 %d 灯铢。" % [visitor.name, node.coins]
-		["clue", "record"], ["haunt", "settle"]:
-			message = "已将此处见闻写进旅途手记。" if option == "record" else "附近终于安静下来。"
-			record_story_progress(cell, option == "settle")
+		["clue", "record"], ["haunt", "settle"], ["haunt", "settle_alternative"]:
+			message = "已将核实的见闻写进旅途手记。" if option == "record" else "亡者的告别与留下的安排已记入手记。"
+			record_story_progress(cell, node.kind == "haunt")
 		_:
 			return fail("当前节点没有这个选项。")
 	visitor.ap -= cost
 	node.result = option
-	if option == "work":
+	if option in ["work", "work_alternative"]:
 		record_story_progress(cell, true)
 	note(message)
 	changed.emit()
@@ -820,8 +834,11 @@ func _validate_save(loaded: Dictionary) -> String:
 			var item = a.equipment[slot]
 			if item != "" and (not Catalog.ITEMS.has(item) or Catalog.ITEMS[item].get("slot", "") != slot or a.inventory.get(item, 0) < 1):
 				return "装备持有状态无效"
-		if id != "hero" and (not loaded.story.has(id) or not loaded.story[id] is Dictionary or not loaded.story[id].has_all(["met", "relation", "result"])):
-			return "故事状态缺失"
+		if id != "hero":
+			if not loaded.story.has(id) or not loaded.story[id] is Dictionary or not loaded.story[id].has_all(["met", "relation", "result"]):
+				return "故事状态缺失"
+			if loaded.story[id].has("personal_choice") and loaded.story[id].personal_choice not in ["personal_a", "personal_b"]:
+				return "个人抉择记录无效"
 	if loaded.has("squad_colors") or loaded.has("next_squad_id"):
 		if not loaded.get("squad_colors") is Dictionary or not _whole_number(loaded.get("next_squad_id")) or loaded.next_squad_id < 0:
 			return "小队记录无效"
@@ -859,6 +876,8 @@ func _valid_nodes(loaded: Dictionary) -> bool:
 		if not Nodes.LABELS.has(node.kind) or not node.event is String or not node.result is String:
 			return false
 		if node.kind != "story" and Nodes.story(node).is_empty():
+			return false
+		if node.has("investigated") and (node.kind != "haunt" or not node.investigated is bool):
 			return false
 		if node.kind == "trade":
 			if not node.get("stock") is Dictionary:

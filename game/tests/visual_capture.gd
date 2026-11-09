@@ -5,6 +5,8 @@ const Game = preload("res://scripts/main.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Combat = preload("res://scripts/domain/battle.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
+const Nodes = preload("res://scripts/domain/map_nodes.gd")
+const Story = preload("res://scripts/domain/narrative.gd")
 var game: Node
 var destination = "user://visual-checks"
 var checks = 0
@@ -22,34 +24,136 @@ func expect(value: bool, label: String) -> void:
 func capture(name: String) -> void:
 	await process_frame
 	await RenderingServer.frame_post_draw
+	if game.modal_layer.has_node("StoryScreen"):
+		inspect_story_layout()
 	var image = root.get_texture().get_image()
 	expect(image != null and image.get_width() > 800, "Rendered image " + name)
 	if image:
 		var error = image.save_png(destination.path_join(name + ".png"))
 		expect(error == OK, "Saved image " + name)
 
+func story_text() -> Label:
+	var stage = game.modal_layer.get_node_or_null("StoryScreen")
+	return stage.find_child("StoryText", true, false) as Label if stage != null else null
+
+func story_page() -> Vector2i:
+	var stage = game.modal_layer.get_node_or_null("StoryScreen")
+	var counter = stage.find_child("PageCounter", true, false) as Label if stage != null else null
+	expect(counter != null and counter.is_visible_in_tree(), "Rendered page counter exists")
+	if counter == null:
+		return Vector2i.ZERO
+	var pattern = RegEx.new()
+	pattern.compile("^第 ([0-9]+) / ([0-9]+) 页$")
+	var matched = pattern.search(counter.text)
+	expect(matched != null, "Rendered counter uses 第 n / m 页")
+	if matched == null:
+		return Vector2i.ZERO
+	var page = Vector2i(int(matched.get_string(1)), int(matched.get_string(2)))
+	expect(page.x >= 1 and page.x <= page.y, "Rendered page index is valid")
+	return page
+
 func inspect_story_layout() -> void:
 	var stage = game.modal_layer.get_node_or_null("StoryScreen")
-	if stage == null:
-		expect(false, "Story screen is visible")
+	var label = story_text()
+	if stage == null or label == null:
+		expect(false, "Story screen and named body Label are visible")
 		return
-	var dialogue = stage.get_node("Dialogue").get_rect()
-	expect(dialogue.position.y > stage.size.y * 0.65, "Dialogue sits near the bottom of the story screen")
-	var column = stage.get_node_or_null("StoryChoices")
-	if column == null:
-		return
-	var choices = column.get_rect()
-	expect(choices.position.x > stage.size.x * 0.5 and choices.end.x <= stage.size.x, "Choices stay in the right column")
-	expect(dialogue.end.x < choices.position.x, "Story text and choices do not overlap")
+	var dialogue = stage.get_node("Dialogue") as Control
+	expect(not dialogue is Container, "Dialogue is fixed rather than sized by its text")
+	expect(dialogue.find_children("*", "ScrollContainer", true, false).is_empty(), "Rendered body never needs scrolling")
+	var frame = dialogue.get_global_rect()
+	expect(frame.position.y > stage.size.y * 0.65 and root.get_visible_rect().encloses(frame), "Dialogue stays inside the bottom of the screen")
+	expect(frame.encloses(label.get_global_rect()), "Rendered body rectangle stays inside Dialogue")
+	var line_count = label.get_line_count()
+	var height = 0.0
+	for line in line_count:
+		height += label.get_line_height(line)
+	height += maxi(0, line_count - 1) * label.get_theme_constant("line_spacing")
+	expect(height <= label.size.y, "Every rendered body line fits, including the last line")
+	expect(label.lines_skipped == 0 and label.visible_characters == -1
+		and (label.max_lines_visible == -1 or label.max_lines_visible >= line_count), "Rendered text does not hide overflowing lines or characters")
+	var measured = label.get_theme_font("font").get_multiline_string_size(label.text,
+		HORIZONTAL_ALIGNMENT_LEFT, label.size.x, label.get_theme_font_size("font_size"), -1,
+		TextServer.BREAK_MANDATORY | TextServer.BREAK_WORD_BOUND | TextServer.BREAK_ADAPTIVE)
+	expect(measured.x <= label.size.x, "Rendered glyphs fit the real body width")
+	var page = story_page()
+	var counter = stage.find_child("PageCounter", true, false) as Label
+	expect(counter != null and not dialogue.is_ancestor_of(counter)
+		and counter.get_global_rect().end.y < frame.position.y, "Page counter is in the header")
+	expect((story_button("上一页") != null) == (page.x > 1), "Previous page is shown only after page one")
+	expect((story_button("下一页") != null) == (page.x < page.y), "Next page is shown only before the last page")
+	var column = stage.get_node_or_null("StoryChoices") as Control
+	if page.x < page.y:
+		expect(column == null and story_button("继续") == null, "Intermediate screenshots expose no decisions or completion")
+	elif column == null:
+		expect(story_button("继续") != null, "Last linear screenshot includes a continue button")
+	else:
+		expect(story_button("继续") == null, "Decision screenshot cannot skip choices")
+	if column != null:
+		var choices = column.get_global_rect()
+		expect(choices.position.x > stage.size.x * 0.5 and root.get_visible_rect().encloses(choices), "Choices stay in the right column")
+		expect(not frame.intersects(choices), "Story text and choices do not overlap")
+	var leaves: Array[Control] = []
+	for control in stage.find_children("*", "Control", true, false):
+		if (control is Label or control is Button) and control.is_visible_in_tree():
+			expect(root.get_visible_rect().encloses(control.get_global_rect()), "Rendered story control stays on screen: " + control.name)
+			for other in leaves:
+				if not control.is_ancestor_of(other) and not other.is_ancestor_of(control):
+					expect(not control.get_global_rect().intersects(other.get_global_rect()), "Rendered controls do not overlap: %s / %s" % [control.name, other.name])
+			leaves.append(control)
 
 func advance_story() -> void:
-	for pressed in [true, false]:
-		var event = InputEventMouseButton.new()
-		event.button_index = MOUSE_BUTTON_LEFT
-		event.pressed = pressed
-		event.position = root.get_visible_rect().size * Vector2(0.78, 0.27)
-		root.push_input(event, true)
 	await process_frame
+	var stage = game.modal_layer.get_node_or_null("StoryScreen")
+	expect(stage != null and not stage.has_node("StoryChoices"), "Mouse reading does not skip a choice")
+	if stage == null or stage.has_node("StoryChoices"):
+		return
+	inspect_story_layout()
+	await click_story_button("下一页" if story_page().x < story_page().y else "继续")
+
+func advance_until_text(fragment: String) -> void:
+	for index in range(128):
+		if story_contains(fragment):
+			return
+		if not game.modal_layer.has_node("StoryScreen"):
+			break
+		await advance_story()
+	expect(false, "Bounded story reading reaches: " + fragment)
+
+func finish_linear_story() -> void:
+	for index in range(128):
+		if not game.modal_layer.has_node("StoryScreen"):
+			return
+		await advance_story()
+	expect(false, "Bounded linear story reaches its destination")
+
+func capture_story_body(prefix: String, expected: String) -> PackedStringArray:
+	await process_frame
+	var first = story_page()
+	expect(first.x == 1 and first.y <= 128, "Capture starts at page one with a bounded page count")
+	var pages = PackedStringArray()
+	for index in range(mini(first.y, 128)):
+		inspect_story_layout()
+		expect(story_page() == Vector2i(index + 1, first.y), "Actual mouse click advances exactly one rendered page")
+		var label = story_text()
+		if label == null:
+			return pages
+		pages.append(label.text)
+		if index == 0:
+			await capture(prefix + "-first")
+		if index == 1:
+			await capture(prefix + "-next")
+			await click_story_button("上一页")
+			expect(story_page() == Vector2i(1, first.y) and story_text().text == pages[0], "Mouse previous restores the complete first page")
+			await capture(prefix + "-previous")
+			await click_story_button("下一页")
+			expect(story_page() == Vector2i(2, first.y) and story_text().text == pages[1], "Returning to next page preserves the text")
+		if index == first.y - 1:
+			await capture(prefix + "-last")
+		else:
+			await click_story_button("下一页")
+	expect("".join(pages).replace("\n", "") == expected.replace("\n", ""), "Captured pages preserve every word, including the final paragraph: " + prefix)
+	return pages
 
 func inspect_board() -> void:
 	for seed_value in ["20261104", "41", "918"]:
@@ -270,6 +374,129 @@ func capture_node_examples() -> void:
 	game._close_modal()
 	game.chosen_seed = original_seed
 
+func story_button(prefix: String) -> Button:
+	for button in game.modal_layer.find_children("*", "Button", true, false):
+		if button.text.begins_with(prefix):
+			return button
+	return null
+
+func click_story_button(prefix: String) -> bool:
+	var button = story_button(prefix)
+	expect(not prefix.is_empty() and button != null and not button.disabled, "Rendered story button: " + prefix)
+	if prefix.is_empty() or button == null or button.disabled:
+		return false
+	var parent = button.get_parent()
+	while parent != null:
+		if parent is ScrollContainer:
+			parent.ensure_control_visible(button)
+		parent = parent.get_parent()
+	await process_frame
+	var point = button.get_global_rect().get_center()
+	for pressed in [true, false]:
+		var event = InputEventMouseButton.new()
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = pressed
+		event.position = point
+		root.push_input(event, true)
+	await process_frame
+	return true
+
+func await_story_choices() -> bool:
+	for index in range(128):
+		var stage = game.modal_layer.get_node_or_null("StoryScreen")
+		if stage == null:
+			expect(false, "Story stays open while advancing to choices")
+			return false
+		if stage.has_node("StoryChoices"):
+			await process_frame
+			inspect_story_layout()
+			return true
+		await advance_story()
+	expect(false, "Rendered story reaches choices without unbounded clicks")
+	return false
+
+func quest_option_label(result: Dictionary, id: String) -> String:
+	for option in result.get("options", []):
+		if option.id == id:
+			return str(option.text)
+	expect(false, "Quest option has a visible label: " + id)
+	return ""
+
+func story_contains(text: String) -> bool:
+	var label = story_text()
+	return label != null and label.text.contains(text)
+
+func capture_branch_examples() -> void:
+	game._start_new()
+	var run = game.run
+	var person = run.actor("lorne")
+	run.actor("hero").position = person.position
+	run.data.tiles[person.position].enemies.clear()
+	run.reveal(person.position)
+	game._select_actor("hero")
+	game._talk("lorne")
+	if not await await_story_choices():
+		return
+	await click_story_button("邀请一起上路")
+	if not await await_story_choices():
+		return
+	await click_story_button(quest_option_label(game.narrative.dialogue("hero", "lorne"), "quest"))
+	var quest = game.narrative.personal_quest("hero", "lorne")
+	expect(not game.modal_layer.has_node("StoryScreen/StoryChoices"), "Personal quest screenshot starts with text before decisions")
+	await capture_story_body("story-personal", quest.text)
+	if not await await_story_choices():
+		return
+	var first = quest_option_label(quest, "personal_a")
+	var second = quest_option_label(quest, "personal_b")
+	expect(story_button(first) != null and story_button(second) != null, "Both personal decisions are rendered")
+	await capture("story-personal-choices")
+	inspect_story_layout()
+	await click_story_button(second)
+	await capture_story_body("story-personal-conclusion", Story.PERSONAL_QUESTS.lorne.personal_b.response)
+	game._close_modal()
+	var haunts = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "haunt")
+	expect(not haunts.is_empty(), "Visual fixture includes a haunting")
+	if haunts.is_empty():
+		return
+	var cell: String = haunts[0]
+	var event = Nodes.story(run.node_at(cell))
+	run.actor("hero").position = cell
+	run.reveal(cell)
+	game._select_actor("hero")
+	game._node_dialog()
+	if not await await_story_choices():
+		return
+	await click_story_button(event.investigation_label)
+	await capture_story_body("node-haunt-investigation", event.investigation + "\n已把这里的线索记进手记。")
+	expect(run.node_at(cell).get("investigated", false) and run.node_at(cell).result == ""
+		and not run.data.peace.has(cell) and not game.modal_layer.has_node("StoryScreen/StoryChoices"),
+		"Investigation is rendered before offering settlement")
+	if not await await_story_choices():
+		return
+	await click_story_button(event.alternative)
+	await capture_story_body("node-haunt-alternative-conclusion",
+		"旅人顺着灵魂牵动的方向伸手，周围的碎石微微浮起。一条肉眼看不见的归路，在亡者面前展开。\n\n"
+		+ event.alternative_resolved + "\n已把这里的线索记进手记。\n亡者的告别与留下的安排已记入手记。")
+	expect(run.node_at(cell).result == "settle_alternative", "Haunting screenshot follows the actual second settlement click")
+	game._close_modal()
+	run.data.status = "won"
+	game._refresh()
+	await capture("story-epilogue-record")
+	for button in game.ui.find_children("*", "Button", true, false):
+		if button.text in ["查看结局剧情", "返回主菜单"]:
+			expect(root.get_visible_rect().encloses(button.get_global_rect()), "Ending record keeps its action visible: " + button.text)
+	var ending: String = game.narrative.main_ending().text
+	var epilogue: String = game.narrative.character_ending("lorne").text
+	for label in game.ui.find_children("*", "Label", true, false):
+		expect(not label.text.contains(ending) and not label.text.contains(epilogue), "Summary screenshot does not embed long ending prose")
+	game._ending_story()
+	var ending_pages = await capture_story_body("story-main-ending", ending)
+	expect(ending_pages.size() >= 2 and "".join(ending_pages).ends_with(ending.split("\n\n")[-1]),
+		"Ending screenshots reach the final paragraph across multiple pages")
+	await click_story_button("继续")
+	await capture_story_body("story-companion-ending", epilogue)
+	await click_story_button("返回远征记录")
+
 func inspect_character_poses() -> void:
 	var ids = Catalog.COMPANIONS.keys() + ["hero", "war_god"]
 	for id in ids:
@@ -310,10 +537,9 @@ func capture_finale() -> void:
 	expect(game.modal_layer.has_node("StoryScreen") and battle.reveal_pending and not battle.river,
 		"The old strike triggers the flashback before the river")
 	await capture("story-final-memory")
-	for i in range(4):
-		await advance_story()
+	await advance_until_text("你将冥界的一部分")
 	await capture("story-final-river")
-	await advance_story()
+	await finish_linear_story()
 	await process_frame
 	expect(battle.river and hero.name == "伊文洛" and game.view.battle_root.get_meta("environment_signature").ends_with(":true"),
 		"Leaving the flashback brings the river into the actual combat view")
@@ -332,14 +558,11 @@ func execute() -> void:
 	await capture("01-menu")
 	game._begin_opening_story()
 	await capture("story-world-intro")
-	await advance_story()
-	await advance_story()
+	await advance_until_text("你醒了")
 	await capture("story-village-waking")
-	inspect_story_layout()
-	for i in range(6):
-		await advance_story()
+	await advance_until_text("愿你一路平安")
 	await capture("story-village-farewell")
-	await advance_story()
+	await finish_linear_story()
 	await create_timer(0.5).timeout
 	await capture("02-exploration")
 	game.crew_collapsed = true
@@ -351,6 +574,7 @@ func execute() -> void:
 	await capture_node_examples()
 	# Inspect every biome through the exact same battle view used in the playable game.
 	game.set_process(false)
+	await capture_branch_examples()
 	for biome in ["plains", "forest", "mountain", "ruins", "desert", "swamp"]:
 		game._start_new()
 		var run = game.run
@@ -422,21 +646,21 @@ func execute() -> void:
 	game._talk("lorne")
 	await capture("story-courier-first-meeting")
 	await capture("dialogue-portrait")
-	await advance_story()
+	await await_story_choices()
 	inspect_story_layout()
-	game._story_choice("join")
+	await click_story_button("邀请一起上路")
 	await capture("story-lorne-joins")
-	game._story_choice("later")
-	await capture("story-courier-deferred")
+	await await_story_choices()
+	await capture("story-courier-joined-choices")
 	game._close_modal()
 	game.run.actor("hero").position = game.run.actor("eve").position
+	game.run.data.tiles[game.run.actor("eve").position].enemies.clear()
 	game.run.actor("eve").joined = false
 	game.run.data.story.eve.met = false
 	game.run.data.story.eve.relation = "unmet"
 	game._talk("eve")
 	await capture("story-eve-first-meeting")
-	for i in range(3):
-		await advance_story()
+	await await_story_choices()
 	await capture("story-eve-decision")
 	game._close_modal()
 	# Instantiate every remaining enemy art family and verify its skeleton in the tree.

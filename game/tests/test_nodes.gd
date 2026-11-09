@@ -16,7 +16,12 @@ func expect(condition: bool, label: String) -> void:
 		printerr("FAIL: ", label)
 
 func execute() -> void:
+	check_catalog()
 	check_generation()
+	check_exhausted_haunts()
+	check_haunt_branches()
+	check_choice_branches()
+	check_investigated_validation()
 	check_trade_and_recovery()
 	print("MAP NODES: %d checks, %d failures" % [checks, failures])
 	quit(1 if failures else 0)
@@ -32,6 +37,7 @@ func check_generation() -> void:
 		expect(not Hex.path(run.data.tiles, run.data.start, run.data.boss, true).is_empty(), "Safe boss approach remains reachable")
 		var coverage = true
 		var compatible = true
+		var haunt_ids = {}
 		for cell in run.data.tiles:
 			var tile = run.data.tiles[cell]
 			var node = run.node_at(cell)
@@ -39,6 +45,9 @@ func check_generation() -> void:
 			if node.is_empty():
 				continue
 			kinds[node.kind] = true
+			if node.kind == "haunt":
+				expect(not haunt_ids.has(node.event), "Haunt id appears once in seed %d: %s" % [seed_value, node.event])
+				haunt_ids[node.event] = true
 			if node.kind != "story":
 				var event = Nodes.story(node)
 				compatible = compatible and not event.is_empty() and tile.base_terrain in event.terrains
@@ -111,6 +120,199 @@ func check_trade_and_recovery() -> void:
 			and continued.node_at(cell).result == "search" and continued.actor("hero").hp == hero.hp,
 			"Legacy saves gain seeded nodes and preserve prior relic investigations and actor health")
 		break
+
+func check_catalog() -> void:
+	var source = JSON.parse_string(FileAccess.get_file_as_string("res://assets/story/node_events.json"))
+	expect(source is Dictionary and source.size() == 9, "Nine catalog kinds retain 108 events")
+	if not source is Dictionary:
+		return
+	var ids = {}
+	for kind in ["trade", "supply", "rest", "choice", "clue", "cache", "battle", "elite", "haunt"]:
+		var entries: Array = source.get(kind, [])
+		expect(entries.size() == 12, "Twelve events for " + kind)
+		for event in entries:
+			expect(not ids.has(event.id), "Catalog id remains unique: " + event.id)
+			ids[event.id] = true
+			var fields = ["title", "intro", "resolved"]
+			if kind == "haunt":
+				fields.append_array(["investigation_label", "investigation", "evidence", "work", "alternative", "alternative_resolved"])
+			elif kind == "choice":
+				fields.append_array(["work", "alternative", "alternative_resolved"])
+			elif kind == "clue":
+				fields.append("evidence")
+			for field in fields:
+				expect(event.get(field) is String and not str(event.get(field, "")).strip_edges().is_empty(), event.id + " has " + field)
+			if kind in ["haunt", "choice"]:
+				expect(event.get("work") != event.get("alternative") and event.get("resolved") != event.get("alternative_resolved"), event.id + " has distinct decisions and conclusions")
+				for option in (["settle", "settle_alternative"] if kind == "haunt" else ["work", "work_alternative"]):
+					var expected = event.get("alternative_resolved", "") if option.ends_with("_alternative") else event.get("resolved", "")
+					expect(Nodes.resolution({"event": event.id, "result": option}) == expected, event.id + " resolves " + option)
+			if kind == "rest":
+				var endings = {}
+				for option in ["hp", "mp", "pack"]:
+					var text = str(event.get("resolved_by_option", {}).get(option, ""))
+					expect(not text.is_empty() and Nodes.resolution({"event": event.id, "result": option}) == text, event.id + " resolves recovery " + option)
+					endings[text] = true
+				expect(endings.size() == 3, event.id + " distinguishes all recovery conclusions")
+		for terrain in ["plains", "forest", "mountain", "ruins", "desert", "swamp"]:
+			for index in [1, 2]:
+				var id = "%s_%s_%d" % [terrain, kind, index]
+				expect(entries.any(func(event): return event.id == id and terrain in event.terrains), "Original compatible event id retained: " + id)
+	expect(ids.size() == 108, "All 108 original event ids remain")
+
+func check_exhausted_haunts() -> void:
+	for terrain in ["plains", "forest", "mountain", "ruins", "desert", "swamp"]:
+		var tiles = {}
+		for index in range(128):
+			tiles[Hex.key(Vector2i(index, 0))] = {"terrain": terrain, "base_terrain": terrain, "site": "", "resource": "", "enemies": []}
+		var before = tiles.duplicate(true)
+		var nodes = Nodes.generate(tiles, 91, {}, {}, {})
+		var haunt_ids = {}
+		var fallbacks = 0
+		for cell in nodes:
+			var roller = RandomNumberGenerator.new()
+			roller.seed = hash("node:%d:%s" % [91, cell])
+			var roll = roller.randi_range(0, 99)
+			if roll >= 45 and roll < 72:
+				if nodes[cell].kind == "clue":
+					fallbacks += 1
+				else:
+					expect(nodes[cell].kind == "haunt" and not haunt_ids.has(nodes[cell].event), "Unused haunt precedes clue fallback in " + terrain)
+					haunt_ids[nodes[cell].event] = true
+			expect(terrain in Nodes.story(nodes[cell]).get("terrains", []), "Exhaustion keeps event terrain " + terrain)
+		expect(haunt_ids.size() == 2 and fallbacks > 0 and tiles == before, "Two haunts exhaust into clues without changing " + terrain)
+
+func event_run(event: Dictionary, kind: String) -> RefCounted:
+	var run = Run.new()
+	run.save_path = "user://test-node-branches.json"
+	run.new_run(41, "wayfarer")
+	for cell in run.data.nodes:
+		if cell in [run.data.start, run.data.boss] or run.data.tiles[cell].base_terrain not in event.terrains:
+			continue
+		run.data.nodes[cell] = {"kind": kind, "event": event.id, "result": ""}
+		if kind == "choice":
+			run.data.nodes[cell].coins = 4
+		run.data.tiles[cell].enemies.clear()
+		run.actor("hero").position = cell
+		return run
+	expect(false, "Compatible fixture cell for " + event.id)
+	return run
+
+func check_haunt_branches() -> void:
+	Nodes._load_events()
+	var covered = 0
+	for event in Nodes.events.values():
+		if not str(event.id).contains("_haunt_"):
+			continue
+		covered += 1
+		for branch in ["settle", "settle_alternative"]:
+			var run = event_run(event, "haunt")
+			var cell: String = run.actor("hero").position
+			var node = run.node_at(cell)
+			var before = run.data.duplicate(true)
+			for option in ["settle", "settle_alternative"]:
+				expect(not run.use_node("hero", option).ok and run.data == before, event.id + " requires investigation before " + option)
+			run.actor("lorne").position = cell
+			expect(run.join_companion("lorne").ok, "Recruit investigator")
+			run.actor("hero").position = run.data.start
+			var actors = run.data.actors.duplicate(true)
+			var coins = run.data.lamp_coins
+			var peace = run.data.peace.duplicate(true)
+			var inspected = run.use_node("lorne", "inspect")
+			expect(inspected.ok and str(inspected.get("message", "")) == event.investigation, event.id + " companion reads the actual investigation")
+			expect(node.get("investigated", false) and node.result == "" and run.data.leads.has(cell)
+				and run.data.peace == peace and run.data.lamp_coins == coins and run.data.actors == actors,
+				event.id + " investigation records evidence without completion, peace or resource changes")
+			before = run.data.duplicate(true)
+			for option in ["inspect", "settle", "settle_alternative"]:
+				expect(not run.use_node("lorne", option).ok and run.data == before, event.id + " no repeated investigation or remote-hero settlement: " + option)
+			expect(run.save_game().ok, event.id + " save investigated checkpoint")
+			var loaded = Run.new()
+			expect(loaded.load_game(run.save_path).ok and loaded.node_at(cell).get("investigated", false)
+				and loaded.node_at(cell).result == "" and loaded.data.leads.has(cell) and not loaded.data.peace.has(cell), event.id + " reload preserves unfinished investigation")
+			loaded.save_path = run.save_path
+			loaded.actor("hero").position = cell
+			loaded.actor("hero").hp = 0
+			before = loaded.data.duplicate(true)
+			for option in ["settle", "settle_alternative"]:
+				expect(not loaded.use_node("lorne", option).ok and loaded.data == before, event.id + " wounded hero cannot authorize " + option)
+			loaded.actor("hero").hp = loaded.actor("hero").hp_max
+			actors = loaded.data.actors.duplicate(true)
+			var peace_count = loaded.data.peace.size()
+			expect(loaded.use_node("hero" if branch == "settle" else "lorne", branch).ok, event.id + " completes " + branch + " with local healthy hero")
+			var expected = event.resolved if branch == "settle" else event.alternative_resolved
+			expect(loaded.node_at(cell).result == branch and Nodes.resolution(loaded.node_at(cell)) == expected
+				and loaded.data.peace.has(cell) and loaded.data.peace.size() == peace_count + 1
+				and loaded.data.lamp_coins == coins and loaded.data.actors == actors, event.id + " applies one peaceful branch without extra rewards")
+			before = loaded.data.duplicate(true)
+			for option in ["inspect", "settle", "settle_alternative"]:
+				expect(not loaded.use_node("hero", option).ok and loaded.data == before, event.id + " cannot repeat or switch " + branch)
+			expect(loaded.save_game().ok, event.id + " save settled branch")
+			var resumed = Run.new()
+			expect(resumed.load_game(loaded.save_path).ok and resumed.node_at(cell).get("investigated", false)
+				and resumed.node_at(cell).result == branch and Nodes.resolution(resumed.node_at(cell)) == expected
+				and resumed.data.peace.size() == peace_count + 1, event.id + " reload retains " + branch)
+			before = resumed.data.duplicate(true)
+			for option in ["settle", "settle_alternative"]:
+				expect(not resumed.use_node("hero", option).ok and resumed.data == before, event.id + " reloading cannot repay settlement")
+	expect(covered == 12, "Both branches exercised for all twelve haunts")
+
+func check_choice_branches() -> void:
+	Nodes._load_events()
+	var covered = 0
+	for event in Nodes.events.values():
+		if not str(event.id).contains("_choice_"):
+			continue
+		covered += 1
+		for branch in ["work", "work_alternative"]:
+			var run = event_run(event, "choice")
+			var hero = run.actor("hero")
+			var node = run.node_at(hero.position)
+			hero.ap = 0
+			var before = run.data.duplicate(true)
+			expect(not run.use_node("hero", branch).ok and run.data == before, event.id + " insufficient AP has no effects for " + branch)
+			hero.ap = 1
+			var expected_actor = hero.duplicate(true)
+			expected_actor.ap = 0
+			var coins = run.data.lamp_coins
+			expect(run.use_node("hero", branch).ok and hero == expected_actor and run.data.lamp_coins == coins + node.coins
+				and node.result == branch, event.id + " spends exactly one AP and pays once for " + branch)
+			var expected = event.resolved if branch == "work" else event.alternative_resolved
+			expect(Nodes.resolution(node) == expected, event.id + " chosen commission conclusion")
+			hero.ap = hero.ap_max
+			before = run.data.duplicate(true)
+			for option in ["work", "work_alternative"]:
+				expect(not run.use_node("hero", option).ok and run.data == before, event.id + " cannot repay or switch commission")
+			expect(run.save_game().ok, event.id + " save commission branch")
+			var loaded = Run.new()
+			expect(loaded.load_game(run.save_path).ok and loaded.node_at(hero.position).result == branch
+				and Nodes.resolution(loaded.node_at(hero.position)) == expected and loaded.data.lamp_coins == coins + node.coins, event.id + " commission survives reload")
+			before = loaded.data.duplicate(true)
+			for option in ["work", "work_alternative"]:
+				expect(not loaded.use_node("hero", option).ok and loaded.data == before, event.id + " saved commission cannot repay")
+	expect(covered == 12, "Both branches exercised for all twelve commissions")
+
+func check_investigated_validation() -> void:
+	var run = Run.new()
+	run.save_path = "user://test-node-investigated-validation.json"
+	run.new_run(41, "wayfarer")
+	var cell = find_node(run, "haunt")
+	expect(not cell.is_empty(), "Validation fixture has a haunt")
+	if cell.is_empty():
+		return
+	run.node_at(cell).erase("investigated")
+	expect(run.save_game().ok, "Save old uninvestigated node")
+	var loaded = Run.new()
+	expect(loaded.load_game(run.save_path).ok and not loaded.node_at(cell).get("investigated", false), "Missing investigation flag remains a valid unchosen legacy state")
+	var valid = run.data.duplicate(true)
+	var before = loaded.data.duplicate(true)
+	for invalid in [0, 1, "true", [], {}, null]:
+		var corrupt = valid.duplicate(true)
+		corrupt.nodes[cell].investigated = invalid
+		var file = FileAccess.open(run.save_path, FileAccess.WRITE)
+		file.store_string(JSON.stringify(corrupt))
+		file.close()
+		expect(not loaded.load_game(run.save_path).ok and loaded.data == before, "Reject non-boolean investigation without replacing current run: " + str(invalid))
 
 func find_node(run: RefCounted, kind: String) -> String:
 	for cell in run.data.nodes:

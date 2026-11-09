@@ -31,6 +31,12 @@ static func story(node: Dictionary) -> Dictionary:
 	_load_events()
 	return events.get(node.get("event", ""), {})
 
+static func resolution(node: Dictionary) -> String:
+	var event = story(node)
+	if str(node.result).ends_with("_alternative"):
+		return str(event.get("alternative_resolved", ""))
+	return str(event.get("resolved_by_option", {}).get(node.result, event.get("resolved", "")))
+
 static func label(kind: String) -> String:
 	return LABELS.get(kind, "")
 
@@ -88,6 +94,14 @@ static func generate(tiles: Dictionary, seed_value: int, relic_sites: Dictionary
 			continue
 		var biome: String = tile.base_terrain
 		var candidates: Array = pools.get(kind + ":" + biome, [])
+		if kind == "haunt":
+			var unseen = candidates.filter(func(id): return not use_counts.has(id))
+			if unseen.is_empty():
+				kind = "clue"
+				node.kind = kind
+				candidates = pools.get(kind + ":" + biome, [])
+			else:
+				candidates = unseen
 		if not candidates.is_empty():
 			var fewest = candidates.map(func(id): return int(use_counts.get(id, 0))).min()
 			var least_used = candidates.filter(func(id): return int(use_counts.get(id, 0)) == fewest)
