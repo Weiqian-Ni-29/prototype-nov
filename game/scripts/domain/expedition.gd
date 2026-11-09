@@ -5,7 +5,9 @@ const Catalog = preload("res://scripts/domain/catalog.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
-const SAVE_VERSION = 3
+const Gear = preload("res://scripts/domain/gear_catalog.gd")
+const Items = preload("res://scripts/domain/expedition_items.gd")
+const SAVE_VERSION = 4
 signal changed
 var data: Dictionary = {}
 var rng = RandomNumberGenerator.new()
@@ -23,10 +25,13 @@ func new_run(seed_value: int, profession: String) -> void:
 	hero_def["element"] = "none"
 	hero_def["portrait"] = "hero"
 	hero_def["skill"] = "gravity"
+	hero_def["attack_delivery"] = "ranged"
 	hero_def["ultimate"] = "gravity_drift"
 	data.actors["hero"] = _actor("hero", hero_def, generated.start, true)
-	data.actors.hero.inventory.merge({"trail_food": 2, "trail_blade": 1, "padded_coat": 1, "lamp_charm": 1})
-	data.actors.hero.equipment = {"weapon": "trail_blade", "armor": "padded_coat", "accessory": "lamp_charm"}
+	Items.initialize(data)
+	data.actors.hero.inventory.trail_food = 2
+	for id in Gear.LEGACY_PRICES:
+		data.actors.hero.equipment[Gear.DATA[id].slot] = Items.add_gear(data, id, "common", "actor", "hero")
 	for id in Catalog.COMPANIONS:
 		var location = ""
 		for k in data.tiles:
@@ -36,6 +41,7 @@ func new_run(seed_value: int, profession: String) -> void:
 		data.story[id] = {"relation": "unmet", "result": "E0", "met": false}
 	_initialize_relics()
 	_initialize_nodes()
+	Items.stock(data, false)
 	_ensure_squads()
 	reveal(generated.start)
 	note("村民送来了疗伤药、澄露和干粮。你想找到结束战争的办法。")
@@ -46,7 +52,7 @@ func _actor(id: String, definition: Dictionary, position: String, joined: bool) 
 	return result
 
 func actor(id: String) -> Dictionary:
-	return data.actors.get(id, {})
+	return data.get("actors", {}).get(id, {})
 
 func joined_ids() -> Array[String]:
 	var ids: Array[String] = []
@@ -172,12 +178,157 @@ func retreat_squad(ids: Array, destination: String) -> void:
 func stat(id: String, field: String) -> int:
 	var a = actor(id)
 	var value = int(a.get(field, 0))
-	for slot in a.equipment:
-		var item = Catalog.ITEMS.get(a.equipment[slot], {})
-		value += int(item.get(field, 0))
-	if field == "attack" and a.joined and has_relic("ranged_sight") and a.skill in ["trail_shot", "snare", "ember", "torrent", "heal", "gravity", "frost_arrow", "thunderbolt", "windblade"]:
-		value = roundi(value * 1.15)
+	for uid in a.equipment.values():
+		if not uid.is_empty():
+			value += Gear.bonus(data.gear_instances[uid], field)
 	return value
+
+func gear_owned(kind: String, id: String) -> Array:
+	var result: Array = []
+	for uid in data.gear_instances:
+		if data.gear_instances[uid].owner == {"kind": kind, "id": id}:
+			result.append(uid)
+	return result
+
+func equipped_definition(id: String, slot: String) -> String:
+	var uid: String = actor(id).equipment.get(slot, "")
+	return str(data.gear_instances.get(uid, {}).get("definition_id", ""))
+
+func set_count(id: String, set_id: String) -> int:
+	var count = 0
+	for slot in Gear.SLOTS:
+		var definition = Gear.DATA.get(equipped_definition(id, slot), {})
+		if definition.get("set_id") == set_id:
+			count += 1
+	return count
+
+func gear_trade(id: String, uid: String, buying: bool, voucher: String = "") -> Dictionary:
+	var check = _node_access(id, 0)
+	if not check.ok:
+		return check
+	var a = actor(id)
+	var instance = data.gear_instances.get(uid, {})
+	var kind = "shop" if buying else "actor"
+	var owner: String = a.position if buying else id
+	if node_at(a.position).get("kind") != "trade" or instance.get("owner") != {"kind": kind, "id": owner}:
+		return fail("这件装备当前无法交易。")
+	if not buying and uid in a.equipment.values():
+		return fail("请先卸下选中的装备。")
+	var quote = item_quote(Gear.price(instance), "shop_buy" if buying else "shop_sell", uid, voucher)
+	if not quote.ok:
+		return quote
+	if buying and data.lamp_coins < quote.price:
+		return fail("灯铢不足。")
+	data.lamp_coins += -quote.price if buying else quote.price
+	instance.owner = {"kind": "actor" if buying else "shop", "id": id if buying else a.position}
+	_commit_price(quote)
+	return _item_result("%s「%s」，%d 灯铢。" % ["买入" if buying else "卖出", Gear.label(instance), quote.price])
+
+func gear_transfer(id: String, target: String, uid: String) -> Dictionary:
+	var a = actor(id)
+	var b = actor(target)
+	var instance = data.gear_instances.get(uid, {})
+	if data.status != "exploring" or not data.pending_battle.is_empty() or a.is_empty() or b.is_empty() \
+			or id == target or not a.joined or not b.joined or a.position != b.position or same_cell(a.position, true).is_empty():
+		return fail("需要同地可行动的角色协助交接。")
+	if instance.get("owner") != {"kind": "actor", "id": id} or uid in a.equipment.values():
+		return fail("只能交接自己持有且已卸下的装备。")
+	instance.owner.id = target
+	return _item_result("已交接「%s」。" % Gear.label(instance))
+
+func enhancement_quote(id: String, uid: String, voucher: String = "") -> Dictionary:
+	var check = _node_access(id, 0)
+	if not check.ok:
+		return check
+	var instance = data.gear_instances.get(uid, {})
+	if instance.get("owner") != {"kind": "actor", "id": id}:
+		return fail("该角色已不持有此装备。")
+	if instance.enhance_level >= Gear.MAX_LEVEL:
+		return fail("已经强化至 +5。")
+	var quote = item_quote(Gear.upgrade_price(instance), "enhancement_fee", uid, voucher)
+	if quote.ok and data.lamp_coins < quote.price:
+		quote["message"] = "灯铢不足。"
+	return quote
+
+func enhance(id: String, uid: String, voucher: String = "") -> Dictionary:
+	var quote = enhancement_quote(id, uid, voucher)
+	if not quote.ok:
+		return quote
+	if data.lamp_coins < quote.price:
+		return fail("灯铢不足。")
+	var instance = data.gear_instances[uid]
+	data.lamp_coins -= quote.price
+	instance.enhance_level += 1
+	instance.upgrade_paid += quote.price
+	_commit_price(quote)
+	return _item_result("已强化「%s」，花费 %d 灯铢。" % [Gear.label(instance), quote.price])
+
+func item_quote(base: int, channel: String, uid: String = "", voucher: String = "") -> Dictionary:
+	var pp = 0
+	var claims: Array = []
+	for id in data.relic_attunement:
+		var entry = Relics.DATA[id]
+		var params = entry.params
+		if channel == "shop_sell" and entry.hook == "economy_sale":
+			pp += params.bonus_pp
+		if entry.hook != "economy_discount" or params.channel != channel:
+			continue
+		var key = ""
+		match params.get("when"):
+			"visited_count_gte_60":
+				if data.visited.size() < 60:
+					continue
+				key = "%s:day:%d" % [id, data.day]
+			"first_discounted_enhancement_per_equipment_instance":
+				key = "%s:gear:%s" % [id, uid]
+		if not key.is_empty():
+			if data.item_effect_counts.has(key):
+				continue
+			claims.append(key)
+		pp += params.reduce_pp
+	var price = maxi(1, ceili(base * (1.0 - mini(25, pp) / 100.0)))
+	if channel == "shop_sell":
+		return {"ok": true, "price": mini(floori(base * 0.4 * (1.0 + mini(25, pp) / 100.0)), floori(base * 0.5)), "claims": [], "voucher": ""}
+	if price == base:
+		claims.clear()
+	if not voucher.is_empty():
+		var entry = Relics.DATA.get(voucher, {})
+		if int(data.relic_inventory.get(voucher, 0)) <= 0 or entry.get("hook") != "transaction_use" or entry.params.channel != channel:
+			return fail("没有可用的对应凭券。")
+		var discounted = maxi(ceili(base * 0.75), price - int(entry.params.reduce_flat))
+		if discounted >= price:
+			return fail("该凭券不会进一步降低费用。")
+		price = discounted
+	if channel == "shop_buy":
+		price = maxi(price, floori(base * 0.5) + 1)
+	return {"ok": true, "price": price, "claims": claims, "voucher": voucher}
+
+func _commit_price(quote: Dictionary) -> void:
+	for key in quote.claims:
+		data.item_effect_counts[key] = 1
+	if not quote.voucher.is_empty():
+		_remove_relic(quote.voucher)
+
+func _item_result(message: String) -> Dictionary:
+	data.item_revision += 1
+	data.last_move_windows.clear()
+	data.route_records.clear()
+	note(message)
+	changed.emit()
+	return {"ok": true, "message": message}
+
+func commit_item_operation(operation_id: String, revision: int, action: Callable) -> Dictionary:
+	if operation_id.is_empty():
+		return fail("操作标识缺失。")
+	var previous = data.last_item_operation
+	if previous.get("id") == operation_id:
+		return previous.result.duplicate(true)
+	if revision != int(data.item_revision):
+		return fail("物品或价格已变化，请重新确认。")
+	var result: Dictionary = action.call()
+	if result.ok:
+		data.last_item_operation = {"id": operation_id, "result": result.duplicate(true)}
+	return result
 
 func reveal(position: String) -> void:
 	data.visited[position] = true
@@ -192,13 +343,12 @@ func _reveal_sight(position: String) -> void:
 				data.explored[outer] = true
 
 func _initialize_relics() -> void:
-	data.merge({"relics": {}, "relic_checks": {}, "relic_intros": []})
 	relic_sites = Relics.exploration_sites(data.tiles, int(data.seed))
 
 func _initialize_nodes() -> void:
 	data.merge({"lamp_coins": Nodes.STARTING_COINS})
 	if not data.has("nodes"):
-		data.nodes = Nodes.generate(data.tiles, int(data.seed), relic_sites, data.rewards, data.relic_checks)
+		data.nodes = Nodes.generate(data.tiles, int(data.seed), relic_sites, data.rewards, {})
 
 func node_at(cell: String) -> Dictionary:
 	return data.nodes.get(cell, {})
@@ -212,7 +362,7 @@ func _node_access(id: String, cost: int) -> Dictionary:
 		return fail("需要先处理这个地块的危险。")
 	return success()
 
-func trade(id: String, item: String, buying: bool) -> Dictionary:
+func trade(id: String, item: String, buying: bool, voucher: String = "") -> Dictionary:
 	var check = _node_access(id, 0)
 	if not check.ok:
 		return check
@@ -220,29 +370,51 @@ func trade(id: String, item: String, buying: bool) -> Dictionary:
 	var node = node_at(trader.position)
 	if node.get("kind") != "trade":
 		return fail("这里的商摊无法交易。")
-	if not Nodes.PRICES.has(item):
-		return fail("商摊只收普通补给和装备。")
-	var price: int = Nodes.PRICES[item]
-	var owned = int(trader.inventory.get(item, 0))
+	if Gear.DATA.has(item):
+		return fail("请选择具体装备。")
+	var is_relic = Relics.DATA.has(item)
+	if not is_relic and not Nodes.PRICES.has(item):
+		return fail("商摊无法交易这种物品。")
+	var stock: Dictionary = node.relic_stock if is_relic else node.stock
+	var inventory: Dictionary = data.relic_inventory if is_relic else trader.inventory
+	var owned: int = int(inventory.get(item, 0))
+	var base: int = Relics.DATA[item].price if is_relic else Nodes.PRICES[item]
+	var quote = item_quote(base, "shop_buy" if buying else "shop_sell", "", voucher)
+	if not quote.ok:
+		return quote
 	if buying:
-		if int(node.stock.get(item, 0)) <= 0:
+		if int(stock.get(item, 0)) <= 0:
 			return fail("这件货已经售完。")
-		if data.lamp_coins < price:
+		if data.lamp_coins < quote.price:
 			return fail("灯铢不足。")
-		node.stock[item] -= 1
-		trader.inventory[item] = owned + 1
-		data.lamp_coins -= price
+		stock[item] -= 1
+		data.lamp_coins -= quote.price
+		if is_relic:
+			grant_relic(item, id, trader.position)
+		else:
+			inventory[item] = owned + 1
 	else:
-		if owned <= int(item in trader.equipment.values()):
+		if owned <= 0:
 			return fail("没有可出售的物品。")
-		price = floori(price / 2.0)
-		trader.inventory[item] = owned - 1
-		data.lamp_coins += price
-	var message = "%s%s「%s」，%s %d 灯铢。" % [
-		trader.name, "买下" if buying else "卖出", Catalog.item_name(item), "花费" if buying else "获得", price]
-	note(message)
-	changed.emit()
-	return {"ok": true, "message": message}
+		if is_relic:
+			_remove_relic(item)
+		else:
+			inventory[item] = owned - 1
+		stock[item] = int(stock.get(item, 0)) + 1
+		data.lamp_coins += quote.price
+	_commit_price(quote)
+	var name: String = Relics.DATA[item].name if is_relic else Catalog.item_name(item)
+	return _item_result("%s「%s」，%d 灯铢。" % ["买入" if buying else "卖出", name, quote.price])
+
+func reward_coins(source: String, base: int) -> int:
+	if base <= 0:
+		return base
+	var result = base
+	for id in data.relic_attunement:
+		var entry = Relics.DATA[id]
+		if entry.hook == "economy_reward" and entry.params.source == source:
+			result += ceili(base * int(entry.params.get("bonus_pp", 0)) / 100.0) + int(entry.params.get("bonus_flat", 0))
+	return result
 
 func recovery_percent(cell: String, resource: String) -> int:
 	var percent = Nodes.REST_HP if resource == "hp" else Nodes.REST_MP
@@ -279,6 +451,8 @@ func use_node(id: String, option: String) -> Dictionary:
 		changed.emit()
 		return {"ok": true, "message": event.investigation}
 	var message = ""
+	var recovered_members: Array = []
+	var gear_reward = false
 	match [node.kind, option]:
 		["supply", "collect"]:
 			return collect(id)
@@ -292,6 +466,7 @@ func use_node(id: String, option: String) -> Dictionary:
 				if gain > 0:
 					target[option] += gain
 					recovered.append("%s +%d" % [target.name, gain])
+					recovered_members.append(member)
 			if recovered.is_empty():
 				return fail("在场可行动的队员已经全满，可以留待下次。")
 			message = "%s恢复 · %s" % ["生命" if option == "hp" else "魔力", "、".join(recovered)]
@@ -299,22 +474,45 @@ func use_node(id: String, option: String) -> Dictionary:
 			var relic = ""
 			if option == "search" and relic_sites.has(cell):
 				relic = str(investigate_relic(id).get("relic", ""))
-			if relic.is_empty():
+			elif option == "search":
+				relic = roll_relic("field_cache:" + cell, Relics.DATA.keys(), 0.20, id, cell)
+			var uid: String = node.get("gear_uid", "")
+			if not uid.is_empty():
+				gear_reward = true
+				var instance = data.gear_instances[uid]
+				instance.owner = {"kind": "actor", "id": id}
+				node.erase("gear_uid")
+				message = "%s 取得「%s」。" % [visitor.name, Gear.label(instance)]
+			else:
 				var item: String = node.item
 				visitor.inventory[item] = int(visitor.inventory.get(item, 0)) + 1
 				message = "%s 取得%s ×1。" % [visitor.name, Catalog.item_name(item)]
-			else:
-				message = "发现遗器「%s」。" % Relics.DATA[relic].name
+			if not relic.is_empty():
+				message += " 发现遗器「%s」。" % Relics.DATA[relic].name
 		["choice", "work"], ["choice", "work_alternative"]:
-			data.lamp_coins += int(node.coins)
-			message = "%s 完成委托，得到 %d 灯铢。" % [visitor.name, node.coins]
+			var coins = reward_coins("commission", int(node.coins))
+			data.lamp_coins += coins
+			roll_relic("commission:" + cell, Relics.DATA.keys(), 0.25, id, cell)
+			message = "%s 完成委托，得到 %d 灯铢。" % [visitor.name, coins]
 		["clue", "record"], ["haunt", "settle"], ["haunt", "settle_alternative"]:
 			message = "已将核实的见闻写进旅途手记。" if option == "record" else "亡者的告别与留下的安排已记入手记。"
 			record_story_progress(cell, node.kind == "haunt")
+			if node.kind == "haunt":
+				roll_relic("spirit_farewell:" + cell, Relics.DATA.keys(), 0.50, id, cell)
+				var key = "farewell_receipt:day:%d" % data.day
+				if has_relic("farewell_receipt") and not data.item_effect_counts.has(key) and _restore_map(id, "mp", 6):
+					data.item_effect_counts[key] = 1
 		_:
 			return fail("当前节点没有这个选项。")
 	visitor.ap -= cost
+	if node.kind == "rest" and not recovered_members.is_empty():
+		if _after_rest(option, recovered_members):
+			message += " · 歇脚计步扣恢复了精力。"
+	if option == "search":
+		_after_cache(id, gear_reward)
 	node.result = option
+	data.item_revision += 1
+	data.last_move_windows.clear()
 	if option in ["work", "work_alternative"]:
 		record_story_progress(cell, true)
 	note(message)
@@ -322,64 +520,254 @@ func use_node(id: String, option: String) -> Dictionary:
 	return {"ok": true, "message": message}
 
 func has_relic(id: String) -> bool:
-	return data.relics.has(id)
+	return id in data.relic_attunement
 
 func relic_intro() -> Dictionary:
 	return data.relic_intros[0] if not data.relic_intros.is_empty() else {}
 
 func investigate_relic(id: String) -> Dictionary:
-	var check = _map_action(id, 0)
+	var check = _node_access(id, 0)
 	if not check.ok:
 		return check
 	var position: String = actor(id).position
 	var source = "site:" + position
-	if not relic_sites.has(position) or data.relic_checks.has(source) or not data.tiles[position].enemies.is_empty():
+	if not relic_sites.has(position) or data.relic_claims.has(source):
 		return fail("这里没有尚待调查的遗器线索。")
 	var relic = roll_relic(source, [relic_sites[position]], 0.25, id, position)
+	data.last_move_windows.clear()
 	return {"ok": true, "relic": relic, "message": "你查看了旧物，能辨认的痕迹已经记录在路册里。"}
 
-func roll_relic(source: String, candidates: Array, chance: float, finder: String, position: String) -> String:
-	if data.relic_checks.has(source):
+func relic_offer(source: String, candidates: Array, chance: float) -> String:
+	var pool = candidates.filter(func(id): return not data.relic_seen.has(id))
+	if pool.is_empty():
+		pool = candidates.duplicate()
+	if pool.is_empty():
 		return ""
-	var available = candidates.filter(func(id): return not has_relic(id))
+	pool.sort()
 	var roller = RandomNumberGenerator.new()
-	roller.seed = hash("relic:%d:%s" % [int(data.seed), source])
-	var id = ""
-	if not available.is_empty() and roller.randf() < chance:
-		id = available[roller.randi_range(0, available.size() - 1)]
-		grant_relic(id, finder, position)
-	data.relic_checks[source] = id
-	return id
+	roller.seed = hash("relic:4:%d:%s" % [int(data.seed), source])
+	if chance < 1.0 and roller.randf() >= chance:
+		return ""
+	return pool[roller.randi_range(0, pool.size() - 1)]
+
+func roll_relic(source: String, candidates: Array, chance: float, finder: String, position: String) -> String:
+	if data.relic_claims.has(source):
+		return ""
+	return claim_relic_reward(source, relic_offer(source, candidates, chance), finder, position)
+
+func claim_relic_reward(source: String, relic: String, finder: String, position: String) -> String:
+	if data.relic_claims.has(source):
+		return ""
+	if not relic.is_empty():
+		grant_relic(relic, finder, position)
+	data.relic_claims[source] = {"success": not relic.is_empty(), "relic_id": relic, "delivered": true}
+	return relic
 
 func grant_relic(id: String, finder: String, position: String, npc: String = "", lead: String = "") -> bool:
-	if not Relics.DATA.has(id) or has_relic(id):
+	if not Relics.DATA.has(id):
 		return false
-	data.relics[id] = true
+	var first = not data.relic_seen.has(id)
+	data.relic_seen[id] = true
+	data.relic_inventory[id] = int(data.relic_inventory.get(id, 0)) + 1
+	data.item_revision += 1
 	var new_sight: Array = []
-	if id == "telescope":
-		var previous = data.explored.duplicate()
-		for member in joined_ids():
-			if actor(member).hp > 0:
-				_reveal_sight(actor(member).position)
-		new_sight = data.explored.keys().filter(func(cell): return not previous.has(cell))
-	elif id == "life_seed":
-		for member in joined_ids():
-			var a = actor(member)
-			a.hp_max = roundi(a.hp_max * 1.20)
-	elif id == "road_hourglass" or id == "stillwater_stone":
-		for member in joined_ids():
-			var a = actor(member)
-			if a.hp <= 0:
-				continue
-			if id == "road_hourglass":
-				a.ap = mini(a.ap_max, a.ap + 2)
-			else:
-				a.mp = mini(a.mp_max, a.mp + roundi(a.mp_max * 0.40))
-	elif id == "rain_bell":
-		data.weather = "rain"
-	data.relic_intros.append({"id": id, "finder": finder, "position": position, "npc": npc, "lead": lead, "stage": 0, "new_sight": new_sight})
+	if Relics.DATA[id].type == "P" and not has_relic(id) and data.relic_attunement.size() < 6:
+		data.relic_attunement.append(id)
+		if id == "telescope":
+			new_sight = _refresh_relic_sight()
+	if first:
+		data.relic_intros.append({"id": id, "finder": finder, "position": position, "npc": npc, "lead": lead, "stage": 0, "new_sight": new_sight})
 	note("远征队获得遗器「%s」。" % Relics.DATA[id].name)
 	return true
+
+func _refresh_relic_sight() -> Array:
+	var previous = data.explored.duplicate()
+	for member in joined_ids():
+		if actor(member).hp > 0:
+			_reveal_sight(actor(member).position)
+	return data.explored.keys().filter(func(cell): return not previous.has(cell))
+
+func attune_relic(user: String, id: String) -> Dictionary:
+	var check = _node_access(user, 0)
+	if not check.ok:
+		return check
+	if int(data.relic_inventory.get(id, 0)) <= 0 or Relics.DATA[id].type != "P":
+		return fail("没有可共鸣的遗器。")
+	if has_relic(id):
+		_unattune(id)
+		return _item_result("已解除「%s」的共鸣。" % Relics.DATA[id].name)
+	if data.relic_attunement.size() >= 6:
+		return fail("六个共鸣位已满，请先解除一件。")
+	data.relic_attunement.append(id)
+	if id == "telescope":
+		_refresh_relic_sight()
+	return _item_result("已共鸣「%s」。" % Relics.DATA[id].name)
+
+func _remove_relic(id: String) -> void:
+	data.relic_inventory[id] -= 1
+	if data.relic_inventory[id] == 0:
+		data.relic_inventory.erase(id)
+		_unattune(id)
+
+func _unattune(id: String) -> void:
+	data.relic_attunement.erase(id)
+	if id == "uphill_kneepad":
+		for key in data.item_effect_counts.keys():
+			if str(key).begins_with("uphill_ready:"):
+				data.item_effect_counts.erase(key)
+
+func use_relic(user: String, id: String, target: String = "") -> Dictionary:
+	var check = _node_access(user, 0)
+	if not check.ok:
+		return check
+	var entry = Relics.DATA.get(id, {})
+	if int(data.relic_inventory.get(id, 0)) <= 0 or entry.get("type") == "P":
+		return fail("没有可使用的遗器。")
+	var a = actor(user)
+	var params: Dictionary = entry.params
+	match entry.hook:
+		"run_growth_use":
+			if data.relic_effect_flags.has(params.run_flag):
+				return fail("生命之种在本局已使用。")
+			for member in joined_ids():
+				var recipient = actor(member)
+				recipient.hp_max = roundi(recipient.hp_max * params.multiplier)
+			data.relic_effect_flags[params.run_flag] = true
+		"weather_use":
+			if data.weather == params.set:
+				return fail("今天已经下雨。")
+			data.weather = params.set
+			data.route_records.clear()
+		"resource_use":
+			var recipients: Array = [user]
+			if params.targets == "all_healthy_joined_global":
+				recipients = joined_ids()
+			elif params.targets == "selected_other_healthy_joined_same_cell":
+				if target == user or target not in same_cell(a.position, true):
+					return fail("请选择同地另一位可行动队员。")
+				recipients = [target]
+			var costs = _resource_changes(a, params.get("cost", {}), id == "stillwater_stone")
+			for resource in costs:
+				if int(a[resource]) < costs[resource] or (resource == "hp" and int(a.hp) <= costs.hp):
+					return fail("无法支付使用这件遗器所需的资源。")
+			var gains: Dictionary = {}
+			for member in recipients:
+				var recipient = actor(member)
+				if recipient.hp <= 0:
+					continue
+				var proposed = _resource_changes(recipient, params.restore, id == "stillwater_stone")
+				for resource in proposed.keys():
+					proposed[resource] = mini(proposed[resource], int(recipient[resource + "_max"] - recipient[resource]))
+					if proposed[resource] <= 0:
+						proposed.erase(resource)
+				if not proposed.is_empty():
+					gains[member] = proposed
+			if gains.is_empty():
+				return fail("没有可恢复的资源。")
+			for resource in costs:
+				a[resource] -= costs[resource]
+			for member in gains:
+				for resource in gains[member]:
+					actor(member)[resource] += gains[member][resource]
+		"map_reveal_use":
+			if not _use_reveal_relic(a.position, params):
+				return fail("附近没有新的公开信息。")
+		"encounter_info_use":
+			var tile = data.tiles.get(target, {})
+			if target not in Hex.neighbors(a.position, data.tiles) or not data.visited.has(target) \
+					or not tile.get("discovered_enemy", false) or tile.enemies.is_empty() or target == data.boss \
+					or data.map_intel.has("encounter:" + target):
+				return fail("请选择相邻、已到访且敌情可公开的地块。")
+			var elements: Array = []
+			for enemy in tile.enemies:
+				var definition = Catalog.ENEMIES.get(enemy, {})
+				elements.append(definition.get("element", "normal"))
+			data.map_intel["encounter:" + target] = {"count": tile.enemies.size(), "elements": elements}
+		"move_refund_use":
+			var receipt = data.last_move_windows.get(user, {})
+			var gain = mini(int(receipt.get("paid", 0)), mini(int(a.ap_max - a.ap), params.refund_ap_flat))
+			if receipt.get("day") != data.day or receipt.get("position") != a.position or receipt.get("weather") != "rain" or gain <= 0:
+				return fail("需要刚完成一次雨天付费移动且有精力缺口。")
+			a.ap += gain
+		"route_use":
+			var route = _known_route(user, target)
+			if route.is_empty() or data.route_records.get(user, {}) == route:
+				return fail("请选择已发现、可达且尚未记录此路线的地块。")
+			data.route_records[user] = route
+		"transaction_use":
+			return fail("在买入或强化的确认界面选择这张凭券。")
+		_:
+			return fail("此遗器无法在这里使用。")
+	_remove_relic(id)
+	var route: Dictionary = data.route_records.get(user, {}) if entry.hook == "route_use" else {}
+	var result = _item_result("已使用「%s」。" % entry.name)
+	if not route.is_empty():
+		data.route_records[user] = route
+	return result
+
+static func _resource_changes(a: Dictionary, params: Dictionary, rounded: bool = false) -> Dictionary:
+	var amounts: Dictionary = {}
+	for resource in ["hp", "mp", "ap"]:
+		var ratio = float(params.get(resource + "_max_pp", 0)) / 100.0
+		var scaled: float = a[resource + "_max"] * ratio
+		var value = int(params.get(resource + "_flat", 0)) + (roundi(scaled) if rounded else floori(scaled))
+		value = maxi(value, int(params.get(resource + "_min_flat", 0)))
+		if resource == "mp":
+			value += int(params.get("user_mp_flat", 0))
+		if value > 0:
+			amounts[resource] = value
+	return amounts
+
+func _use_reveal_relic(origin: String, params: Dictionary) -> bool:
+	var cells = data.tiles.keys()
+	cells.sort_custom(func(a, b):
+		var left = Hex.distance(Hex.coord(origin), Hex.coord(a))
+		var right = Hex.distance(Hex.coord(origin), Hex.coord(b))
+		return left < right if left != right else a < b)
+	var revealed = false
+	for cell in cells:
+		if Hex.distance(Hex.coord(origin), Hex.coord(cell)) > params.radius:
+			break
+		var node = node_at(cell)
+		if params.mode == "nearest_unclaimed_public_cache_marker":
+			if node.get("kind") != "cache" or not node.result.is_empty() or data.tiles[cell].hidden or data.map_intel.has("cache:" + cell):
+				continue
+			data.map_intel["cache:" + cell] = true
+			return true
+		if not data.explored.has(cell):
+			data.explored[cell] = true
+			revealed = true
+	return revealed
+
+func _known_route(user: String, destination: String) -> Dictionary:
+	var origin: String = actor(user).position
+	if destination == origin or not data.explored.has(destination) or not Hex.is_land(data.tiles, destination):
+		return {}
+	var frontier: Array[String] = [origin]
+	var costs = {origin: 0}
+	var previous: Dictionary = {}
+	while not frontier.is_empty():
+		frontier.sort_custom(func(a, b): return a < b if costs[a] == costs[b] else costs[a] < costs[b])
+		var cell: String = frontier.pop_front()
+		if cell == destination:
+			var path: Array[String] = [destination]
+			while path[0] != origin:
+				path.push_front(previous[path[0]])
+			var steps: Array = []
+			for next in path.slice(1):
+				steps.append(move_cost(user, next))
+			return {"origin": origin, "target": destination, "cost": costs[destination], "path": path, "steps": steps}
+		for next in Hex.neighbors(cell, data.tiles):
+			if not data.explored.has(next) or not Hex.is_land(data.tiles, next):
+				continue
+			var cost = int(costs[cell]) + move_cost(user, next)
+			if cost >= costs.get(next, 2147483647):
+				continue
+			costs[next] = cost
+			previous[next] = cell
+			if next not in frontier:
+				frontier.append(next)
+	return {}
 
 func has_visited(position: String) -> bool:
 	return data.visited.has(position)
@@ -389,12 +777,110 @@ func knows_encounter(position: String) -> bool:
 	return (has_visited(position) or (position == data.boss and boss_known())) and tile.discovered_enemy and not tile.enemies.is_empty()
 
 func move_cost(id: String, destination: String) -> int:
-	var cost = int(Catalog.TERRAIN[data.tiles[destination].terrain].cost)
-	if id == "lorne" and data.tiles[destination].terrain == "mountain":
+	return _move_price(id, destination).cost
+
+func _move_price(id: String, destination: String) -> Dictionary:
+	var terrain: String = data.tiles[destination].terrain
+	var cost = int(Catalog.TERRAIN[terrain].cost)
+	if id == "lorne" and terrain == "mountain":
 		cost = 1
 	if cost > 0 and has_relic("trail_boots"):
 		cost = maxi(1, cost - 1)
-	return cost
+	var claims: Array = []
+	var options = [
+		["gale_runner_accessory", terrain == "plains" and equipped_definition(id, "accessory") == "gale_runner_accessory", 1],
+		["dune_keeper", terrain == "desert" and set_count(id, "dune_keeper") >= 2, 2],
+		["road_surveyor", set_count(id, "road_surveyor") >= 2, 2]]
+	for option in options:
+		if cost <= 1 or not option[1]:
+			continue
+		var keys = _day_gear_keys(id, "move:" + option[0], option[0])
+		if _map_limit(keys, option[2]):
+			claims.append_array(keys)
+			cost -= 1
+	return {"cost": cost, "claims": claims}
+
+func _day_gear_keys(id: String, effect: String, gear: String) -> Array:
+	var prefix = "day:%d:%s:" % [data.day, effect]
+	var keys = [prefix + id]
+	for slot in Gear.SLOTS:
+		var definition = equipped_definition(id, slot)
+		if definition == gear or Gear.DATA.get(definition, {}).get("set_id") == gear:
+			keys.append(prefix + "uid:" + str(actor(id).equipment[slot]))
+	return keys
+
+func _map_limit(keys: Array, maximum: int) -> bool:
+	return keys.all(func(key): return int(data.item_effect_counts.get(key, 0)) < maximum)
+
+func _map_count(keys: Array) -> void:
+	for key in keys:
+		data.item_effect_counts[key] = int(data.item_effect_counts.get(key, 0)) + 1
+
+func _restore_map(id: String, resource: String, amount: int) -> bool:
+	var a = actor(id)
+	var gain = mini(amount, int(a[resource + "_max"] - a[resource]))
+	if a.hp <= 0 or gain <= 0:
+		return false
+	a[resource] += gain
+	return true
+
+func _after_move(id: String, terrain: String, paid: int) -> void:
+	if paid <= 0:
+		return
+	var key = "rain_route_tag:day:%d" % data.day
+	if has_relic("rain_route_tag") and data.weather == "rain" and not data.item_effect_counts.has(key) and _restore_map(id, "ap", 1):
+		data.item_effect_counts[key] = 1
+	var trail = "terrain:day:%d:%s:" % [data.day, id]
+	data.item_effect_counts[trail + terrain] = 1
+	var terrain_count = 0
+	for biome in Catalog.TERRAIN:
+		terrain_count += int(data.item_effect_counts.has(trail + biome))
+	var soil = "mixed_soil_pouch:day:%d:%s" % [data.day, id]
+	if has_relic("mixed_soil_pouch") and terrain_count >= 3 and not data.item_effect_counts.has(soil) and _restore_map(id, "ap", 1):
+		data.item_effect_counts[soil] = 1
+	var uphill = "uphill_kneepad:day:%d:%s" % [data.day, id]
+	if paid >= 3 and has_relic("uphill_kneepad") and not data.item_effect_counts.has(uphill):
+		data.item_effect_counts["uphill_ready:" + id] = 1
+
+func _after_cache(id: String, gear_reward: bool) -> void:
+	if has_relic("unpacking_mat"):
+		_restore_map(id, "ap", 1)
+	if not gear_reward:
+		return
+	if equipped_definition(id, "accessory") == "road_surveyor_accessory":
+		var keys = _day_gear_keys(id, "cache:mp", "road_surveyor_accessory")
+		if _map_limit(keys, 2) and _restore_map(id, "mp", 3):
+			_map_count(keys)
+	if set_count(id, "road_surveyor") >= 3:
+		var keys = _day_gear_keys(id, "cache:ap", "road_surveyor")
+		if _map_limit(keys, 1) and _restore_map(id, "ap", 1):
+			_map_count(keys)
+
+func _after_rest(resource: String, members: Array) -> bool:
+	var step_key = "rest_step_counter:day:%d" % data.day
+	var step_used = false
+	if has_relic("rest_step_counter") and not data.item_effect_counts.has(step_key):
+		for member in members:
+			step_used = _restore_map(member, "ap", 1) or step_used
+		if step_used:
+			data.item_effect_counts[step_key] = 1
+
+	var id = "season_patchwork" if resource == "hp" else "shared_kettle_lid"
+	var key = "%s:day:%d" % [id, data.day]
+	if not has_relic(id) or data.item_effect_counts.has(key):
+		return step_used
+	var restore: Dictionary = Relics.DATA[id].params.restore
+	if resource == "mp":
+		members.sort_custom(func(a, b):
+			var left = actor(a)
+			var right = actor(b)
+			return a < b if left.mp * right.mp_max == right.mp * left.mp_max else left.mp * right.mp_max < right.mp * left.mp_max)
+		members = members.slice(0, 1)
+	for member in members:
+		var amount = int(_resource_changes(actor(member), restore).get(resource, 0))
+		if _restore_map(member, resource, amount):
+			data.item_effect_counts[key] = 1
+	return step_used
 
 func movement_preview(ids: Array, destination: String) -> Dictionary:
 	if data.status != "exploring" or not data.pending_battle.is_empty():
@@ -444,9 +930,23 @@ func move(ids: Array, destination: String) -> Dictionary:
 		return preview
 	_prepare_squad_move(ids, destination)
 	for id in ids:
+		_map_count(_move_price(id, destination).claims)
 		actor(id).ap -= preview.costs[id]
 		actor(id).position = destination
+		_after_move(id, data.tiles[destination].terrain, preview.costs[id])
 	reveal(destination)
+	data.route_records.clear()
+	data.last_move_windows.clear()
+	var move_id = int(data.next_move_uid)
+	data.next_move_uid += 1
+	for id in ids:
+		data.last_move_windows[id] = {"id": move_id, "position": destination, "paid": preview.costs[id], "weather": data.weather, "day": data.day}
+	for threshold in [20, 60, 100]:
+		if data.visited.size() >= threshold:
+			var reward = roll_relic("explore:" + str(threshold), Relics.DATA.keys(), 1.0, str(ids[0]), destination)
+			if not reward.is_empty() and has_relic("milestone_waterbag"):
+				for member in joined_ids():
+					_restore_map(member, "mp", floori(actor(member).mp_max * 0.15))
 	var t = data.tiles[destination]
 	var encounter = not t.enemies.is_empty()
 	if encounter:
@@ -475,7 +975,7 @@ func join_companion(id: String, recruiter_id: String = "") -> Dictionary:
 	_ensure_squads()
 	if not recruiter_id.is_empty():
 		a.squad_id = actor(recruiter_id).squad_id
-	if has_relic("life_seed"):
+	if data.relic_effect_flags.has("life_seed_applied"):
 		a.hp_max = roundi(a.hp_max * 1.20)
 	if has_relic("telescope"):
 		_reveal_sight(a.position)
@@ -485,6 +985,11 @@ func join_companion(id: String, recruiter_id: String = "") -> Dictionary:
 	data.story[id].relation = "joined"
 	data.story[id].met = true
 	note("%s 加入远征队。" % a.name)
+	var source = "recruit:" + id
+	for relic in Relics.DATA:
+		if Relics.DATA[relic].source == source:
+			claim_relic_reward(source, relic, id, a.position)
+			break
 	changed.emit()
 	return success()
 
@@ -503,11 +1008,13 @@ func transfer(from_id: String, to_id: String, item: String, amount: int) -> Dict
 		return fail("请先卸下装备。")
 	source.inventory[item] -= amount
 	target.inventory[item] = int(target.inventory.get(item, 0)) + amount
+	data.item_revision += 1
+	data.last_move_windows.clear()
 	note("%s 将 %s ×%d 交给 %s。" % [source.name, Catalog.item_name(item), amount, target.name])
 	changed.emit()
 	return success()
 
-func use_item(user_id: String, target_id: String, item: String, during_battle: bool = false) -> Dictionary:
+func use_item(user_id: String, target_id: String, item: String, during_battle: bool = false, received_pp: int = 0) -> Dictionary:
 	var user = actor(user_id)
 	var target = actor(target_id)
 	if user.is_empty() or target.is_empty() or not user.joined or user.hp <= 0 or user.position != target.position:
@@ -524,6 +1031,8 @@ func use_item(user_id: String, target_id: String, item: String, during_battle: b
 	var healing = int(definition.get("hp", 0))
 	if has_relic("herbal_case"):
 		healing = roundi(healing * 1.25)
+	if during_battle and received_pp > 0:
+		healing = floori(healing * (1.0 + received_pp / 100.0))
 	var hp_gain = mini(healing, int(target.hp_max) - int(target.hp))
 	var mp_gain = mini(int(definition.get("mp", 0)), int(target.mp_max) - int(target.mp))
 	if hp_gain <= 0 and mp_gain <= 0:
@@ -531,20 +1040,23 @@ func use_item(user_id: String, target_id: String, item: String, during_battle: b
 	target.hp += hp_gain
 	target.mp += mp_gain
 	user.inventory[item] -= 1
+	data.item_revision += 1
+	data.last_move_windows.clear()
 	note("%s 对 %s 使用%s：HP +%d，MP +%d。" % [user.name, target.name, definition.name, hp_gain, mp_gain])
 	changed.emit()
-	return success()
+	return {"ok": true, "hp_gain": hp_gain, "hp_over": healing - hp_gain}
 
-func equip(id: String, item: String) -> Dictionary:
-	if data.status != "exploring":
-		return fail("只能在战斗外换装。")
+func equip(id: String, uid: String) -> Dictionary:
+	var check = _map_action(id, 0)
+	if not check.ok:
+		return check
 	var a = actor(id)
-	var definition = Catalog.ITEMS.get(item, {})
-	if a.is_empty() or not a.joined or a.hp <= 0 or not definition.has("slot") or int(a.inventory.get(item, 0)) <= 0:
-		return fail("没有可装备的物品或角色无法行动。")
-	a.equipment[definition.slot] = "" if a.equipment[definition.slot] == item else item
-	changed.emit()
-	return success()
+	var item = data.gear_instances.get(uid, {})
+	if item.get("owner") != {"kind": "actor", "id": id}:
+		return fail("该角色不持有此装备。")
+	var slot: String = Gear.DATA[item.definition_id].slot
+	a.equipment[slot] = "" if a.equipment[slot] == uid else uid
+	return _item_result("已更新装备。")
 
 func collect(id: String) -> Dictionary:
 	var check = _map_action(id, 1)
@@ -558,6 +1070,8 @@ func collect(id: String) -> Dictionary:
 	var amount = int(t.quantity) + (1 if id == "cen" and t.terrain == "forest" else 0)
 	a.inventory[t.resource] = int(a.inventory.get(t.resource, 0)) + amount
 	t.quantity = 0
+	data.item_revision += 1
+	data.last_move_windows.clear()
 	var message = "%s 收集了%s ×%d。" % [a.name, Catalog.item_name(t.resource), amount]
 	note(message)
 	changed.emit()
@@ -586,6 +1100,11 @@ func end_day() -> Dictionary:
 	var new_day = int(data.day) + 1
 	data.weather = "rain" if rng.randf() < rain_chance() else "sun"
 	data.day = new_day
+	data.last_move_windows.clear()
+	data.route_records.clear()
+	for key in data.item_effect_counts.keys():
+		if str(key).begins_with("uphill_ready:") or ":day:" in str(key) or str(key).begins_with("day:"):
+			data.item_effect_counts.erase(key)
 	for id in joined_ids():
 		var a = actor(id)
 		a.ap = a.ap_max
@@ -597,9 +1116,15 @@ func end_day() -> Dictionary:
 	return success()
 
 func next_weather() -> String:
+	return weather_forecast(1)[0]
+
+func weather_forecast(days: int) -> Array[String]:
 	var forecast = RandomNumberGenerator.new()
 	forecast.state = rng.state
-	return "rain" if forecast.randf() < rain_chance() else "sun"
+	var result: Array[String] = []
+	for day in days:
+		result.append("rain" if forecast.randf() < rain_chance() else "sun")
+	return result
 
 func rain_chance() -> float:
 	return 0.48 if has_relic("rainstone") else 0.28
@@ -649,9 +1174,9 @@ func record_story_progress(cell: String, peaceful: bool) -> void:
 		data.peace[cell] = true
 
 func _map_action(id: String, cost: int) -> Dictionary:
-	var a = actor(id)
 	if data.is_empty() or data.status != "exploring" or not data.pending_battle.is_empty():
 		return fail("当前不能执行探索行动。")
+	var a = actor(id)
 	if a.is_empty() or not a.joined or a.hp <= 0:
 		return fail("该角色无法行动。")
 	if a.ap < cost:
@@ -689,13 +1214,25 @@ func load_game(path: String = "") -> Dictionary:
 	if json.parse(FileAccess.get_file_as_string(path)) != OK or not json.data is Dictionary:
 		return fail("存档损坏；旧文件没有被覆盖。")
 	var loaded: Dictionary = json.data
-	if not _whole_number(loaded.get("version", -1)) or int(loaded.version) != SAVE_VERSION or not loaded.has_all(["actors", "tiles", "rng_state", "day", "explored", "status"]):
+	if not _whole_number(loaded.get("version", -1)) or int(loaded.version) not in [3, SAVE_VERSION] or not loaded.has_all(["actors", "tiles", "rng_state", "day", "explored", "status"]):
 		return fail("存档版本不兼容或缺少字段。")
+	if int(loaded.version) == SAVE_VERSION and (not loaded.get("relic_seen") is Dictionary or not loaded.get("nodes") is Dictionary):
+		return fail("遗器发现记录无效。")
 	var invalid = _validate_save(loaded)
 	if invalid != "":
 		return fail("存档内容无效：" + invalid + "。旧文件没有被覆盖。")
+	if int(loaded.version) == 3:
+		if not loaded.has("nodes"):
+			var sites = Relics.exploration_sites(loaded.tiles, int(loaded.seed))
+			loaded.nodes = Nodes.generate(loaded.tiles, int(loaded.seed), sites, loaded.rewards, loaded.get("relic_checks", {}))
+			loaded.merge({"lamp_coins": Nodes.STARTING_COINS})
+		Items.migrate(loaded)
+	if not Items.validate(loaded):
+		return fail("存档中的装备或遗器记录无效。")
 	data = loaded
 	_remove_legacy_map_effects()
+	for id in data.actors:
+		actor(id).attack_delivery = "ranged" if id == "hero" else Catalog.COMPANIONS[id].attack_delivery
 	_ensure_squads()
 	if not data.has("visited"):
 		_restore_legacy_visits()
@@ -763,7 +1300,7 @@ func _validate_save(loaded: Dictionary) -> String:
 			return "胜利结算无效"
 		if not result.members.all(func(id): return loaded.actors.has(id)) or not result.revived.all(func(id): return id in result.members) \
 				or (result.salve_receiver != "" and result.salve_receiver not in result.members) \
-				or (result.relic != "" and not loaded.get("relics", {}).has(result.relic)):
+				or (result.relic != "" and not loaded.get("relic_seen", loaded.get("relics", {})).has(result.relic)):
 			return "胜利结算无效"
 		if result.has("coins") and (not _whole_number(result.coins) or result.coins < 0):
 			return "胜利报酬无效"
@@ -773,7 +1310,7 @@ func _validate_save(loaded: Dictionary) -> String:
 	for entry in loaded.get("relic_intros", []):
 		if not entry is Dictionary or not entry.has_all(["id", "finder", "position", "npc", "lead", "stage", "new_sight"]):
 			return "遗器剧情无效"
-		if not loaded.get("relics", {}).has(entry.id) or not loaded.actors.has(entry.finder) or not loaded.tiles.has(entry.position) \
+		if not loaded.get("relic_seen", loaded.get("relics", {})).has(entry.id) or not loaded.actors.has(entry.finder) or not loaded.tiles.has(entry.position) \
 				or not entry.npc is String or not entry.lead is String or not _whole_number(entry.stage) \
 				or int(entry.stage) not in [0, 1] or not entry.new_sight is Array:
 			return "遗器剧情无效"
@@ -807,6 +1344,8 @@ func _validate_save(loaded: Dictionary) -> String:
 				return "未知敌人"
 	if loaded.has("nodes") and not _valid_nodes(loaded):
 		return "节点记录无效"
+	if loaded.actors.size() != Catalog.COMPANIONS.size() + 1:
+		return "角色数量无效"
 	for id in ["hero"] + Catalog.COMPANIONS.keys():
 		if not loaded.actors.has(id) or not loaded.actors[id] is Dictionary:
 			return "角色缺失"
@@ -832,7 +1371,7 @@ func _validate_save(loaded: Dictionary) -> String:
 				return "物品数量无效"
 		for slot in a.equipment:
 			var item = a.equipment[slot]
-			if item != "" and (not Catalog.ITEMS.has(item) or Catalog.ITEMS[item].get("slot", "") != slot or a.inventory.get(item, 0) < 1):
+			if int(loaded.version) == 3 and item != "" and (not Gear.DATA.has(item) or Gear.DATA[item].slot != slot or a.inventory.get(item, 0) < 1):
 				return "装备持有状态无效"
 		if id != "hero":
 			if not loaded.story.has(id) or not loaded.story[id] is Dictionary or not loaded.story[id].has_all(["met", "relation", "result"]):
@@ -883,9 +1422,10 @@ func _valid_nodes(loaded: Dictionary) -> bool:
 			if not node.get("stock") is Dictionary:
 				return false
 			for item in node.stock:
-				if not Nodes.PRICES.has(item) or not _whole_number(node.stock[item]) or node.stock[item] < 0:
+				if not Nodes.PRICES.has(item) or (int(loaded.version) == SAVE_VERSION and Gear.DATA.has(item)) \
+						or not _whole_number(node.stock[item]) or node.stock[item] < 0:
 					return false
-		if node.kind in ["rest", "cache"] and not Nodes.PRICES.has(node.get("item")):
+		if node.kind in ["rest", "cache"] and not Nodes.PRICES.has(node.get("item")) and not Gear.DATA.has(node.get("item")):
 			return false
 		if node.kind in ["choice", "battle", "elite"] and (not _whole_number(node.get("coins")) or node.coins <= 0):
 			return false
