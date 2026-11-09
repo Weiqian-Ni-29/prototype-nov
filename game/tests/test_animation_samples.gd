@@ -17,8 +17,8 @@ func execute() -> void:
 	root.add_child(game)
 	await process_frame
 	game.run.save_path = "user://animation-samples.json"
-	game.chosen_profession = "guardian"
 	game._start_new()
+	game.run.actor("hero").skill = "guard_all"
 	game.set_process(false)
 	var position = game.run.actor("hero").position
 	for id in ["cen","eve","grit"]:
@@ -37,7 +37,7 @@ func execute() -> void:
 			expect(rig.animator.has_animation(clip),"Required mapped clip " + id + "/" + clip)
 		rig.play_action("walk")
 		await create_timer(0.16).timeout
-		var bone = rig.skeleton.find_bone("front humerus.L" if id=="grit" else "LeftUpperLeg")
+		var bone = rig.skeleton.find_bone("LeftUpperLeg")
 		var before = rig.skeleton.get_bone_pose_rotation(bone)
 		await create_timer(0.22).timeout
 		expect(not before.is_equal_approx(rig.skeleton.get_bone_pose_rotation(bone)),"Locomotion changes skeletal pose over actual frames " + id)

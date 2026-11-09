@@ -71,11 +71,11 @@ func execute() -> void:
 		await sample("map-seven",false)
 		var p = r.actor("hero").position
 		r.data.tiles[p].terrain = "forest"
-		r.data.tiles[p].burning = true
 		r.data.weather = "rain" # combined render stress fixture, not a claim that rain ignites forest
 		r.data.tiles[p].enemies = ["lamp_boss","furnace_elite","hunter_elite","swarm"]
 		var b = Combat.new()
 		expect(b.begin(r,{"position":p,"origin":p,"movers":[],"npc":"","ambush":false},["hero","grit","ember","tide"]).ok,"Maximal battle fixture begins")
+		b.burning = true
 		game.combat = b
 		game.view.begin_battle(r,b)
 		game._refresh()

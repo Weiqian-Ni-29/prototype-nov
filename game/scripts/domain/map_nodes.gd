@@ -8,7 +8,7 @@ const PRICES = {"salve": 6, "ether": 7, "trail_food": 3, "trail_blade": 12, "pad
 const GEAR = ["trail_blade", "padded_coat", "lamp_charm"]
 const LABELS = {
 	"story": "地点", "trade": "交易", "supply": "补给", "rest": "歇脚",
-	"choice": "委托", "clue": "线索", "cache": "寻宝", "battle": "遭遇", "elite": "险地",
+	"choice": "委托", "clue": "线索", "haunt": "亡灵", "cache": "寻宝", "battle": "遭遇", "elite": "险地",
 }
 static var events: Dictionary = {}
 static var pools: Dictionary = {}
@@ -31,11 +31,14 @@ static func story(node: Dictionary) -> Dictionary:
 	_load_events()
 	return events.get(node.get("event", ""), {})
 
+static func resolution(node: Dictionary) -> String:
+	var event = story(node)
+	if str(node.result).ends_with("_alternative"):
+		return str(event.get("alternative_resolved", ""))
+	return str(event.get("resolved_by_option", {}).get(node.result, event.get("resolved", "")))
+
 static func label(kind: String) -> String:
 	return LABELS.get(kind, "")
-
-static func survives_fire(node: Dictionary) -> bool:
-	return story(node).has("scorched")
 
 static func is_elite(types: Array) -> bool:
 	return types.any(func(type): return str(type).ends_with("_elite") or type == "lamp_boss")
@@ -46,7 +49,7 @@ static func battle_coins(seed_value: int, cell: String, elite: bool) -> int:
 	return roller.randi_range(8, 12) if elite else roller.randi_range(4, 7)
 
 static func _kind(tile: Dictionary, has_relic: bool, defeated: bool, roll: int) -> String:
-	if not tile.site.is_empty():
+	if tile.site == "start":
 		return "story"
 	if not tile.enemies.is_empty() or defeated:
 		return "elite" if is_elite(tile.enemies) else "battle"
@@ -60,9 +63,9 @@ static func _kind(tile: Dictionary, has_relic: bool, defeated: bool, roll: int) 
 		return "rest"
 	if roll < 27:
 		return "cache"
-	if roll < 62:
+	if roll < 45:
 		return "choice"
-	return "clue"
+	return "haunt" if roll < 72 else "clue"
 
 static func generate(tiles: Dictionary, seed_value: int, relic_sites: Dictionary, rewards: Dictionary, relic_checks: Dictionary) -> Dictionary:
 	_load_events()
@@ -71,21 +74,34 @@ static func generate(tiles: Dictionary, seed_value: int, relic_sites: Dictionary
 	var cells = tiles.keys()
 	cells.sort()
 	var roller = RandomNumberGenerator.new()
+	var nearby_clues: Array = []
+	for cell in cells:
+		if tiles[cell].site == "start":
+			nearby_clues = Hex.neighbors(cell, tiles).filter(func(next): return Hex.is_land(tiles, next) and tiles[next].site.is_empty())
+			nearby_clues.sort_custom(func(a, b): return hash("clue:%s:%s" % [seed_value, a]) < hash("clue:%s:%s" % [seed_value, b]))
+			nearby_clues = nearby_clues.slice(0, 3)
+			break
 	for cell in cells:
 		if not Hex.is_land(tiles, cell):
 			continue
 		roller.seed = hash("node:%d:%s" % [seed_value, cell])
 		var tile = tiles[cell]
 		var defeated = rewards.has(cell + ":")
-		var kind = _kind(tile, relic_sites.has(cell), defeated, roller.randi_range(0, 99))
+		var kind = "haunt" if cell in nearby_clues else _kind(tile, relic_sites.has(cell), defeated, roller.randi_range(0, 99))
 		var node = {"kind": kind, "event": "", "result": ""}
 		nodes[cell] = node
 		if kind == "story":
 			continue
-		# Use the underlying biome for placement. Fire can change how a node
-		# reads and which actions are possible, without moving or rerolling it.
 		var biome: String = tile.base_terrain
 		var candidates: Array = pools.get(kind + ":" + biome, [])
+		if kind == "haunt":
+			var unseen = candidates.filter(func(id): return not use_counts.has(id))
+			if unseen.is_empty():
+				kind = "clue"
+				node.kind = kind
+				candidates = pools.get(kind + ":" + biome, [])
+			else:
+				candidates = unseen
 		if not candidates.is_empty():
 			var fewest = candidates.map(func(id): return int(use_counts.get(id, 0))).min()
 			var least_used = candidates.filter(func(id): return int(use_counts.get(id, 0)) == fewest)

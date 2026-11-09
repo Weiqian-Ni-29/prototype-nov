@@ -50,7 +50,6 @@ func click_at(point: Vector2) -> void:
 		root.push_input(event, true)
 
 func check_battle_targeting() -> void:
-	game.chosen_profession = "guardian"
 	game._start_new()
 	var run = game.run
 	var position = run.data.start
@@ -191,7 +190,7 @@ func execute() -> void:
 	await press("棘背兽 2号")
 	expect(game.selected_target == "enemy_2" and find_button(game.ui, "◆ 棘背兽 2号") != null
 		and find_button(game.ui, "棘背兽 1号") != null, "Same-name enemies can be distinguished and selected")
-	for command in ["普攻", "巡路连射", "防守", "道具", "换人", "自动战斗", "撤退", "0% · 归途号令"]:
+	for command in ["普攻", "重压", "防守", "道具", "换人", "自动战斗", "撤退", "0% · 落石"]:
 		var button = find_button(game.ui, command)
 		expect(button != null and not button.tooltip_text.is_empty(), "Command has hover help: " + command)
 	var auto = find_button(game.ui, "自动战斗")
@@ -207,13 +206,13 @@ func execute() -> void:
 		"Automatic battle and items share the upper-right row beside the enemy lineup")
 	expect(find_button(game.ui, "自动保林") == null and find_button(game.ui, "自动可点火") == null,
 		"Battle has no separate ignition policy button")
-	var skill = find_button(game.ui, "巡路连射")
+	var skill = find_button(game.ui, "重压")
 	expect(skill != null and "8 MP" in skill.tooltip_text and "敌方单体" in skill.tooltip_text
 		and "预计基础伤害" in skill.tooltip_text, "Skill hover help explains cost, target and damage preview")
 	var hero = run.actor("hero")
 	var original_mp = hero.mp
 	hero.mp = 0
-	await press("巡路连射")
+	await press("重压")
 	var action_panel = find_button(game.ui, "普攻").get_parent().get_parent()
 	expect(action_panel.find_children("*", "Label", true, false).any(func(label): return "魔力不足" in label.text),
 		"Invalid commands report the error inside the action panel")
@@ -223,7 +222,7 @@ func execute() -> void:
 	run.actor("hero").energy = 100
 	game._refresh()
 	var next_time = b.next_time.hero
-	await press("100% · 归途号令")
+	await press("100% · 落石")
 	expect(run.actor("hero").energy == 0 and b.next_time.hero == next_time, "Ultimate button spends personal energy and preserves normal action")
 	await finish_presentation()
 	game.battle_timer = 0

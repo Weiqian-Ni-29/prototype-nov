@@ -108,11 +108,10 @@ func day_edges() -> void:
 	expect(r.actor("hero").hp == 0 and r.actor("hero").mp == 0 and r.actor("hero").ap == r.actor("hero").ap_max and r.actor("hero").energy == 71, "Daily AP resets but injury is not cured and energy retained")
 	var pos = r.actor("hero").position
 	r.data.tiles[pos].terrain = "forest"
-	r.data.tiles[pos].burning = true
-	r.data.tiles[pos].fuel = 2
+	var terrain_before = r.data.tiles.duplicate(true)
 	sunny(r, true)
-	r.end_day()
-	expect(not r.data.tiles[pos].burning and r.data.tiles[pos].fuel == 2, "Rain extinguishes before fuel consumption")
+	expect(r.end_day().ok and r.data.weather == "rain" and r.data.tiles == terrain_before,
+		"Rain advances weather with no map state changes")
 	expect(r.heal_skill("eve", "hero").ok and r.actor("hero").hp == 38, "Same-cell medic can actually rescue")
 	expect(r.actor("eve").energy == 0, "Map support never charges ultimate")
 	var neighbor = Hex.neighbors(pos, r.data.tiles)[0]
@@ -130,7 +129,6 @@ func combat_edges() -> void:
 	expect(counts.lorne > counts.enemy_0 and counts.hero > counts.enemy_0, "Fast units act more often over same continuous timeline")
 	var untouched = "0,0"
 	r.data.tiles[untouched].terrain = "forest"
-	r.data.tiles[untouched].burning = true
 	var remote = JSON.stringify(r.data.tiles[untouched])
 	var day = r.data.day
 	while b.enemies.has(b.current):
@@ -145,7 +143,7 @@ func combat_edges() -> void:
 		if b.enemies.has(b.current): b.step_auto()
 		else: b.act("guard")
 	expect(b.swap(outgoing).ok and r.actor("hero").ap == hero_ap, "Previously deployed reserve is not recharged")
-	expect(JSON.stringify(r.data.tiles[untouched]) == remote and r.data.day == day, "Battle leaves remote fire, fuel and date unchanged")
+	expect(JSON.stringify(r.data.tiles[untouched]) == remote and r.data.day == day, "Battle leaves remote tiles and date unchanged")
 	b.retreat()
 	for skill_id in ["ember", "sunfall"]:
 		for condition in ["dry", "rain", "wet"]:
@@ -154,15 +152,16 @@ func combat_edges() -> void:
 			var tile = r.data.tiles[r.actor("hero").position]
 			tile.terrain = "forest"
 			r.data.weather = "rain" if condition == "rain" else "sun"
-			tile.wet_until = int(r.data.day) + 1 if condition == "wet" else 0
 			b = battle(r, ["ember"])
+			if condition == "wet":
+				b._apply_field_effect("wet")
 			r.actor("ember").energy = 100 if skill_id == "sunfall" else 0
 			b.auto_mode = true
 			b.step_auto()
 			expect(b.events.any(func(event): return event.get("skill_id") == skill_id),
 				"Automatic battle casts %s in a %s forest" % [skill_id, condition])
-			expect(tile.burning == (condition == "dry") and tile.fuel == 3,
-				"Automatic %s follows existing ignition and fuel rules in a %s forest" % [skill_id, condition])
+			expect(b.field_view().burning == (condition == "dry") and tile.terrain == "forest",
+				"Automatic %s follows battlefield ignition rules in a %s forest" % [skill_id, condition])
 	r = fresh()
 	ally(r, "grit")
 	b = battle(r, ["hero", "grit"])
@@ -175,21 +174,9 @@ func combat_edges() -> void:
 	b.retreat()
 
 func story_modifiers() -> void:
+	var r = fresh()
+	var story = Story.new(r)
 	for id in Catalog.COMPANIONS:
-		for result in Story.PERSONAL[id]:
-			# E4 is specifically the unjoined injured opponent, never a joined remote result.
-			if result == "E4": continue
-			for injured in [false, true]:
-				var r = fresh()
-				r.actor(id).joined = true
-				r.data.story[id].met = true
-				r.data.story[id].relation = "joined"
-				r.data.story[id].result = result
-				r.actor(id).hp = 0 if injured else 10
-				r.actor("hero").position = r.data.exit
-				r.extract()
-				var s = Story.new(r)
-				var before = JSON.stringify(r.data)
-				var ending = s.character_ending(id)
-				expect(ending.personal == result and Story.PERSONAL[id][result] in ending.text, "Individual result preserved in remote epilogue " + id + result)
-				expect(JSON.stringify(r.data) == before, "Remote modifier is pure " + id + result)
+		r.actor(id).joined = true
+		r.actor(id).hp = 0
+		expect(story.character_ending(id).text.contains(r.actor(id).name), "Injury is reflected in the ending " + id)

@@ -113,11 +113,16 @@ func number(point: Vector3, text: String, color: Color) -> void:
 	tween.tween_property(label,"modulate:a",0.0,0.35).set_delay(0.45)
 	tween.chain().tween_callback(label.queue_free)
 
+const ELEMENT_COLORS = {
+	"normal": Color("e6c98a"), "fire": Color("ef8749"), "water": Color("7fd3e2"),
+	"gravity": Color("aaa4d6"), "ice": Color("b8e8ff"), "lightning": Color("d5b4ff"), "wind": Color("b1f5c5"), "earth": Color("dbad73"),
+}
+
 func projectile(start: Vector3, end: Vector3, kind: String, element: String, duration: float = 0.22) -> void:
 	var root = Node3D.new()
 	add_child(root)
 	root.position = start
-	var color = Color("e6c98a") if element=="normal" else Color("ef8749") if element=="fire" else Color("7fd3e2")
+	var color = ELEMENT_COLORS.get(element, Color.WHITE)
 	if kind in ["bow","crossbow"]:
 		root.add_child(load("res://assets/characters/arrow_crossbow.gltf" if kind=="crossbow" else "res://assets/characters/arrow_bow.gltf").instantiate())
 		root.look_at(end)
@@ -128,6 +133,9 @@ func projectile(start: Vector3, end: Vector3, kind: String, element: String, dur
 	elif element=="water":
 		var drop = Shape._sphere(root,Vector3(0.13,0.27,0.13),color,Vector3.ZERO)
 		drop.rotation.z = -0.4
+	elif element == "earth":
+		var shard = Shape._box(root, Vector3(0.19, 0.29, 0.18), color, Vector3.ZERO)
+		shard.rotation.z = 0.45
 	else:
 		Shape._sphere(root,Vector3.ONE*0.09,color,Vector3.ZERO)
 		flash(start,"magic_01",color,0.6)
@@ -157,11 +165,36 @@ func ultimate_start(skill: String, actor: Vector3, targets: Array) -> void:
 				ring(Vector3(target.x,0.18,target.z),Color("8bdae0"),0.9,0.8)
 				burst(target-Vector3.UP*0.5,"circle_01",Color("93d3dd"),18,0.9)
 
+		"gravity_wave":
+			for target in targets:
+				ring(target - Vector3.UP * 0.5, ELEMENT_COLORS.gravity, 1.4, 0.65)
+				burst(target, "trace_01", ELEMENT_COLORS.gravity, 14, 0.55)
+		"frostfall":
+			for target in targets:
+				ring(target - Vector3.UP * 0.5, ELEMENT_COLORS.ice, 1.0, 0.6)
+				burst(target, "star_01", ELEMENT_COLORS.ice, 16, 0.65)
+		"thunderstorm":
+			for target in targets:
+				projectile(target + Vector3.UP * 3.8, target, "magic", "lightning")
+				flash(target, "magic_01", ELEMENT_COLORS.lightning, 1.35)
+		"tailwind":
+			for target in targets:
+				ring(target - Vector3.UP * 0.5, ELEMENT_COLORS.wind, 1.4, 0.65)
+		"stonewall":
+			for target in targets:
+				ring(target - Vector3.UP * 0.5, ELEMENT_COLORS.earth, 1.25, 0.7)
+
 func impact(event: Dictionary, result: Dictionary, point: Vector3) -> void:
 	if result.get("damage",0)>0:
 		number(point+Vector3.UP*0.7,"−%d" % result.damage,Color("f2d4b4"))
-		flash(point,"slash_01" if event.element=="normal" else "fire_01" if event.element=="fire" else "trace_01",Color("efbc7c") if event.element!="water" else Color("8dd3df"),0.8)
-		burst(point,"spark_01",Color("edc58c"),10,0.4)
+		var color = ELEMENT_COLORS.get(event.element, Color.WHITE)
+		var sprite = {"normal": "slash_01", "fire": "fire_01", "lightning": "magic_01", "wind": "slash_01"}.get(event.element, "trace_01")
+		flash(point, sprite, color, 0.8)
+		burst(point, "star_01" if event.element == "ice" else "spark_01", color, 10, 0.4)
+	if result.get("slow", 0) > 0:
+		number(point + Vector3.UP, "减速 %d" % result.slow, ELEMENT_COLORS.ice)
+	if result.get("haste", 0) > 0:
+		number(point + Vector3.UP * 0.8, "提速", ELEMENT_COLORS.wind)
 	if result.get("healing",0)>0:
 		number(point+Vector3.UP*0.65,"治疗 +%d" % result.healing,Color("b4dc9f"))
 		burst(point,"star_01",Color("b9df9d"),12)

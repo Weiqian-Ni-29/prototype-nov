@@ -70,7 +70,7 @@ func _play_event(event: Dictionary, token: int) -> void:
 	var actor = view.battle_dolls.get(actor_id)
 	var skill = str(event.get("skill_id",""))
 	var results: Array = event.get("results",[])
-	var positive = "heal" in event.get("effects",[]) or "shield" in event.get("effects",[]) or event.kind=="heal"
+	var positive = "heal" in event.get("effects",[]) or "shield" in event.get("effects",[]) or "haste" in event.get("effects",[]) or event.kind=="heal"
 	for result in results:
 		if result.get("healing",0)>0 or result.get("shield_gain",0)>0 or result.get("mp_gain",0)>0: positive = true
 	if event.kind=="guard":
@@ -79,6 +79,16 @@ func _play_event(event: Dictionary, token: int) -> void:
 			actor.play_action("guard",0.55)
 			view.effects.number(_point(actor_id)+Vector3.UP*0.5,"防守",Color("d9d7ae"))
 		await _wait(0.55,token)
+		return
+	if skill == "old_strike":
+		if actor:
+			actor.play_action("ultimate", 0.8)
+		view.sound_cue.emit("impact")
+		if not await _wait(0.35, token):
+			return
+		view.effects.flash(_point("hero"), "slash_01", Color("e14550"), 2.1)
+		view.impact_camera(0.12)
+		await _wait(0.45, token)
 		return
 	if skill=="enemy_charge":
 		view.sound_cue.emit("bow")
@@ -125,7 +135,7 @@ func _play_event(event: Dictionary, token: int) -> void:
 		actor.play_action("rally" if skill=="rally" else "ultimate" if event.kind=="ultimate" else "heal" if positive else "attack" if event.kind=="attack" else "cast",total_duration*0.8)
 	if not await _wait(impact_time-0.22 if not melee else impact_time,token): return
 	if event.kind=="ultimate":
-		view.sound_cue.emit({"rally":"shield","dawn_strike":"impact","arrow_rain":"bow","warmth":"heal","wolf_howl":"howl","sunfall":"fire","tide_shelter":"water"}.get(skill,"cast"))
+		view.sound_cue.emit({"rally":"shield","dawn_strike":"impact","arrow_rain":"bow","warmth":"heal","wolf_howl":"howl","sunfall":"fire","tide_shelter":"water","frostfall":"bow","thunderstorm":"cast","tailwind":"water","stonewall":"shield"}.get(skill,"cast"))
 		var points: Array = []
 		for id in event.get("targets",[]): points.append(_point(str(id)))
 		view.effects.ultimate_start(skill,_point(actor_id),points)
@@ -136,7 +146,10 @@ func _play_event(event: Dictionary, token: int) -> void:
 				view.effects.projectile(start,_point(str(id)),role,str(event.get("element","normal")),0.22)
 			view.sound_cue.emit("bow" if role in ["bow","crossbow"] else str(event.get("element","cast")))
 		elif event.kind=="environment":
-			for id in event.get("targets",[]): view.effects.burst(_point(str(id))-Vector3.UP*0.5,"flame_01",Color("f39d54"),8,0.4)
+			for id in event.get("targets", []):
+				var tint = Color("afa3df") if skill == "river" else Color("f39d54")
+				var sprite = "trace_01" if skill == "river" else "flame_01"
+				view.effects.burst(_point(str(id)) - Vector3.UP * 0.5, sprite, tint, 8, 0.4)
 		if not await _wait(0.22,token): return
 	if melee and actor.rigged:
 		actor.rigged.animator.seek(contact_time,true)

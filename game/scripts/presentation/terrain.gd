@@ -60,10 +60,6 @@ static func tile(parent: Node3D, definition: Dictionary, visual_seed: int) -> No
 			_reeds(props,rng)
 			for i in range(3):
 				var lily = Doll._cylinder(props,0.08,0.08,0.012,Color("7caa79"),Vector3(0.05+i*0.13,0.035,-0.1+i*0.1),9)
-		"scorched":
-			_prop(props,"Tree_Bare_1_A",Vector3(-0.34,0,-0.28),0.78,turn)
-			_prop(props,"Rock_1_A",Vector3(0.4,0,-0.28),0.31,turn)
-			for i in range(3): Doll._cylinder(props,0.035,0.065,0.24,Color("4b4c42"),Vector3(-0.4+i*0.31,0.12,0.25),7)
 	_tile_features(props, definition)
 	return root
 
@@ -140,16 +136,6 @@ static func board_details(root: Node3D, tile: Dictionary, id: String, visual_see
 				_reeds(reeds, rng)
 			if terrain == "swamp" and rng.randf() < 0.58:
 				_board_prop(root, surface, center, "Tree_Bare_1_A", _board_position(rng, 0, 1, 0.4, 0.7), rng.randf_range(0.53, 0.83), rng.randf() * TAU)
-		"scorched":
-			for i in range(5):
-				var point = _board_position(rng, i, 5, 0.36, 0.73)
-				var name = "Tree_Bare_1_A" if i % 2 == 0 else "Rock_1_F"
-				_board_prop(root, surface, center, name, point, rng.randf_range(0.27, 0.73), rng.randf() * TAU)
-	var props = Node3D.new()
-	root.add_child(props)
-	props.position.y = surface.height_at(center)
-	_tile_features(props, tile)
-	_register_occluders(props)
 
 static func _board_position(rng: RandomNumberGenerator, index: int, count: int, low: float, high: float) -> Vector3:
 	var angle = TAU * (float(index) + rng.randf_range(-0.28, 0.28)) / count
@@ -218,8 +204,9 @@ static func _board_paving(root: Node3D, surface: RefCounted, center: Vector3, ed
 	root.add_child(paving)
 
 static func _tile_features(props: Node3D, definition: Dictionary) -> void:
-	if definition.get("burning",false): fire(props)
-	elif definition.get("wet_until",0)>definition.get("current_day",1):
+	if definition.get("burning", false):
+		fire(props)
+	if definition.get("wet", false):
 		_pool(props,Vector3(0,0.012,0.1),Vector3(0.74,1,0.45),Color("739caa"))
 
 static func _land_mesh(variant: int) -> ArrayMesh:
@@ -380,6 +367,6 @@ static func _ground_material(terrain: String) -> ShaderMaterial:
 	var material = ShaderMaterial.new()
 	material.shader = preload("res://scripts/presentation/terrain_surface.gdshader")
 	material.set_shader_parameter("ground_color",Color(str(Catalog.TERRAIN[terrain].color)))
-	material.set_shader_parameter("biome",["plains","forest","mountain","ruins","desert","swamp","scorched"].find(terrain))
+	material.set_shader_parameter("biome",["plains","forest","mountain","ruins","desert","swamp"].find(terrain))
 	ground_materials[terrain] = material
 	return material

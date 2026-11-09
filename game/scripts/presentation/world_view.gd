@@ -247,7 +247,9 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 		for next in Hex.neighbors(id, current_tiles):
 			borders.append(visible_layout.get(next, []))
 		var site: String = t.site if visited else ""
-		var signature = JSON.stringify([visible_layout[id], borders, t.wet_until > run.data.day, site, t.burning])
+		if t.site == "boss":
+			site = "boss" if run.boss_known() else ""
+		var signature = JSON.stringify([visible_layout[id], borders, site])
 		if tile_signatures.get(id, "") != signature:
 			dirty_details[Board.chunk_for(id)] = true
 			if tile_nodes.has(id):
@@ -256,9 +258,7 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 			var node = Node3D.new()
 			map_root.add_child(node)
 			node.position = Hex.world(id)
-			var detail = t.duplicate()
-			detail.current_day = run.data.day
-			Terrain.board_details(node, detail, id, visual_seed, board_surface)
+			Terrain.board_details(node, t, id, visual_seed, board_surface)
 			if not site.is_empty():
 				var height = board_surface.height_at(node.position)
 				_label(node, _site_name(site), Vector3(0, height + 1.03, 0), Color("eee0b8"), 0.0041)
@@ -299,14 +299,8 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 		var count = int(counts.get(a.position, 0))
 		counts[a.position] = count + 1
 		var total = int(visible_counts[a.position])
-		model.scale = Vector3.ONE * (0.19 if total > 4 else 0.22 if total > 1 else 0.24)
-		var offset = Vector3.ZERO
-		if total>1:
-			var ring_count = total-1 if total==7 else total
-			var index = count-1 if total==7 else count
-			if index>=0:
-				var angle = TAU*float(index)/ring_count
-				offset += Vector3(cos(angle),0,sin(angle))*(0.52 if total>3 else 0.34)
+		model.scale = Vector3.ONE * (0.13 if total > 7 else 0.19 if total > 4 else 0.22 if total > 1 else 0.24)
+		var offset = _actor_offset(count, total)
 		var point = Hex.world(a.position) + offset
 		point.y = board_surface.height_at(point) + 0.025
 		if model.has_meta("cell") and model.get_meta("cell") != a.position:
@@ -729,21 +723,16 @@ func begin_battle(run: RefCounted, combat: RefCounted) -> void:
 	battle_stage = null
 	battle_dolls.clear()
 	battle_root.visible = true
-	_draw_battle_stage(run.data.tiles[combat.position],run.data.day,combat.position)
+	_draw_battle_stage(combat.field_view(), combat.position)
 	_update_camera()
 	refresh_battle(run, combat)
 
-func _draw_battle_stage(definition: Dictionary, day: int, position: String) -> void:
-	environment.background_color = {"plains":Color("526757"),"forest":Color("354b42"),"mountain":Color("657078"),"ruins":Color("64695b"),"desert":Color("9b8965"),"swamp":Color("405c60"),"scorched":Color("4f5652")}.get(str(definition.terrain),Color("526757"))
+func _draw_battle_stage(definition: Dictionary, position: String) -> void:
+	environment.background_color = {"plains":Color("526757"),"forest":Color("354b42"),"mountain":Color("657078"),"ruins":Color("64695b"),"desert":Color("9b8965"),"swamp":Color("405c60")}.get(str(definition.terrain),Color("526757"))
 	if is_instance_valid(battle_stage): battle_stage.free()
 	battle_stage = Node3D.new()
 	battle_root.add_child(battle_stage)
 	var tile = definition.duplicate(true)
-	tile.current_day = day
-	tile.height = 0.0
-	tile.enemies = []
-	tile.npc = ""
-	tile.quantity = 0
 	tile.ground_only = true
 	var stage = Terrain.tile(battle_stage, tile, hash(position))
 	stage.scale = Vector3(6.5, 1.0, 4.5)
@@ -753,6 +742,8 @@ func _draw_battle_stage(definition: Dictionary, day: int, position: String) -> v
 		var backdrop = Terrain.tile(battle_stage, tile, i + 31)
 		backdrop.position = Vector3(-5 + i * 2.4, -0.2, -4.0)
 		backdrop.scale = Vector3(1.4, 1.7, 1.4)
+	if tile.get("river", false):
+		_draw_river()
 	if tile.burning:
 		var fire_ring = Node3D.new()
 		battle_stage.add_child(fire_ring)
@@ -760,11 +751,29 @@ func _draw_battle_stage(definition: Dictionary, day: int, position: String) -> v
 		Terrain.fire(fire_ring)
 	battle_root.set_meta("environment_signature", _battle_signature(tile))
 
-func refresh_battle(run: RefCounted, combat: RefCounted) -> void:
-	var tile = run.data.tiles[combat.position].duplicate(true)
-	tile.current_day = run.data.day
+func _draw_river() -> void:
+	var ribbon = SurfaceTool.new()
+	ribbon.begin(Mesh.PRIMITIVE_TRIANGLE_STRIP)
+	for i in range(17):
+		var x = -5.1 + i * 0.60
+		var center = 1.25 + sin(x * 0.7) * 0.66
+		ribbon.set_color(Color("50466c"))
+		ribbon.add_vertex(Vector3(x, 0.09, center - 0.62))
+		ribbon.set_color(Color("24273e"))
+		ribbon.add_vertex(Vector3(x, 0.09, center + 0.62))
+	var surface = MeshInstance3D.new()
+	surface.mesh = ribbon.commit()
+	var material = StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	material.vertex_color_use_as_albedo = true
+	surface.material_override = material
+	battle_stage.add_child(surface)
+
+func refresh_battle(_run: RefCounted, combat: RefCounted) -> void:
+	var tile = combat.field_view()
 	if not is_animating() and battle_root.get_meta("environment_signature", "") != _battle_signature(tile):
-		_draw_battle_stage(tile,run.data.day,combat.position)
+		_draw_battle_stage(tile, combat.position)
 	var ids = combat.active.duplicate()
 	ids.append_array(combat.enemies.keys())
 	if is_animating():
@@ -828,18 +837,15 @@ func sync_battle_states() -> void:
 	refresh_battle(battle_run,battle_combat)
 	for id in battle_dolls:
 		battle_dolls[id].set_down(battle_combat.unit(id).hp<=0)
-	var tile = battle_run.data.tiles[battle_combat.position].duplicate(true)
-	tile.current_day = battle_run.data.day
-	if battle_root.get_meta("environment_signature", "") != _battle_signature(tile):
-		_draw_battle_stage(tile,battle_run.data.day,battle_combat.position)
+	_update_battle_stage(battle_combat.field_view())
 
 func sync_event_environment(event: Dictionary) -> void:
-	if not event.has("environment_after") or battle_run==null: return
-	var tile = battle_run.data.tiles[battle_combat.position].duplicate(true)
-	tile.merge(event.environment_after,true)
-	tile.current_day = battle_run.data.day
-	if battle_root.get_meta("environment_signature", "") != _battle_signature(tile):
-		_draw_battle_stage(tile,battle_run.data.day,battle_combat.position)
+	if event.has("environment_after") and battle_combat != null:
+		_update_battle_stage(event.environment_after)
+
+func _update_battle_stage(field: Dictionary) -> void:
+	if battle_root.get_meta("environment_signature", "") != _battle_signature(field):
+		_draw_battle_stage(field, battle_combat.position)
 
 func end_battle() -> void:
 	presenter.cancel()
@@ -862,10 +868,28 @@ func impact_camera(strength: float) -> void:
 	camera_impulse = maxf(camera_impulse,strength)
 
 func _battle_signature(tile: Dictionary) -> String:
-	return "%s:%s:%s" % [tile.terrain, tile.burning, int(tile.wet_until) > int(tile.current_day)]
+	return "%s:%s:%s:%s" % [tile.terrain, tile.burning, tile.wet, tile.get("river", false)]
+
+static func _actor_offset(index: int, total: int) -> Vector3:
+	if total <= 1 or (total >= 7 and index == 0):
+		return Vector3.ZERO
+	var radius = 0.52 if total > 3 else 0.34
+	var slots = total - 1 if total >= 7 else total
+	var slot = index - 1 if total >= 7 else index
+	if total > 7:
+		var inner = mini(8, ceili((total - 1) / 3.0))
+		if slot < inner:
+			radius = 0.36
+			slots = inner
+		else:
+			radius = 0.74
+			slot -= inner
+			slots -= inner
+	var angle = TAU * float(slot) / slots
+	return Vector3(cos(angle), 0, sin(angle)) * radius
 
 static func _site_name(site: String) -> String:
-	return {"start": "断桥废棚", "exit": "归航站", "inn": "白栎旧驿站", "home": "林边人家", "record": "旧调度柜", "sign": "山路旧牌", "forest": "林缘捕网", "herb": "药箱树荫", "track": "旧兽径营地", "clear": "清障营地", "water": "水文台"}.get(site, "路途")
+	return {"start": "村庄", "boss": "战神卡德兰"}.get(site, "路途")
 
 static func _label(parent: Node3D, text: String, point: Vector3, color: Color, pixel_size: float = 0.006) -> void:
 	var label = Label3D.new()

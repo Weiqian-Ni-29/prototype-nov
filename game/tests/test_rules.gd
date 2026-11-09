@@ -42,13 +42,13 @@ func execute() -> void:
 		var generated = Hex.generate(seed_value)
 		var tiles = generated.tiles
 		expect(tiles.size() == 217, "217 cells seed %d" % seed_value)
-		expect(Hex.distance(Hex.coord(generated.start), Hex.coord(generated.exit)) >= 12, "Distant extraction seed %d" % seed_value)
-		var route = Hex.path(tiles, generated.start, generated.exit, true)
-		expect(not route.is_empty(), "Safe extraction route seed %d" % seed_value)
+		expect(Hex.distance(Hex.coord(generated.start), Hex.coord(generated.boss)) >= 11, "Distant boss seed %d" % seed_value)
+		var route = Hex.path(tiles, generated.start, generated.boss, true)
+		expect(not route.is_empty(), "Safe boss approach seed %d" % seed_value)
 		var route_cost = 0
 		for k in route.slice(1):
 			route_cost += int(Catalog.TERRAIN[tiles[k].terrain].cost)
-		expect(route_cost >= 12, "Extraction route cost seed %d" % seed_value)
+		expect(route_cost >= 11, "Boss route cost seed %d" % seed_value)
 		var counts = {}
 		var terrains = {}
 		var lake: Array[String] = []
@@ -62,8 +62,8 @@ func execute() -> void:
 			if tiles[k].npc != "":
 				var id = tiles[k].npc
 				counts[id] = int(counts.get(id, 0)) + 1
-				expect(tiles[k].terrain == Catalog.COMPANIONS[id].terrain, "NPC terrain " + id)
-				expect(not Hex.path(tiles, generated.start, k, true).is_empty(), "NPC safely reachable " + id)
+				var approachable = not Hex.path(tiles, generated.start, k, true).is_empty() if tiles[k].enemies.is_empty() else Hex.neighbors(k, tiles).any(func(cell): return not Hex.path(tiles, generated.start, cell, true).is_empty())
+				expect(approachable, "NPC location has a reachable approach " + id)
 				if id == "lorne":
 					early_locations[k] = true
 					expect(Hex.path(tiles, generated.start, k, true).size() <= 4, "Early companion <=3 moves")
@@ -129,12 +129,11 @@ func execute() -> void:
 	for i in range(14):
 		r.end_day()
 	expect(r.data.day > 12 and r.data.status == "exploring", "No deadline")
-	r.actor("hero").position = r.data.exit
-	expect(r.data.status == "exploring", "Arriving at extraction never ends run")
-	expect(r.extraction_preview().absent.has("lorne"), "Remote member in extraction warning")
-	expect(r.extract().ok and r.data.status == "extracted", "Explicit extraction")
+	r.actor("hero").position = r.data.boss
+	expect(r.data.status == "exploring" and not r.boss_known(), "Arriving early does not reveal the boss")
 	test_combat()
 	test_environment()
+	test_elemental_heroes()
 	print("RULE TESTS: %d checks, %d failures; %d map seeds" % [checks, failures.size(), seed_count])
 	for error in failures:
 		printerr(error)
@@ -153,7 +152,7 @@ func test_combat() -> void:
 	expect(r.actor("hero").energy == 0 and b.next_time.hero == original_time, "Ultimate clears energy but preserves normal action")
 	if b.outcome == "":
 		var mp_before = r.actor("hero").mp
-		b.act("trail_shot", "enemy_0")
+		b.act("gravity", "enemy_0")
 		expect(r.actor("hero").mp == mp_before - 8, "Skill MP charge")
 		expect(r.actor("hero").energy == 30, "Personal attack charge")
 	r = fresh()
@@ -210,28 +209,114 @@ func test_combat() -> void:
 
 func test_environment() -> void:
 	var r = fresh()
-	var source = "0,0"
-	var neighbor = "1,0"
-	var further = "2,0"
-	for k in [source, neighbor, further]:
-		r.data.tiles[k].terrain = "forest"
-		r.data.tiles[k].burning = false
-		r.data.tiles[k].wet_until = 0
-	expect(r.apply_environment(source, "ignite"), "Ignite dry forest")
-	var fuel = r.data.tiles[source].fuel
-	# Choose a deterministic sunny next day to inspect the propagation boundary.
-	for seed_value in range(100):
-		r.rng.seed = seed_value
-		var probe = RandomNumberGenerator.new()
-		probe.state = r.rng.state
-		if probe.randf() >= 0.28:
-			break
-	r.end_day()
-	expect(r.data.tiles[source].fuel == fuel - 1, "Fuel consumed once per day")
-	expect(r.data.tiles[neighbor].burning, "Six-neighbor fire propagation")
-	expect(not r.data.tiles[further].burning, "New ignition does not chain in same day")
-	expect(r.apply_environment(neighbor, "wet"), "Water extinguishes current tile")
-	expect(not r.data.tiles[neighbor].burning, "Extinguished tile persists")
-	var before = r.data.tiles[neighbor].wet_until
-	expect(not r.apply_environment(neighbor, "ignite"), "Wet tile cannot ignite")
-	expect(r.data.tiles[neighbor].wet_until == before, "Rejected environment action has no mutation")
+	var position = r.data.start
+	r.data.weather = "sun"
+	r.data.tiles[position].terrain = "forest"
+	r.actor("hero").skill = "ember"
+	fixture_ally(r, "tide", position)
+	var b = encounter(r, ["lamp_boss"], ["hero", "tide"])
+	var tiles_before = r.data.tiles.duplicate(true)
+	b.current = "hero"
+	expect(b.act("ember", "enemy_0").ok and b.field_view().burning, "Fire skill ignites the current forest battle")
+	expect(is_equal_approx(b.environment_multiplier("fire", "normal"), 1.1), "Burning boosts fire skills")
+	b.current = "tide"
+	expect(b.act("torrent", "enemy_0").ok and b.field_view().wet and b.field_view().burning,
+		"Water wets the battlefield without extinguishing an active fire")
+	expect(is_equal_approx(b.environment_multiplier("fire", "normal"), 1.1 * 0.8), "Wet field weakens fire skills")
+	var ally_hp: int = r.actor("hero").hp
+	var enemy_hp: int = b.unit("enemy_0").hp
+	b.clock = b.fire_tick
+	b._settle_fire()
+	expect(r.actor("hero").hp == ally_hp - ceili(r.actor("hero").hp_max * 0.08)
+		and b.unit("enemy_0").hp == enemy_hp - ceili(b.unit("enemy_0").hp_max * 0.08),
+		"Fire still ticks on both sides of the wet battlefield")
+	var checkpoint = Run.new()
+	var loaded = checkpoint.load_game(r.save_path)
+	expect(loaded.ok, "The battle checkpoint still loads: " + str(loaded))
+	var saved_tile: Dictionary = checkpoint.data.get("tiles", {}).get(position, {})
+	expect(saved_tile.get("terrain") == "forest" and not saved_tile.has("burning") and not saved_tile.has("wet_until"),
+		"The battle checkpoint has no field effects")
+	expect(b.retreat().ok and r.data.tiles == tiles_before, "Retreat leaves the entire map intact")
+	expect(b.begin(r, {"position": position, "origin": position, "movers": [], "npc": "", "ambush": false}, ["hero", "tide"]).ok
+		and not b.field_view().burning and not b.field_view().wet, "A rematch starts with a fresh battlefield")
+	b.current = "hero"
+	expect(b.act("ember", "enemy_0").ok and b.field_view().burning, "The forest can ignite again within a new battle")
+	b.unit("enemy_0").hp = 0
+	b.check_end()
+	var cleared_tile = tiles_before[position].duplicate(true)
+	cleared_tile.enemies = []
+	tiles_before[position] = cleared_tile
+	expect(b.outcome == "victory" and r.data.tiles == tiles_before, "Victory only clears the encounter on the map")
+	var hp_after: int = r.actor("hero").hp
+	expect(r.end_day().ok and r.data.tiles == tiles_before and r.actor("hero").hp == hp_after,
+		"No post-battle fire damage, spreading or terrain changes during day settlement")
+
+	var legacy = r.data.tiles[position]
+	legacy.base_terrain = "forest"
+	legacy.terrain = "scorched"
+	legacy.burning = false
+	legacy.fuel = 0
+	legacy.wet_until = r.data.day + 1
+	r.data.flags.player_ignitions = {position: "hero"}
+	r.data.knowledge.hero.ignitions = [position]
+	expect(r.save_game().ok and checkpoint.load_game(r.save_path).ok, "Old save with a burned forest still loads")
+	var restored = checkpoint.data.tiles[position]
+	expect(restored.terrain == "forest" and not restored.has("burning") and not restored.has("fuel") and not restored.has("wet_until"),
+		"Loading an old save restores the terrain and strips map fire state")
+	expect(not checkpoint.data.flags.has("player_ignitions") and not checkpoint.data.knowledge.hero.has("ignitions"),
+		"Old map ignition records are removed")
+
+func test_elemental_heroes() -> void:
+	for profession in ["frost_archer", "storm_caller", "wind_runner", "stone_guard"]:
+		var r = fresh()
+		var position = r.data.start
+		fixture_ally(r, profession, position)
+		var hero = r.actor(profession)
+		var definition = Catalog.COMPANIONS[profession]
+		expect(hero.name == definition.name and hero.element == definition.element, "Selected hero joins the expedition with the right element")
+		fixture_ally(r, "tide", hero.position)
+		var b = encounter(r, ["lamp_boss", "furnace_elite"], [profession, "tide"])
+		var initial_damage = b.damage_preview(profession, "enemy_0", hero.skill)
+		b.current = "tide"
+		expect(b.act("torrent", "enemy_1").ok and b.wet, "Water skill supplies the battlefield interaction")
+		b.current = profession
+		var mp: int = hero.mp
+		var initial_hp: int = b.unit("enemy_0").hp
+		var second_hp: int = b.unit("enemy_1").hp
+		expect(b.act(hero.skill, "enemy_0").ok and hero.mp == mp - Catalog.SKILLS[hero.skill].mp,
+			"Hero's primary skill is usable and pays its magic cost: " + profession)
+		match hero.element:
+			"ice":
+				expect(b.unit("enemy_0").slow == 3 and b.unit("enemy_1").slow == 0, "Wet ice attack slows its chosen target")
+			"lightning":
+				expect(initial_hp - b.unit("enemy_0").hp > initial_damage, "Wet lightning actually deals bonus damage")
+			"wind":
+				expect(b.unit("enemy_0").hp < initial_hp and b.unit("enemy_1").hp < second_hp, "Windblade strikes every enemy")
+			"earth":
+				expect(b.unit("enemy_0").hp < initial_hp and b.unit("enemy_1").hp == second_hp, "Stone spike strikes one enemy")
+		hero.energy = 100
+		expect(b.request_ultimate(profession).ok, "Hero can queue a fully charged ultimate: " + profession)
+		b.resolve_queued()
+		expect(hero.energy == 0 and b.events[-1].skill_id == hero.ultimate, "Ultimate releases through the normal queue")
+		match hero.element:
+			"ice":
+				expect(b.unit("enemy_1").slow == 3, "Ice ultimate slows all surviving enemies")
+			"lightning":
+				expect(b.unit("enemy_1").hp < second_hp, "Thunderstorm reaches the second enemy")
+			"wind":
+				expect(b.haste_turns.get(profession) == 2 and b.haste_turns.get("tide") == 2, "Wind ultimate hastens all active allies")
+				var interval: float = 1000.0 / r.stat(profession, "speed")
+				for remaining in [1, 0]:
+					b.current = profession
+					var action_clock: float = b.clock
+					expect(b.act("guard").ok and is_equal_approx(b.next_time[profession], action_clock + interval / 1.25)
+						and b.haste_turns.get(profession, 0) == remaining, "Haste shortens exactly two scheduled intervals")
+				b.current = profession
+				var action_clock: float = b.clock
+				expect(b.act("guard").ok and is_equal_approx(b.next_time[profession], action_clock + interval), "Haste expires")
+			"earth":
+				expect(hero.shield == 42 and r.actor("tide").shield == 42, "Stonewall shields all active allies")
+		expect(b.retreat().ok, "Hero leaves the encounter")
+		var loaded = fresh(1)
+		expect(loaded.load_game(r.save_path).ok and loaded.actor(profession).joined
+			and loaded.actor(profession).name == definition.name, "Elemental hero survives a normal save and continue")

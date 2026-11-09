@@ -9,8 +9,8 @@ func execute() -> void:
 	root.add_child(game)
 	await process_frame
 	game.run.save_path = "user://sample-performance.json"
-	game.chosen_profession = "guardian"
 	game._start_new()
+	game.run.actor("hero").skill = "guard_all"
 	game.set_process(false)
 	var run = game.run
 	var p = run.actor("hero").position

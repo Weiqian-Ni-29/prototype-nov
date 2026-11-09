@@ -60,16 +60,21 @@ func check_map_squad_selection(game: Node) -> void:
 		"Clicking a distant squad selects it without previewing a move")
 	game.view.focus_cell(start)
 	click_map_cell(game, start)
-	var focus: Vector3 = game.view.focus_point
-	click_map_cell(game, adjacent)
-	expect(game.selected_id == "lorne" and game.selected_cell == adjacent and game.moving_ids == ["lorne"]
-		and game.view.focus_point == focus and not game.move_preview.visible and JSON.stringify(run.data) == before,
-		"One click switches to an adjacent squad without panning or spending effort")
-	click_map_cell(game, start)
-	click_map_cell(game, start)
 	click_map_cell(game, adjacent)
 	expect(game.selected_id == "hero" and game.move_preview.visible and JSON.stringify(run.data) == before,
-		"Clicking the current squad first previews movement onto an ally's hex")
+		"Clicking an adjacent occupied tile previews moving without spending effort")
+	await process_frame
+	var marker = game.view.squad_markers.markers.filter(func(entry): return entry.leader == "lorne")
+	expect(not marker.is_empty(), "Adjacent squad has an arrow")
+	if not marker.is_empty():
+		pointer_button(MOUSE_BUTTON_LEFT, true, marker[0].point)
+		pointer_button(MOUSE_BUTTON_LEFT, false, marker[0].point)
+	expect(game.selected_id == "lorne" and game.selected_cell == adjacent and game.moving_ids == ["lorne"]
+		and not game.move_preview.visible and JSON.stringify(run.data) == before, "Clicking the squad arrow selects it without spending effort")
+	game.view.focus_cell(start)
+	game._select_actor("hero")
+	click_map_cell(game, adjacent)
+	expect(game.move_preview.visible, "Movement can still be previewed after selecting a squad")
 	var hero_ap: int = hero.ap
 	var ally_ap: int = lorne.ap
 	var cost: int = run.move_cost("hero", adjacent)
@@ -201,7 +206,8 @@ func execute() -> void:
 	game.set_process(false)
 	var run = game.run
 	var start = run.actor("hero").position
-	var next = Hex.neighbors(start,run.data.tiles)[0]
+	var safe_neighbors = Hex.neighbors(start, run.data.tiles).filter(func(cell): return Hex.is_land(run.data.tiles, cell) and run.data.tiles[cell].npc.is_empty())
+	var next = safe_neighbors[0]
 	await process_frame
 	await check_camera_drag(game, start, next)
 	var doll = game.view.dolls.hero
@@ -231,7 +237,9 @@ func execute() -> void:
 	var ids = run.joined_ids()
 	for i in range(ids.size()):
 		for j in range(i+1,ids.size()):
-			expect(game.view.dolls[ids[i]].position.distance_to(game.view.dolls[ids[j]].position)>0.45,"Crowded cell separates actor bases")
+			var first = game.view.dolls[ids[i]]
+			var second = game.view.dolls[ids[j]]
+			expect(first.position.distance_to(second.position) > (first.scale.x + second.scale.x) * 0.54, "Crowded cell separates actor bases")
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("user://map-seven-actors.png")
 	await check_map_squad_selection(game)

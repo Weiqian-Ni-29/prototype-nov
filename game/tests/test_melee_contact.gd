@@ -32,9 +32,9 @@ func execute() -> void:
 	game = Main.instantiate()
 	root.add_child(game)
 	await process_frame
-	game.chosen_profession = "guardian"
 	game.run.save_path = "user://test-melee-contact.json"
 	game._start_new()
+	game.run.actor("hero").skill = "guard_all"
 	game.set_process(false)
 	var run = game.run
 	var p = run.actor("hero").position

@@ -72,22 +72,6 @@ func check_effects(run: RefCounted) -> void:
 	expect(later.shield == 0, "A returning combatant does not regain the badge shield")
 	combat.retreat()
 
-func check_fixed_rewards(run: RefCounted) -> void:
-	run.new_run(20261104, "guardian")
-	var story = Story.new(run)
-	var hero = run.actor("hero")
-	hero.position = run.actor("eve").position
-	run.reveal(hero.position)
-	hero.inventory["Q-R"] = 1
-	expect(story.choose("hero", "eve", "medicine_report").ok and run.has_relic("life_seed") and run.relic_intro().npc == "eve", "Returning the physical receipt grants Eve's fixed reward and intro")
-	run.data.relic_intros.clear()
-	hero.position = run.actor("tide").position
-	run.reveal(hero.position)
-	expect(story.choose("hero", "tide", "water_observe").ok and story.choose("hero", "tide", "repair_gauge").ok
-		and hero.inventory.get("Q-GAUGE") == 1, "Repair requires observing the real water gauge location")
-	expect(story.choose("hero", "tide", "return_gauge").ok and run.has_relic("rain_bell") and run.relic_intro().npc == "tide"
-		and not story.choose("hero", "tide", "return_gauge").ok, "Returning the gauge grants Tide's fixed reward once")
-
 func check_battle_drop(run: RefCounted) -> void:
 	var seed_value = 1
 	while roll(seed_value, "battle:0,0:") >= 0.20:
@@ -186,10 +170,10 @@ func check_exploration() -> void:
 	await click_story()
 	expect(run.relic_intro().is_empty() and game.view.fog_reveals.get_child_count() > 0
 		and not run.investigate_relic("hero").ok, "Closing the story starts the fog dissolve and prevents a second investigation")
-	game._inventory_dialog("hero", 3)
+	game._inventory_dialog("hero", 2)
 	var tabs = game.modal_layer.find_child("InventoryTabs", true, false)
-	expect(tabs != null and tabs.get_tab_count() == 4 and tabs.get_tab_title(3) == "遗器"
-		and tabs.get_child(3).find_children("*", "Label", true, false).any(func(label): return "望远镜 · 持续生效" in label.text), "Backpack exposes the team relic in its own tab")
+	expect(tabs != null and tabs.get_tab_count() == 3 and tabs.get_tab_title(2) == "遗器"
+		and tabs.get_child(2).find_children("*", "Label", true, false).any(func(label): return "望远镜 · 持续生效" in label.text), "Backpack exposes the team relic in its own tab")
 	game.queue_free()
 
 func execute() -> void:
@@ -197,7 +181,6 @@ func execute() -> void:
 	run.save_path = "user://test-relic-domain.json"
 	expect(Relics.DATA.size() == 10, "Ten distinct relics are defined")
 	check_effects(run)
-	check_fixed_rewards(run)
 	check_battle_drop(run)
 	await check_victory_intro(run.save_path)
 	await check_exploration()
