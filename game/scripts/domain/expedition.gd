@@ -837,7 +837,7 @@ func _validate_save(loaded: Dictionary) -> String:
 		if id != "hero":
 			if not loaded.story.has(id) or not loaded.story[id] is Dictionary or not loaded.story[id].has_all(["met", "relation", "result"]):
 				return "故事状态缺失"
-			if loaded.story[id].has("personal_choice") and loaded.story[id].personal_choice not in ["personal_a", "personal_b"]:
+			if loaded.story[id].has("personal_choice") and loaded.story[id].personal_choice not in ["personal_a", "personal_b", "war_a", "war_b"]:
 				return "个人抉择记录无效"
 	if loaded.has("squad_colors") or loaded.has("next_squad_id"):
 		if not loaded.get("squad_colors") is Dictionary or not _whole_number(loaded.get("next_squad_id")) or loaded.next_squad_id < 0:

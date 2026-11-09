@@ -3,6 +3,7 @@ const Run = preload("res://scripts/domain/expedition.gd")
 const Combat = preload("res://scripts/domain/battle.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
+const LegacyOutcomes = preload("res://scripts/domain/legacy_companion_outcomes.gd")
 const Opening = preload("res://scripts/domain/opening_story.gd")
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
 var checks = 0
@@ -161,6 +162,16 @@ func check_personal_boundaries() -> void:
 		file.store_string(JSON.stringify(corrupt))
 		file.close()
 		expect(not loaded.load_game(run.save_path).ok and loaded.data == before, "Invalid personal record cannot replace current run: " + str(invalid))
+	for old_choice in ["personal_a", "personal_b"]:
+		run.data.story.lorne.personal_choice = old_choice
+		expect(run.save_game().ok and loaded.load_game(run.save_path).ok, "Load completed choice from the first Veylodan campaign")
+		var legacy_story = Story.new(loaded)
+		var outcome = LegacyOutcomes.OUTCOMES.lorne[old_choice]
+		var recall = legacy_story.personal_quest("hero", "lorne")
+		expect(recall.ok and recall.title == LegacyOutcomes.OUTCOMES.lorne.title and outcome.response in recall.text,
+			"Old choice keeps its original title and response")
+		expect(not legacy_story.choose("hero", "lorne", "personal_a").ok and outcome.ending in legacy_story.character_ending("lorne").text,
+			"Old choice cannot be replaced and keeps its original ending")
 
 func check_hero_only_mystery() -> void:
 	for id in Catalog.COMPANIONS:
