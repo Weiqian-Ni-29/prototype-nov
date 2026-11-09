@@ -366,6 +366,17 @@ func check_personal_dialogue() -> void:
 	await read_to_choices()
 	await click("和洛恩交谈")
 	expect(find_button(game.modal_layer, "邀请一起上路") == null, "Recruitment waits for the encounter introduction")
+	var introduction = game.modal_layer.get_node("StoryScreen")
+	await click("历史对话")
+	await story_key(KEY_ESCAPE)
+	expect(not game.modal_layer.has_node("StoryHistory") and game.modal_layer.get_node_or_null("StoryScreen") == introduction,
+		"Escape first closes history and returns to the same conversation")
+	await story_key(KEY_ESCAPE, true)
+	expect(game.modal_layer.has_node("StoryScreen"), "Holding Escape cannot close a second layer")
+	await story_key(KEY_ESCAPE)
+	expect(game.modal_layer.get_child_count() == 0 and game.ui.visible and game.view.is_processing_unhandled_input(),
+		"Escape activates End Conversation and restores map input")
+	game._begin_dialogue("lorne")
 	await read_to_choices()
 	await click("邀请一起上路")
 	expect(person.joined and "lorne" in game.moving_ids, "Actual recruitment checks the companion into the squad")
@@ -392,6 +403,10 @@ func check_personal_dialogue() -> void:
 	expect(not str(choice).is_empty() and saved_run().get("story", {}).get("lorne", {}).get("personal_choice", "") == choice,
 		"Personal choice is automatically saved without assuming its encoding")
 	await click("结束交谈")
+	game._personal_quest()
+	await read_to_choices()
+	await story_key(KEY_ESCAPE)
+	expect(game.modal_layer.get_child_count() == 0, "Escape also works when End Conversation is a dialogue choice")
 	await click("旅途手记")
 	expect(contains_text(game.modal_layer, "洛恩 · 已同行 · 已作出个人抉择"), "Journal indicates the companion's personal decision")
 	await click("合上手记")
@@ -745,11 +760,16 @@ func execute() -> void:
 	root.add_child(game)
 	await process_frame
 	game.set_process(false)
-	game.run.save_path = "user://veylodan-ui.json"
+	var test_save = "user://veylodan-ui-%d.json" % OS.get_process_id()
+	game.run.save_path = test_save
 	game.chosen_seed = "20261104"
+	game._refresh()
+	expect(find_button(game.ui, "继续上次远征") == null, "A main menu with no save does not show a resume button")
 	await press("开始新远征")
 	expect(dialogue_contains("维洛丹") and not dialogue_contains("伊文洛"), "Opening introduces only the public gods")
 	expect(story_owns_focus(), "Opening retains the story interface and focus")
+	await story_key(KEY_ESCAPE)
+	expect(dialogue_contains("维洛丹"), "Escape leaves an opening scene without an End Conversation action in place")
 	await advance_until_text("你醒了")
 	expect(dialogue_contains("你醒了"), "Reading reaches the hero waking without assuming a page count")
 	await click("历史对话")
@@ -839,4 +859,7 @@ func execute() -> void:
 	print("UI INTEGRATION: %d checks, %d failures" % [checks, failures.size()])
 	game.queue_free()
 	await process_frame
+	for suffix in ["", ".bak", ".tmp"]:
+		if FileAccess.file_exists(test_save + suffix):
+			DirAccess.remove_absolute(test_save + suffix)
 	quit(0 if failures.is_empty() else 1)

@@ -579,8 +579,11 @@ func execute() -> void:
 	game = Main.instantiate()
 	root.add_child(game)
 	await process_frame
-	game.run.save_path = "user://visual-test-run.json"
+	var test_save = "user://visual-test-run-%d.json" % OS.get_process_id()
+	game.run.save_path = test_save
 	game.chosen_seed = "20261104"
+	var menu_state = game.screen_state
+	game._refresh()
 	await create_timer(1.0).timeout
 	await capture("01-menu")
 	game._begin_opening_story()
@@ -596,6 +599,16 @@ func execute() -> void:
 	await capture("story-dialogue-history")
 	await click_story_button("关闭")
 	await finish_linear_story()
+	game._show_opening(menu_state)
+	await capture("01-menu-with-save")
+	var resume: Button
+	for button in game.ui.find_children("*", "Button", true, false):
+		if button.text == "继续上次远征":
+			resume = button
+			break
+	expect(resume != null and not resume.disabled, "A saved expedition has an enabled resume button")
+	if resume != null:
+		await click_at(resume.get_global_rect().get_center())
 	await create_timer(0.5).timeout
 	await capture("02-exploration")
 	var arrival_run = game.run
@@ -704,7 +717,12 @@ func execute() -> void:
 	await capture("story-eve-first-meeting")
 	await await_story_choices()
 	await capture("story-eve-decision")
-	game._close_modal()
+	for pressed in [true, false]:
+		var event = InputEventKey.new()
+		event.keycode = KEY_ESCAPE
+		event.pressed = pressed
+		root.push_input(event, true)
+	expect(game.modal_layer.get_child_count() == 0 and game.view.visible, "Escape returns from a conversation to the map")
 	# Instantiate every remaining enemy art family and verify its skeleton in the tree.
 	for id in Catalog.ENEMIES:
 		var definition = Catalog.ENEMIES[id].duplicate(true)
@@ -717,5 +735,8 @@ func execute() -> void:
 		doll.queue_free()
 	inspect_character_poses()
 	await capture_finale()
+	for suffix in ["", ".bak", ".tmp"]:
+		if FileAccess.file_exists(test_save + suffix):
+			DirAccess.remove_absolute(test_save + suffix)
 	print("VISUAL FIXTURES: %d checks; failed=%s; captures=%s" % [checks, failed, ProjectSettings.globalize_path(destination)])
 	quit(1 if failed else 0)

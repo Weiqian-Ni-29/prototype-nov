@@ -138,6 +138,19 @@ func _button(parent: Node, text: String, callback: Callable, disabled: bool = fa
 	parent.add_child(button)
 	return button
 
+func _shortcut_input(event: InputEvent) -> void:
+	if not event.is_action_pressed("ui_cancel"):
+		return
+	var layer = modal_layer.get_node_or_null("StoryHistory")
+	if layer == null:
+		layer = modal_layer.get_node_or_null("StoryScreen")
+	if layer == null:
+		return
+	var close = layer.find_child("StoryCancel", true, false) as Button
+	if close != null:
+		get_viewport().set_input_as_handled()
+		close.pressed.emit()
+
 func _hp_bar(parent: Node, hp: float, maximum: float, enemy: bool = false) -> void:
 	var bar = ProgressBar.new()
 	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -222,7 +235,8 @@ func _menu(screen: Vector2) -> void:
 	var new_run = _button(box, "开始新远征  →", _begin_opening_story)
 	new_run.custom_minimum_size.y = 52
 	new_run.add_theme_stylebox_override("normal", _style(Color("486054"), gold.darkened(0.2), 6))
-	_button(box, "继续上次远征", _continue_run, not FileAccess.file_exists(run.save_path))
+	if FileAccess.file_exists(run.save_path):
+		_button(box, "继续上次远征", _continue_run)
 	_button(box, "地图种子", _seed_dialog)
 	_button(box, "设置与操作指南", _settings_dialog)
 
@@ -1839,7 +1853,9 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	header.add_spacer(false).mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_button(header, "历史对话", _show_story_history.bind(overlay))
 	for label in actions:
-		_button(header, label, actions[label])
+		var button = _button(header, label, actions[label])
+		if label == "结束交谈":
+			button.name = "StoryCancel"
 	var turn_page = func(index: int):
 		_show_story(title, speaker, body, scene, portraits, options, on_choice, actions, tint, index, history_entry)
 	var navigation = HBoxContainer.new()
@@ -1883,6 +1899,8 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 		if not option.get("enabled", true):
 			continue
 		var button = _button(choices, str(option.text), on_choice.bind(str(option.id)))
+		if button.text == "结束交谈" and not actions.has("结束交谈"):
+			button.name = "StoryCancel"
 		button.custom_minimum_size.y = 43
 		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1928,10 +1946,7 @@ func _show_story_history(story: Control) -> void:
 			control.show()
 		if is_instance_valid(previous_focus):
 			previous_focus.grab_focus())
-	var escape = InputEventKey.new()
-	escape.keycode = KEY_ESCAPE
-	close.shortcut = Shortcut.new()
-	close.shortcut.events = [escape]
+	close.name = "StoryCancel"
 	box.add_child(HSeparator.new())
 
 	var content = _scroll_content(box)
