@@ -79,12 +79,12 @@ func check_trade_and_recovery() -> void:
 	var before = JSON.stringify(run.data)
 	expect(not run.trade("lorne", "ether", true).ok and not run.trade("hero", "trail_blade", false).ok
 		and JSON.stringify(run.data) == before, "Unfunded purchases and equipped sales have no side effects")
-	expect(run.trade("lorne", "salve", false).ok and run.data.lamp_coins == 5 and stock.salve == original_stock - 1,
+	expect(run.trade("lorne", "salve", false).ok and run.data.lamp_coins == 4 and stock.salve == original_stock,
 		"Another squad sells from its own bag into the same wallet")
 	expect(not run.trade("hero", "Q-T", false).ok, "Story documents cannot be sold")
 
 	hero.position = work
-	expect(run.use_node("hero", "work").ok and run.data.lamp_coins == 5 + run.node_at(work).coins
+	expect(run.use_node("hero", "work").ok and run.data.lamp_coins == 4 + run.node_at(work).coins
 		and not run.use_node("hero", "work").ok, "A local commission pays once")
 	hero.position = rest
 	lorne.position = rest
@@ -107,6 +107,15 @@ func check_trade_and_recovery() -> void:
 		and continued.node_at(work).result == "work" and continued.data.lamp_coins == run.data.lamp_coins
 		and not continued.use_node("hero", "hp").ok, "Stock and spent recovery survive reload")
 	var legacy = run.data.duplicate(true)
+	legacy.version = 3
+	legacy.relic_checks = {}
+	legacy.relics = {}
+	legacy.relic_intros = []
+	for field in ["gear_instances", "next_gear_uid", "relic_seen", "relic_inventory", "relic_attunement", "relic_claims", "relic_effect_flags"]:
+		legacy.erase(field)
+	for actor in legacy.actors.values():
+		for slot in actor.equipment:
+			actor.equipment[slot] = ""
 	legacy.erase("nodes")
 	legacy.erase("lamp_coins")
 	for cell in run.relic_sites:
@@ -189,6 +198,11 @@ func event_run(event: Dictionary, kind: String) -> RefCounted:
 	for cell in run.data.nodes:
 		if cell in [run.data.start, run.data.boss] or run.data.tiles[cell].base_terrain not in event.terrains:
 			continue
+		var replaced: Dictionary = run.node_at(cell)
+		if replaced.has("gear_uid"):
+			run.data.gear_instances.erase(replaced.gear_uid)
+		for uid in run.gear_owned("shop", cell):
+			run.data.gear_instances.erase(uid)
 		run.data.nodes[cell] = {"kind": kind, "event": event.id, "result": ""}
 		if kind == "choice":
 			run.data.nodes[cell].coins = 4
@@ -243,7 +257,7 @@ func check_haunt_branches() -> void:
 			var expected = event.resolved if branch == "settle" else event.alternative_resolved
 			expect(loaded.node_at(cell).result == branch and Nodes.resolution(loaded.node_at(cell)) == expected
 				and loaded.data.peace.has(cell) and loaded.data.peace.size() == peace_count + 1
-				and loaded.data.lamp_coins == coins and loaded.data.actors == actors, event.id + " applies one peaceful branch without extra rewards")
+				and loaded.data.lamp_coins == coins and loaded.data.actors == actors, event.id + " applies one peaceful branch with unchanged actor resources")
 			before = loaded.data.duplicate(true)
 			for option in ["inspect", "settle", "settle_alternative"]:
 				expect(not loaded.use_node("hero", option).ok and loaded.data == before, event.id + " cannot repeat or switch " + branch)

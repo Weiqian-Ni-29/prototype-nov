@@ -63,7 +63,7 @@ func checkpoint_edges() -> void:
 			"energy": broken.actors.hero.energy = 101
 			"maximum": broken.actors.hero.hp_max = "wrong"
 			"fractional": broken.actors.hero.inventory.salve = 0.5
-			"equipment": broken.actors.hero.inventory.trail_blade = 0
+			"equipment": broken.actors.hero.equipment.weapon = "999999"
 			"choices": broken.choices = {}
 			"explored": broken.explored["99,99"] = true
 		var path = "user://test-invalid.json"
@@ -158,10 +158,12 @@ func combat_edges() -> void:
 			r.actor("ember").energy = 100 if skill_id == "sunfall" else 0
 			b.auto_mode = true
 			b.step_auto()
-			expect(b.events.any(func(event): return event.get("skill_id") == skill_id),
-				"Automatic battle casts %s in a %s forest" % [skill_id, condition])
-			expect(b.field_view().burning == (condition == "dry") and tile.terrain == "forest",
+			var casts = b.events.filter(func(event): return event.get("skill_id") == skill_id)
+			expect(not casts.is_empty(), "Automatic battle casts %s in a %s forest" % [skill_id, condition])
+			expect(not casts.is_empty() and casts[0].environment_after.burning == (condition == "dry"),
 				"Automatic %s follows battlefield ignition rules in a %s forest" % [skill_id, condition])
+			expect(tile.terrain == "forest" and (b.outcome.is_empty() or not b.field_view().burning),
+				"Finishing a battle clears ignition without changing the forest")
 	r = fresh()
 	ally(r, "grit")
 	b = battle(r, ["hero", "grit"])

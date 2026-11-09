@@ -58,8 +58,9 @@ func execute() -> void:
 				break
 	expect(not game.view.battle_mode and not r.data.has("pending_victory") and r.data.rewards == checkpoint.get("rewards"),
 		"Acknowledging the settlement returns to exploration without re-awarding loot")
-	# A relic won in this fixture may have its own introduction after settlement.
-	for page in range(2):
+	# Recruitment gifts and a victory drop can each have multiple story pages.
+	var page_budget: int = maxi(2, r.data.relic_intros.size() * 8)
+	for page in page_budget:
 		if r.relic_intro().is_empty() or not game.modal_layer.has_node("StoryScreen"):
 			break
 		for pressed in [true, false]:

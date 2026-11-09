@@ -117,7 +117,7 @@ func execute() -> void:
 	expect(r.use_item("lorne", "hero", "salve").ok, "Physical rescue")
 	expect(r.actor("hero").hp > 0, "Rescued actor can act")
 	var old_ap = r.actor("hero").ap
-	expect(r.equip("hero", "lamp_charm").ok, "Equipment outside combat")
+	expect(r.equip("hero", r.actor("hero").equipment.accessory).ok, "Equipment outside combat")
 	expect(r.actor("hero").ap == old_ap, "Equipment does not refresh AP")
 	expect(r.save_game().ok and r.save_game().ok, "Repeated atomic save")
 	var loaded = fresh(1)

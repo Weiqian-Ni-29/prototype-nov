@@ -279,7 +279,12 @@ func check_haunt_dialogue() -> void:
 		and conclusion.contains(event.alternative_resolved), "Second settlement click shows its own conclusion")
 	expect(find_button(game.modal_layer, event.work) == null and find_button(game.modal_layer, event.alternative) == null,
 		"Resolved haunting cannot be switched through the UI")
+	var found_relic: bool = not run.relic_intro().is_empty()
 	await click("返回地图")
+	if found_relic:
+		expect(game.modal_layer.has_node("StoryScreen"), "The relic introduction follows the node conclusion")
+		await finish_linear_story()
+		expect(run.relic_intro().is_empty(), "Reading the relic returns to the map")
 	await click("旅途手记")
 	expect(contains_text(game.modal_layer, event.evidence) and contains_text(game.modal_layer, event.alternative_resolved)
 		and not contains_text(game.modal_layer, event.resolved), "Journal contains actual evidence and only the chosen branch conclusion")
@@ -391,6 +396,7 @@ func check_node_dialogs() -> void:
 	await read_to_choices()
 	await click("查看货物")
 	await press("疗伤药 · 6 灯铢")
+	await press("确认 · 6 灯铢")
 	expect(run.data.lamp_coins == 2 and hero.inventory.salve == salves + 1, "The shop UI buys into the trader's inventory")
 	expect(saved_run().get("lamp_coins") == 2, "The shop UI saves the transaction")
 	await press("返回节点")
