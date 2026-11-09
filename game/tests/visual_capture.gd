@@ -81,7 +81,9 @@ func inspect_story_layout() -> void:
 	expect(counter != null and not dialogue.is_ancestor_of(counter)
 		and counter.get_global_rect().end.y < frame.position.y, "Page counter is in the header")
 	for actor in stage.find_children("StoryActor*", "TextureRect", true, false):
-		expect(actor.get_global_rect().end.y > frame.position.y, "Portrait extends into the shaded dialogue area")
+		var portrait_rect: Rect2 = actor.get_global_rect()
+		expect(portrait_rect.position.y < stage.size.y * 0.31 and portrait_rect.end.y > frame.position.y,
+			"Portrait reaches into the scene above and the shaded dialogue area below")
 	expect((story_button("上一页") != null) == (page.x > 1), "Previous page is shown only after page one")
 	expect(story_button("下一页") == null and story_button("继续") == null, "Story has no redundant forward buttons")
 	var column = stage.get_node_or_null("StoryChoices") as Control
@@ -497,20 +499,45 @@ func capture_branch_examples() -> void:
 	await capture_story_body("story-companion-ending", epilogue)
 	await click_story_button("返回远征记录")
 
+func inspect_portrait_silhouette(portrait: Texture2D, key: String) -> void:
+	if portrait == null:
+		return
+	var pixels = portrait.get_image()
+	var size = pixels.get_size()
+	var has_head = false
+	var has_hem = false
+	for y in range(0, size.y, 4):
+		var height = float(y) / size.y
+		if height >= 0.18 and height <= 0.91:
+			continue
+		var opaque = 0
+		for x in range(0, size.x, 4):
+			if pixels.get_pixel(x, y).a > 0.65:
+				opaque += 1
+		if opaque >= 4:
+			has_head = has_head or height < 0.18
+			has_hem = has_hem or height > 0.91
+	expect(has_head and has_hem, "The visible silhouette reaches both framing bands: " + key)
+
 func inspect_character_poses() -> void:
 	var ids = Catalog.COMPANIONS.keys() + ["hero", "war_god"]
 	for id in ids:
-		expect(game._story_portrait(id) is Texture2D, "Normal portrait is available " + id)
+		var portrait = game._story_portrait(id)
+		expect(portrait is Texture2D, "Normal portrait is available " + id)
+		inspect_portrait_silhouette(portrait, id)
 		var regions: Array[Rect2] = []
 		for pose in ["serious", "friendly", "grief", "anger", "surprise", "battle"]:
-			var portrait = game._story_portrait(id, pose)
-			expect(portrait is AtlasTexture, "Pose loads from a distinct cell " + id + "/" + pose)
-			if portrait is AtlasTexture:
-				expect(not regions.has(portrait.region), "Pose is a separate illustration " + id + "/" + pose)
-				regions.append(portrait.region)
+			var posed = game._story_portrait(id, pose)
+			expect(posed is AtlasTexture, "Pose loads from a distinct cell " + id + "/" + pose)
+			if posed is AtlasTexture:
+				expect(not regions.has(posed.region), "Pose is a separate illustration " + id + "/" + pose)
+				regions.append(posed.region)
+				inspect_portrait_silhouette(posed, id + "/" + pose)
 	for group in ["human", "elf", "dwarf"]:
-		for pose in ["concerned", "serious", "farewell", "grief", "battle"]:
-			expect(game._story_portrait("villager_" + group, pose) is AtlasTexture, "Village pose is available " + group + "/" + pose)
+		for pose in ["", "concerned", "serious", "farewell", "grief", "battle"]:
+			var portrait = game._story_portrait("villager_" + group, pose)
+			expect(portrait is AtlasTexture, "Village pose is available " + group + "/" + pose)
+			inspect_portrait_silhouette(portrait, group + "/" + pose)
 
 func capture_finale() -> void:
 	game._close_modal()

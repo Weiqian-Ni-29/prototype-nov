@@ -1757,6 +1757,9 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	overlay.add_child(background)
 	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
+	var has_pair = portraits.size() - portraits.count(null) > 1
+	var portrait_width = 0.39 if has_pair else 0.43
+	var portrait_top = 0.24 if has_pair else 0.20
 	for i in portraits.size():
 		if portraits[i] == null:
 			continue
@@ -1765,8 +1768,9 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 		slot.alignment_vertical = AspectRatioContainer.ALIGNMENT_END
 		slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		overlay.add_child(slot)
-		var left = 0.09 + 0.28 * i
-		_story_region(slot, left, 0.12, left + 0.30, 0.86)
+		var center = 0.23 + 0.30 * i
+		# Keep the head in the scene and the cut edge beneath the dialogue shade.
+		_story_region(slot, center - portrait_width * 0.5, portrait_top, center + portrait_width * 0.5, 0.88)
 		var actor_image = TextureRect.new()
 		actor_image.name = "StoryActor%d" % i
 		actor_image.texture = portraits[i]
