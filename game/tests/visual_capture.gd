@@ -429,19 +429,19 @@ func story_contains(text: String) -> bool:
 func capture_branch_examples() -> void:
 	game._start_new()
 	var run = game.run
-	var person = run.actor("lorne")
+	var person = run.actor("longroad")
 	run.actor("hero").position = person.position
 	run.data.tiles[person.position].enemies.clear()
 	run.reveal(person.position)
 	game._select_actor("hero")
-	game._talk("lorne")
+	game._talk("longroad")
 	if not await await_story_choices():
 		return
 	await click_story_button("邀请一起上路")
 	if not await await_story_choices():
 		return
-	await click_story_button(quest_option_label(game.narrative.dialogue("hero", "lorne"), "quest"))
-	var quest = game.narrative.personal_quest("hero", "lorne")
+	await click_story_button(quest_option_label(game.narrative.dialogue("hero", "longroad"), "quest"))
+	var quest = game.narrative.personal_quest("hero", "longroad")
 	expect(not game.modal_layer.has_node("StoryScreen/StoryChoices"), "Personal quest screenshot starts with text before decisions")
 	await capture_story_body("story-personal", quest.text)
 	if not await await_story_choices():
@@ -452,7 +452,7 @@ func capture_branch_examples() -> void:
 	await capture("story-personal-choices")
 	inspect_story_layout()
 	await click_story_button(second)
-	await capture_story_body("story-personal-conclusion", Story.PERSONAL_QUESTS.lorne.personal_b.response)
+	await capture_story_body("story-personal-conclusion", Story.PERSONAL_QUESTS.longroad.personal_b.response)
 	game._close_modal()
 	var haunts = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "haunt")
 	expect(not haunts.is_empty(), "Visual fixture includes a haunting")
@@ -486,7 +486,7 @@ func capture_branch_examples() -> void:
 		if button.text in ["查看结局剧情", "返回主菜单"]:
 			expect(root.get_visible_rect().encloses(button.get_global_rect()), "Ending record keeps its action visible: " + button.text)
 	var ending: String = game.narrative.main_ending().text
-	var epilogue: String = game.narrative.character_ending("lorne").text
+	var epilogue: String = game.narrative.character_ending("longroad").text
 	for label in game.ui.find_children("*", "Label", true, false):
 		expect(not label.text.contains(ending) and not label.text.contains(epilogue), "Summary screenshot does not embed long ending prose")
 	game._ending_story()

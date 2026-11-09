@@ -172,6 +172,17 @@ func check_personal_boundaries() -> void:
 			"Old choice keeps its original title and response")
 		expect(not legacy_story.choose("hero", "lorne", "personal_a").ok and outcome.ending in legacy_story.character_ending("lorne").text,
 			"Old choice cannot be replaced and keeps its original ending")
+	var longroad = run.actor("longroad")
+	longroad.position = run.actor("hero").position
+	expect(story.choose("hero", "longroad", "join").ok, "Recruit the companion for a saved preview choice")
+	run.data.story.longroad.personal_choice = "war_b"
+	expect(run.save_game().ok and loaded.load_game(run.save_path).ok, "Load a completed choice from the first war-story draft")
+	var preview_story = Story.new(loaded)
+	var preview = LegacyOutcomes.PREVIEW_OUTCOMES.longroad
+	var recall = preview_story.personal_quest("hero", "longroad")
+	expect(recall.ok and recall.title == preview.title and preview.personal_b.response in recall.text
+		and preview.personal_b.ending in preview_story.character_ending("longroad").text,
+		"The betrayal rewrite does not retroactively change a choice saved on the first draft")
 
 func check_hero_only_mystery() -> void:
 	for id in Catalog.COMPANIONS:
