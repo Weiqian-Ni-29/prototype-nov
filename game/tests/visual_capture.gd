@@ -591,6 +591,10 @@ func execute() -> void:
 	await capture("story-village-traveler")
 	await advance_until_text("愿你一路平安")
 	await capture("story-village-farewell")
+	await click_story_button("历史对话")
+	expect(game.modal_layer.has_node("StoryHistory/HistoryPanel"), "Story history opens over the village illustration")
+	await capture("story-dialogue-history")
+	await click_story_button("关闭")
 	await finish_linear_story()
 	await create_timer(0.5).timeout
 	await capture("02-exploration")
