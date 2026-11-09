@@ -155,7 +155,7 @@ func check_personal_boundaries() -> void:
 	expect(loaded.load_game(run.save_path).ok, "Load valid personal choice")
 	var valid = run.data.duplicate(true)
 	before = loaded.data.duplicate(true)
-	for invalid in [0, true, "", "a", "personal_unknown", [], {}, null]:
+	for invalid in [0, true, "", "a", "personal_unknown", "god_a", [], {}, null]:
 		var corrupt = valid.duplicate(true)
 		corrupt.story.lorne.personal_choice = invalid
 		var file = FileAccess.open(run.save_path, FileAccess.WRITE)
@@ -183,6 +183,17 @@ func check_personal_boundaries() -> void:
 	expect(recall.ok and recall.title == preview.title and preview.personal_b.response in recall.text
 		and preview.personal_b.ending in preview_story.character_ending("longroad").text,
 		"The betrayal rewrite does not retroactively change a choice saved on the first draft")
+	for id in LegacyOutcomes.WAR_OUTCOMES:
+		run.actor(id).position = run.actor("hero").position
+		expect(story.choose("hero", id, "join").ok, "Recruit avatar for an existing god choice: " + id)
+		run.data.story[id].personal_choice = "war_a" if id == "seasons" else "war2_a"
+		expect(run.save_game().ok and loaded.load_game(run.save_path).ok, "Load a previous campaign choice for " + id)
+		var old_story = Story.new(loaded)
+		var prior = LegacyOutcomes.PREVIEW_OUTCOMES[id] if id == "seasons" else LegacyOutcomes.WAR_OUTCOMES[id]
+		var old_scene = old_story.personal_quest("hero", id)
+		expect(old_scene.ok and old_scene.title == prior.title and prior.personal_a.response in old_scene.text
+			and prior.personal_a.ending in old_story.character_ending(id).text,
+			"The new god story preserves an earlier title, response and ending for " + id)
 
 func check_hero_only_mystery() -> void:
 	for id in Catalog.COMPANIONS:
@@ -205,6 +216,8 @@ func check_hero_only_mystery() -> void:
 			and not str(ordinary.text).contains(Story.HERO_LINES[id]), id + " ordinary visitor receives no protagonist familiarity")
 		expect(familiar.ok and str(familiar.text).contains(Story.HERO_LINES[id])
 			and not str(familiar.text).contains("伊文洛"), id + " hero receives the hint without identity reveal")
+		if Catalog.COMPANIONS[id].race == "神":
+			expect("化身" in ordinary.title and "化身" in familiar.title, id + " appears to both visitors as an avatar")
 		hero.position = run.data.start
 		expect(not story.dialogue("hero", id).ok, id + " distant hero cannot hear the hint")
 		ordinary = story.dialogue("lorne", id)
