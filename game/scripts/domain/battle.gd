@@ -716,6 +716,8 @@ func _finish(result: String) -> void:
 		if str(key).begins_with("uphill_ready:"):
 			run.data.item_effect_counts.erase(key)
 	run.data.status = "won" if result == "victory" and not war_boss.is_empty() else "exploring"
+	if result != "victory" or run.data.status == "won":
+		run.data.erase("pending_arrival")
 	if result == "defeat" and paid.has("hero"):
 		run.data.status = "failed"
 		run.data.flags["failure_reason"] = "主角参与的战斗中，友方与合格同地候补均无法继续。"

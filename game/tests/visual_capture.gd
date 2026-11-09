@@ -80,15 +80,13 @@ func inspect_story_layout() -> void:
 	var counter = stage.find_child("PageCounter", true, false) as Label
 	expect(counter != null and not dialogue.is_ancestor_of(counter)
 		and counter.get_global_rect().end.y < frame.position.y, "Page counter is in the header")
+	for actor in stage.find_children("StoryActor*", "TextureRect", true, false):
+		expect(actor.get_global_rect().end.y > frame.position.y, "Portrait extends into the shaded dialogue area")
 	expect((story_button("上一页") != null) == (page.x > 1), "Previous page is shown only after page one")
-	expect((story_button("下一页") != null) == (page.x < page.y), "Next page is shown only before the last page")
+	expect(story_button("下一页") == null and story_button("继续") == null, "Story has no redundant forward buttons")
 	var column = stage.get_node_or_null("StoryChoices") as Control
 	if page.x < page.y:
-		expect(column == null and story_button("继续") == null, "Intermediate screenshots expose no decisions or completion")
-	elif column == null:
-		expect(story_button("继续") != null, "Last linear screenshot includes a continue button")
-	else:
-		expect(story_button("继续") == null, "Decision screenshot cannot skip choices")
+		expect(column == null, "Intermediate screenshots expose no decisions")
 	if column != null:
 		var choices = column.get_global_rect()
 		expect(choices.position.x > stage.size.x * 0.5 and root.get_visible_rect().encloses(choices), "Choices stay in the right column")
@@ -109,7 +107,7 @@ func advance_story() -> void:
 	if stage == null or stage.has_node("StoryChoices"):
 		return
 	inspect_story_layout()
-	await click_story_button("下一页" if story_page().x < story_page().y else "继续")
+	await click_at(root.get_visible_rect().size * Vector2(0.76, 0.30))
 
 func advance_until_text(fragment: String) -> void:
 	for index in range(128):
@@ -146,12 +144,12 @@ func capture_story_body(prefix: String, expected: String) -> PackedStringArray:
 			await click_story_button("上一页")
 			expect(story_page() == Vector2i(1, first.y) and story_text().text == pages[0], "Mouse previous restores the complete first page")
 			await capture(prefix + "-previous")
-			await click_story_button("下一页")
+			await click_at(root.get_visible_rect().size * Vector2(0.76, 0.30))
 			expect(story_page() == Vector2i(2, first.y) and story_text().text == pages[1], "Returning to next page preserves the text")
 		if index == first.y - 1:
 			await capture(prefix + "-last")
 		else:
-			await click_story_button("下一页")
+			await click_at(root.get_visible_rect().size * Vector2(0.76, 0.30))
 	expect("".join(pages).replace("\n", "") == expected.replace("\n", ""), "Captured pages preserve every word, including the final paragraph: " + prefix)
 	return pages
 
@@ -391,7 +389,10 @@ func click_story_button(prefix: String) -> bool:
 			parent.ensure_control_visible(button)
 		parent = parent.get_parent()
 	await process_frame
-	var point = button.get_global_rect().get_center()
+	await click_at(button.get_global_rect().get_center())
+	return true
+
+func click_at(point: Vector2) -> void:
 	for pressed in [true, false]:
 		var event = InputEventMouseButton.new()
 		event.button_index = MOUSE_BUTTON_LEFT
@@ -399,7 +400,6 @@ func click_story_button(prefix: String) -> bool:
 		event.position = point
 		root.push_input(event, true)
 	await process_frame
-	return true
 
 func await_story_choices() -> bool:
 	for index in range(128):
@@ -493,7 +493,7 @@ func capture_branch_examples() -> void:
 	var ending_pages = await capture_story_body("story-main-ending", ending)
 	expect(ending_pages.size() >= 2 and "".join(ending_pages).ends_with(ending.split("\n\n")[-1]),
 		"Ending screenshots reach the final paragraph across multiple pages")
-	await click_story_button("继续")
+	await click_at(root.get_visible_rect().size * Vector2(0.76, 0.30))
 	await capture_story_body("story-companion-ending", epilogue)
 	await click_story_button("返回远征记录")
 
@@ -560,11 +560,22 @@ func execute() -> void:
 	await capture("story-world-intro")
 	await advance_until_text("你醒了")
 	await capture("story-village-waking")
+	await advance_until_text("一点也想不起来")
+	await capture("story-village-traveler")
 	await advance_until_text("愿你一路平安")
 	await capture("story-village-farewell")
 	await finish_linear_story()
 	await create_timer(0.5).timeout
 	await capture("02-exploration")
+	var arrival_run = game.run
+	var first_tile: String = Hex.neighbors(arrival_run.data.start, arrival_run.data.tiles).filter(func(cell):
+		return Hex.is_land(arrival_run.data.tiles, cell) and arrival_run.data.tiles[cell].enemies.is_empty())[0]
+	game._select_cell(first_tile)
+	game._select_cell(first_tile)
+	await capture("node-first-arrival")
+	await click_story_button("返回地图")
+	await create_timer(0.9).timeout
+	await capture("map-visited-locations")
 	game.crew_collapsed = true
 	game._refresh()
 	await capture("02-exploration-folded")

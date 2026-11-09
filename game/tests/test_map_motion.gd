@@ -173,6 +173,11 @@ func check_camera_drag(game: Node, start: String, next: String) -> void:
 	expect(view.focus_point.is_equal_approx(initial_focus), "Confirming movement does not jump the camera")
 	expect(far_fog.mesh == far_mesh, "Movement does not rebuild distant fog")
 	expect(view.fog_reveals.get_child_count() == 1, "A move starts one veil over its newly revealed hexes")
+	expect(game.modal_layer.has_node("StoryScreen"), "Two real map clicks open the first-arrival story")
+	for button in game.modal_layer.find_children("*", "Button", true, false):
+		if button.text == "返回地图":
+			button.pressed.emit()
+			break
 	var veil = view.fog_reveals.get_child(0) if view.fog_reveals.get_child_count() > 0 else null
 	var material: ShaderMaterial = veil.material_override if veil != null else null
 	expect(material != null and is_zero_approx(material.get_shader_parameter("progress")), "The reveal starts fully opaque")
@@ -206,7 +211,8 @@ func execute() -> void:
 	game.set_process(false)
 	var run = game.run
 	var start = run.actor("hero").position
-	var safe_neighbors = Hex.neighbors(start, run.data.tiles).filter(func(cell): return Hex.is_land(run.data.tiles, cell) and run.data.tiles[cell].npc.is_empty())
+	var safe_neighbors = Hex.neighbors(start, run.data.tiles).filter(func(cell):
+		return Hex.is_land(run.data.tiles, cell) and run.data.tiles[cell].npc.is_empty() and run.data.tiles[cell].enemies.is_empty())
 	var next = safe_neighbors[0]
 	await process_frame
 	await check_camera_drag(game, start, next)
