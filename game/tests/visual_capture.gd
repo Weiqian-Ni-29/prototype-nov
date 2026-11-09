@@ -7,6 +7,7 @@ const Combat = preload("res://scripts/domain/battle.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
+const Relics = preload("res://scripts/domain/relic_catalog.gd")
 var game: Node
 var destination = "user://visual-checks"
 var checks = 0
@@ -439,12 +440,13 @@ func capture_branch_examples() -> void:
 	game._talk("longroad")
 	if not await await_story_choices():
 		return
-	await click_story_button("邀请一起上路")
+	await click_story_button(quest_option_label(game.narrative.dialogue("hero", "longroad"), "join"))
+	await advance_story()
 	if not await await_story_choices():
 		return
 	await click_story_button(quest_option_label(game.narrative.dialogue("hero", "longroad"), "quest"))
+	await advance_story()
 	var quest = game.narrative.personal_quest("hero", "longroad")
-	expect(not game.modal_layer.has_node("StoryScreen/StoryChoices"), "Personal quest screenshot starts with text before decisions")
 	await capture_story_body("story-personal", quest.text)
 	if not await await_story_choices():
 		return
@@ -454,6 +456,8 @@ func capture_branch_examples() -> void:
 	await capture("story-personal-choices")
 	inspect_story_layout()
 	await click_story_button(second)
+	await capture("story-personal-player-reply")
+	await advance_story()
 	await capture_story_body("story-personal-conclusion", Story.PERSONAL_QUESTS.longroad.personal_b.response)
 	game._close_modal()
 	var haunts = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "haunt")
@@ -703,10 +707,15 @@ func execute() -> void:
 	await capture("dialogue-portrait")
 	await await_story_choices()
 	inspect_story_layout()
-	await click_story_button("邀请一起上路")
+	await click_story_button(quest_option_label(game.narrative.dialogue("hero", "lorne"), "join"))
+	await advance_story()
 	await capture("story-lorne-joins")
 	await await_story_choices()
 	await capture("story-courier-joined-choices")
+	await click_story_button(quest_option_label(game.narrative.dialogue("hero", "lorne"), "quest"))
+	await advance_story()
+	await await_story_choices()
+	await capture("story-lorne-personal-choices")
 	game._close_modal()
 	game.run.actor("hero").position = game.run.actor("eve").position
 	game.run.data.tiles[game.run.actor("eve").position].enemies.clear()
@@ -723,6 +732,14 @@ func execute() -> void:
 		event.pressed = pressed
 		root.push_input(event, true)
 	expect(game.modal_layer.get_child_count() == 0 and game.view.visible, "Escape returns from a conversation to the map")
+	game._talk("eve")
+	await await_story_choices()
+	await click_story_button(quest_option_label(game.narrative.dialogue("hero", "eve"), "join"))
+	await advance_story()
+	expect(story_contains(Story.CHARACTER_BEHAVIOR.eve[1]), "A companion replies before opening the recruitment relic")
+	await advance_story()
+	expect(story_contains(Relics.DATA.tender_gauze.story), "The recruitment relic follows the companion's reply")
+	game._close_modal()
 	# Instantiate every remaining enemy art family and verify its skeleton in the tree.
 	for id in Catalog.ENEMIES:
 		var definition = Catalog.ENEMIES[id].duplicate(true)
