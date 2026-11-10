@@ -193,11 +193,36 @@ func execute() -> void:
 	expect(b.begin(run, {"position": p, "origin": p, "ambush": false, "movers": [], "npc": ""}, ["hero", "cen", "eve", "tide"]).ok, "Battle UI fixture begins")
 	game.combat = b
 	game.battle_timer = 0
+	var tide = run.actor("tide")
+	tide.hp = 71
+	tide.mp = 42
+	tide.energy = 63
+	tide.shield = 15
 	game.view.begin_battle(run, b)
 	game._refresh()
 	expect(b.current == "hero", "Fixture begins on protagonist normal action")
 	expect(not game.ui.find_children("*", "Label", true, false).any(func(label): return label.text == "旅途记录"),
 		"The battle HUD has no travel log banner")
+	var party_cards = game.ui.find_children("BattleMember_*", "PanelContainer", true, false)
+	expect(party_cards.size() == 4, "Four active fighters have status cards")
+	var tide_card = game.ui.find_child("BattleMember_tide", true, false)
+	expect(tide_card != null, "Battle sidebar contains the water companion")
+	if tide_card != null:
+		var meters = tide_card.find_children("*", "ProgressBar", true, false)
+		expect(meters.size() == 3 and meters[0].value == tide.hp and meters[0].max_value == tide.hp_max
+			and meters[1].value == tide.mp and meters[1].max_value == tide.mp_max
+			and meters[2].value == tide.energy and meters[2].max_value == Catalog.ENERGY_MAX,
+			"Battle status bars show the fighter's HP, MP and charge")
+		var colors = ["e16562", "65a6e6", "eea353"]
+		for i in mini(meters.size(), colors.size()):
+			expect(meters[i].get_theme_stylebox("fill").bg_color == Color(colors[i]), "Status bar uses the shared color")
+		var portrait = tide_card.find_child("Portrait", true, false)
+		expect(portrait != null and portrait.get_theme_stylebox("panel").bg_color == Color("24536e"),
+			"Battle portraits use the same element background as the exploration sidebar")
+		expect(tide_card.find_children("*", "Label", true, false).any(func(label): return label.text == "盾15"),
+			"Shield amount appears in the fighter's card")
+	var uncharged = find_button(game.ui, "终结技 · 落石")
+	expect(uncharged != null and uncharged.disabled, "Ultimate button is disabled before charge is full")
 	var cards = game.ui.find_children("EnemyCard_*", "PanelContainer", true, false)
 	var card_contents_match = cards.all(func(card):
 		return (card.find_children("*", "Button", true, false).size() == 1
@@ -207,7 +232,7 @@ func execute() -> void:
 	await press("棘背兽 2号")
 	expect(game.selected_target == "enemy_2" and find_button(game.ui, "◆ 棘背兽 2号") != null
 		and find_button(game.ui, "棘背兽 1号") != null, "Same-name enemies can be distinguished and selected")
-	for command in ["普攻", "重压", "防守", "道具", "换人", "自动战斗", "撤退", "0% · 落石"]:
+	for command in ["普攻", "重压", "防守", "道具", "换人", "自动战斗", "撤退", "终结技 · 落石"]:
 		var button = find_button(game.ui, command)
 		expect(button != null and not button.tooltip_text.is_empty(), "Command has hover help: " + command)
 	var auto = find_button(game.ui, "自动战斗")
@@ -239,7 +264,7 @@ func execute() -> void:
 	run.actor("hero").energy = 100
 	game._refresh()
 	var next_time = b.next_time.hero
-	await press("100% · 落石")
+	await press("终结技 · 落石")
 	expect(run.actor("hero").energy == 0 and b.next_time.hero == next_time, "Ultimate button spends personal energy and preserves normal action")
 	await finish_presentation()
 	game.battle_timer = 0
