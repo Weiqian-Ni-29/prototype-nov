@@ -571,6 +571,8 @@ func capture_finale() -> void:
 	expect(game.modal_layer.has_node("StoryScreen") and battle.reveal_pending and not battle.river,
 		"The old strike triggers the flashback before the river")
 	await capture("story-final-memory")
+	await advance_until_text("都留在我身后")
+	await capture("story-final-before-river")
 	await advance_until_text("冥河在卡德兰脚下涌出")
 	await capture("story-final-river")
 	await finish_linear_story()

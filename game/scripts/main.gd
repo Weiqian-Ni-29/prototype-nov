@@ -1671,8 +1671,9 @@ func _final_battle_page(index: int) -> void:
 		["旁白", "冥河在卡德兰脚下涌出。你用重力拦住河界，给同行的人留出站稳的岸地。一截落进河里的断枪迅速锈烂，沉下去，连碎屑都没有浮起。\n\n河水属于冥界，能洗刷、剥夺、吞噬碰到的一切，不会分辨敌友。你必须守住这条界线。卡德兰踉跄了一步，握着武器的手开始颤抖。"],
 	]
 	var page = pages[index]
-	var scene = "final_memory" if index < 2 else _story_scene_at(run.data.boss) if index < 6 else "finale"
-	var portraits = [] if index < 2 else [_story_portrait("hero", "battle"), _story_portrait("war_god", "anger" if index < 6 else "surprise")]
+	var river_revealed = index == pages.size() - 1
+	var scene = "final_memory" if index < 2 else "finale" if river_revealed else _story_scene_at(run.data.boss)
+	var portraits = [] if index < 2 else [_story_portrait("hero", "battle"), _story_portrait("war_god", "surprise" if river_revealed else "anger")]
 	_show_story("记忆回来了", page[0], page[1], scene, portraits, [],
 		func(_option: String):
 			if index + 1 < pages.size():
@@ -2070,7 +2071,7 @@ func _story_choice(option_id: String) -> void:
 		return
 	if option_id == "join":
 		moving_ids.append(dialogue_subject)
-	if option_id not in ["past", "echo", "quest"]:
+	if option_id in ["join", "start_duel", "personal_a", "personal_b"]:
 		run.save_game()
 	var response: String = result.get("response", "")
 	if response.is_empty() and _show_relic_intro(_render_dialogue):

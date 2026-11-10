@@ -399,6 +399,7 @@ func check_personal_dialogue() -> void:
 	var acceptance = await read_to_choices()
 	expect(story_speaker() == "洛恩" and acceptance.contains(Story.CHARACTER_BEHAVIOR.lorne[1]), "Recruitment receives an answer from the companion")
 	var before_past = run.data.duplicate(true)
+	var save_before_past = saved_run()
 	await click(option_label(game.narrative.dialogue("hero", "lorne"), "past"))
 	expect(story_speaker() == "旅人", "The player asks about the past before receiving it")
 	await click_story_blank()
@@ -406,6 +407,12 @@ func check_personal_dialogue() -> void:
 	expect(compact(past).contains(compact(Story.BACKGROUNDS.lorne)) and story_speaker() == "洛恩",
 		"The background is readable in its own paginated response")
 	expect(run.data == before_past, "Reading the background spends nothing and chooses no personal branch")
+	await click(option_label(game.narrative.dialogue("hero", "lorne"), "leave"))
+	await click_story_blank()
+	expect(game.modal_layer.get_child_count() == 0, "The spoken farewell closes the background conversation")
+	expect(run.data == before_past and saved_run() == save_before_past, "The entire background conversation, including its farewell, is read-only")
+	game._begin_dialogue("lorne")
+	await read_to_choices()
 	var quest = game.narrative.personal_quest("hero", "lorne")
 	var second = option_label(quest, "personal_b")
 	var first = option_label(quest, "personal_a")
@@ -463,10 +470,12 @@ func check_personal_dialogue() -> void:
 	expect(find_button(game.modal_layer, first) == null and find_button(game.modal_layer, second) == null,
 		"Reopened conversation cannot select either branch again")
 	var farewell = option_label(game.narrative.personal_quest("hero", "lorne"), "leave")
+	var review_transaction = game.run.data.transaction
 	await click(farewell)
 	expect(story_speaker() == "旅人" and dialogue_contains(farewell), "Farewell is the player's line")
 	await click_story_blank()
 	expect(game.modal_layer.get_child_count() == 0, "Finishing a farewell returns to the map")
+	expect(game.run.data.transaction == review_transaction, "Finishing a review of a saved personal decision does not save again")
 
 func check_node_dialogs() -> void:
 	game._start_new()
@@ -845,6 +854,8 @@ func check_final_reveal() -> void:
 	expect(battle.reveal_pending and not battle.river, "The old strike opens the memory before awakening")
 	game._final_battle_page(0)
 	var complete = ""
+	var river_shown = false
+	var river_portrait = game._story_portrait("war_god", "surprise") as AtlasTexture
 	for index in range(128):
 		if not game.modal_layer.has_node("StoryScreen"):
 			break
@@ -853,6 +864,16 @@ func check_final_reveal() -> void:
 		expect(battle.reveal_pending and not battle.river and run.actor("hero").name == "旅人",
 			"Reading and reviewing the final memory cannot awaken the hero early")
 		var body = story_text().text
+		river_shown = river_shown or body.contains("冥河在卡德兰脚下涌出")
+		var screen = game.modal_layer.get_node("StoryScreen")
+		var background = screen.get_child(0) as TextureRect
+		expect((background.texture.resource_path == "res://assets/story/finale.png") == river_shown,
+			"The river backdrop starts with the river narration and stays for the rest of that beat")
+		var war_god = screen.find_child("StoryActor1", true, false) as TextureRect
+		if war_god != null:
+			var portrait = war_god.texture as AtlasTexture
+			expect((portrait.region == river_portrait.region) == river_shown,
+				"The war god's portrait does not show river water ahead of the narration")
 		complete += body
 		if story_page().x > 1:
 			await click("上一页")
