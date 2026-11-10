@@ -286,6 +286,11 @@ func check_node_arrival() -> void:
 	expect(marker.text == title and marker.position.x == 0 and marker.position.z == 0,
 		"The same name appears at the visited tile's center")
 	await click("返回地图")
+	village = game.view.tile_nodes[start].get_node("LocationName")
+	for label in [village, marker]:
+		expect(label.is_visible_in_tree() and label.outline_render_priority > game.view.FOG_REVEAL_PRIORITY
+			and label.render_priority > label.outline_render_priority,
+			"Visited map name and outline draw above the transparent terrain and fog: " + label.text)
 	game._continue_run()
 	expect(game.view.tile_nodes[cell].get_node("LocationName").text == title and not game.modal_layer.has_node("StoryScreen"),
 		"Loading preserves the visited name without reopening its story")
