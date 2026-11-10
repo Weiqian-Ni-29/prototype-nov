@@ -495,7 +495,7 @@ func _cell_actions() -> void:
 			_run_action(result)
 			if result.ok and not _show_relic_intro():
 				_notice(result.message))
-	_button(box, "使用道具 / 同地救援", _item_dialog.bind(selected_id))
+	_button(box, "使用道具", _item_dialog.bind(selected_id))
 	_button(dialog, "关闭", _close_modal)
 
 func _node_title(cell: String) -> String:
