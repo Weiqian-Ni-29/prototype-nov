@@ -18,6 +18,7 @@ const MAX_MAP_ZOOM = 38.0
 const MAP_ZOOM_STEP = 1.14
 const OCCLUSION_ZOOM = 9.0
 const FOG_REVEAL_SECONDS = 0.7
+const FOG_REVEAL_PRIORITY = 2
 signal cell_clicked(id: String)
 signal enemy_clicked(id: String)
 var hero_marker = preload("res://scripts/presentation/squad_markers.gd").new()
@@ -286,7 +287,7 @@ func _animate_fog_reveal(mesh: ArrayMesh, old_edge_mesh: ArrayMesh) -> void:
 	var material := ShaderMaterial.new()
 	material.shader = Board.REVEAL
 	material.set_shader_parameter("progress", 0.0)
-	material.render_priority = 2
+	material.render_priority = FOG_REVEAL_PRIORITY
 	var veil := MeshInstance3D.new()
 	veil.mesh = mesh
 	veil.material_override = material
@@ -855,6 +856,9 @@ static func _label_location(parent: Node3D, text: String, height: float) -> void
 	label.pixel_size = minf(0.0032, 1.2 / font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size).x)
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.no_depth_test = true
+	# Transparent terrain and fog can cover labels drawn earlier, even without depth testing.
+	label.outline_render_priority = FOG_REVEAL_PRIORITY + 1
+	label.render_priority = FOG_REVEAL_PRIORITY + 2
 	label.modulate = Color("eee0b8")
 	label.outline_size = 7
 	label.position.y = height + 0.04
