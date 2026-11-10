@@ -469,7 +469,7 @@ func capture_branch_examples() -> void:
 		"送别时，旅人伸出手，给亡魂指了条离开这里的路。\n\n" + event.alternative_resolved)
 	expect(not game.modal_layer.has_node("StoryScreen/StoryChoices"), "The narrative is separate from the action result")
 	await advance_story()
-	await capture_story_body("node-haunt-action-result", "这次送别已记入手记。")
+	await capture_story_body("node-haunt-action-result", "你送别了这里的亡者。")
 	expect(game.modal_layer.has_node("StoryScreen/StoryChoices"), "The action result offers the return after the full conclusion")
 	expect(run.node_at(cell).result == "settle_alternative", "Haunting screenshot follows the actual second settlement click")
 	game._close_modal()

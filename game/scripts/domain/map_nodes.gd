@@ -6,7 +6,7 @@ const PRICES = {"salve": 6, "ether": 7, "trail_food": 3, "trail_blade": 12, "pad
 const GEAR = ["trail_blade", "padded_coat", "lamp_charm"]
 const LABELS = {
 	"story": "地点", "trade": "交易", "supply": "补给", "rest": "补给点",
-	"choice": "委托", "clue": "线索", "haunt": "亡灵", "cache": "寻宝", "battle": "遭遇", "elite": "险地",
+	"choice": "委托", "haunt": "亡灵", "cache": "寻宝", "battle": "遭遇", "elite": "险地",
 }
 static var events: Dictionary = {}
 static var pools: Dictionary = {}
@@ -63,7 +63,30 @@ static func _kind(tile: Dictionary, has_relic: bool, defeated: bool, roll: int) 
 		return "cache"
 	if roll < 45:
 		return "choice"
-	return "haunt" if roll < 72 else "clue"
+	return "haunt" if roll < 72 else _local_kind(roll)
+
+static func _local_kind(roll: int) -> String:
+	return "choice" if roll % 2 == 0 else "rest"
+
+static func _set_local_reward(node: Dictionary, biome: String, roller: RandomNumberGenerator) -> void:
+	if node.kind == "choice":
+		node.coins = roller.randi_range(3, 5)
+	else:
+		node.item = "ether" if biome in ["swamp", "ruins", "desert"] else "salve"
+
+static func replace_legacy_clues(nodes: Dictionary, tiles: Dictionary, seed_value: int) -> void:
+	_load_events()
+	var roller = RandomNumberGenerator.new()
+	for cell in nodes:
+		if nodes[cell].kind != "clue":
+			continue
+		roller.seed = hash("replace-clue:%d:%s" % [seed_value, cell])
+		var biome: String = tiles[cell].base_terrain
+		var kind = _local_kind(roller.randi_range(0, 99))
+		var candidates: Array = pools[kind + ":" + biome]
+		var node = {"kind": kind, "event": candidates[roller.randi_range(0, candidates.size() - 1)], "result": ""}
+		_set_local_reward(node, biome, roller)
+		nodes[cell] = node
 
 static func generate(tiles: Dictionary, seed_value: int, relic_sites: Dictionary, rewards: Dictionary, relic_checks: Dictionary) -> Dictionary:
 	_load_events()
@@ -72,12 +95,12 @@ static func generate(tiles: Dictionary, seed_value: int, relic_sites: Dictionary
 	var cells = tiles.keys()
 	cells.sort()
 	var roller = RandomNumberGenerator.new()
-	var nearby_clues: Array = []
+	var nearby_haunts: Array = []
 	for cell in cells:
 		if tiles[cell].site == "start":
-			nearby_clues = Hex.neighbors(cell, tiles).filter(func(next): return Hex.is_land(tiles, next) and tiles[next].site.is_empty())
-			nearby_clues.sort_custom(func(a, b): return hash("clue:%s:%s" % [seed_value, a]) < hash("clue:%s:%s" % [seed_value, b]))
-			nearby_clues = nearby_clues.slice(0, 3)
+			nearby_haunts = Hex.neighbors(cell, tiles).filter(func(next): return Hex.is_land(tiles, next) and tiles[next].site.is_empty())
+			nearby_haunts.sort_custom(func(a, b): return hash("clue:%s:%s" % [seed_value, a]) < hash("clue:%s:%s" % [seed_value, b]))
+			nearby_haunts = nearby_haunts.slice(0, 3)
 			break
 	for cell in cells:
 		if not Hex.is_land(tiles, cell):
@@ -85,7 +108,9 @@ static func generate(tiles: Dictionary, seed_value: int, relic_sites: Dictionary
 		roller.seed = hash("node:%d:%s" % [seed_value, cell])
 		var tile = tiles[cell]
 		var defeated = rewards.has(cell + ":")
-		var kind = "haunt" if cell in nearby_clues else _kind(tile, relic_sites.has(cell), defeated, roller.randi_range(0, 99))
+		var forced_haunt = cell in nearby_haunts
+		var roll = 0 if forced_haunt else roller.randi_range(0, 99)
+		var kind = "haunt" if forced_haunt else _kind(tile, relic_sites.has(cell), defeated, roll)
 		var node = {"kind": kind, "event": "", "result": ""}
 		nodes[cell] = node
 		if kind == "story":
@@ -95,7 +120,7 @@ static func generate(tiles: Dictionary, seed_value: int, relic_sites: Dictionary
 		if kind == "haunt":
 			var unseen = candidates.filter(func(id): return not use_counts.has(id))
 			if unseen.is_empty():
-				kind = "clue"
+				kind = _local_kind(roll)
 				node.kind = kind
 				candidates = pools.get(kind + ":" + biome, [])
 			else:
@@ -111,10 +136,8 @@ static func generate(tiles: Dictionary, seed_value: int, relic_sites: Dictionary
 			stock[local_supply] += roller.randi_range(0, 1)
 			stock[GEAR[roller.randi_range(0, GEAR.size() - 1)]] = 1
 			node.stock = stock
-		elif kind == "rest":
-			node.item = "ether" if biome in ["swamp", "ruins", "desert"] else "salve"
-		elif kind == "choice":
-			node.coins = roller.randi_range(3, 5)
+		elif kind in ["rest", "choice"]:
+			_set_local_reward(node, biome, roller)
 		elif kind == "cache":
 			var items = GEAR + ["salve", "ether"]
 			node.item = items[roller.randi_range(0, items.size() - 1)]

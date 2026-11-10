@@ -665,7 +665,6 @@ func _finish(result: String) -> void:
 	var reward_key = position + ":" + npc
 	if result == "victory":
 		items.victory(self)
-		run.record_story_progress(position, false)
 		var revived: Array[String] = []
 		var receiver = ""
 		var relic = ""

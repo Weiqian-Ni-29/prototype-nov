@@ -409,8 +409,8 @@ func check_haunt_dialogue() -> void:
 	expect(find_button(game.modal_layer, event.work) == null and find_button(game.modal_layer, event.alternative) == null,
 		"Neither settlement is offered before investigation")
 	await click(event.investigation_label)
-	expect(node.get("investigated", false) and node.result == "" and run.data.leads.has(cell)
-		and not run.data.peace.has(cell), "Real investigation click records evidence without completion or peace")
+	expect(node.get("investigated", false) and node.result == ""
+		and not run.data.peace.has(cell), "Real investigation click opens the next stage without resolving the haunt")
 	expect(not game.modal_layer.has_node("StoryScreen/StoryChoices"), "Evidence is presented before settlement choices")
 	var investigation = await read_to_choices(func(): return node.result == "" and not run.data.peace.has(cell))
 	expect(investigation.contains(event.investigation), "The complete investigation is readable before deciding")
@@ -427,10 +427,6 @@ func check_haunt_dialogue() -> void:
 		expect(game.modal_layer.has_node("StoryScreen"), "The relic introduction follows the node conclusion")
 		await finish_linear_story()
 		expect(run.relic_intro().is_empty(), "Reading the relic returns to the map")
-	await click("旅途手记")
-	expect(contains_text(game.modal_layer, event.evidence) and contains_text(game.modal_layer, event.alternative_resolved)
-		and not contains_text(game.modal_layer, event.resolved), "Journal contains actual evidence and only the chosen branch conclusion")
-	await click("合上手记")
 
 func check_personal_dialogue() -> void:
 	var run = game.run
@@ -520,9 +516,6 @@ func check_personal_dialogue() -> void:
 	await read_to_choices()
 	await story_key(KEY_ESCAPE)
 	expect(game.modal_layer.get_child_count() == 0, "Escape can close a completed personal conversation")
-	await click("旅途手记")
-	expect(contains_text(game.modal_layer, "洛恩 · 已同行 · 已作出个人抉择"), "Journal indicates the companion's personal decision")
-	await click("合上手记")
 	var path: String = run.save_path
 	game.queue_free()
 	await process_frame
@@ -676,18 +669,6 @@ func check_node_dialogs() -> void:
 	expect(find_button(game.modal_layer, "休整") == null, "Ordinary tiles have no general rest command")
 	await press("关闭")
 
-	var clue_cells = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "clue")
-	expect(not clue_cells.is_empty(), "This seed has a clue node")
-	if not clue_cells.is_empty():
-		hero.position = clue_cells[0]
-		run.reveal(hero.position)
-		game._select_actor("hero")
-		var action = find_button(game.ui, "行动")
-		expect(action != null and action.text == "行动", "A clue node uses the plain action button label")
-		await press("行动")
-		expect(find_button(game.modal_layer, "查看节点剧情") != null, "The action button opens the clue node menu")
-		await press("关闭")
-
 	var rest_cells = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "rest")
 	var shop_cells = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "trade")
 	expect(not rest_cells.is_empty() and not shop_cells.is_empty(), "This seed has supply stops and trade nodes")
@@ -697,6 +678,8 @@ func check_node_dialogs() -> void:
 	hero.position = rest_cell
 	run.reveal(rest_cell)
 	game._select_actor("hero")
+	var action = find_button(game.ui, "行动")
+	expect(action != null and action.text == "行动", "A supply stop uses the plain action button label")
 	await press("行动")
 	await press("查看节点剧情")
 	var stage = game.modal_layer.get_node("StoryScreen")
@@ -704,6 +687,7 @@ func check_node_dialogs() -> void:
 	expect(scene.texture.resource_path.ends_with("/" + game._story_scene_at(rest_cell) + ".png"),
 		"The node story uses the occupied tile's terrain art")
 	await read_to_choices()
+	expect(find_button(game.modal_layer, "记入旅途手记") == null, "Node dialogue has no travel journal action")
 	expect(find_button(game.modal_layer, "在此休整") == null and find_button(game.modal_layer, "在此调息") == null,
 		"The node offers supplies without recovery options")
 	var supply: String = run.node_at(rest_cell).item
@@ -1169,10 +1153,8 @@ func execute() -> void:
 	var chapter_run = game.run
 	var pages: Array = game._chapter_pages()
 	expect(pages.size() == 4, "Main story retains four chapters")
-	await click("旅途手记")
-	for page in pages:
-		expect(not contains_text(game.modal_layer, page[0]), "Unread chapter is absent from the journal: " + page[0])
-	await click("合上手记")
+	expect(find_button(game.ui, "旅途手记") == null and find_button(game.ui, "定位战神") == null,
+		"Exploration has no travel journal and keeps the boss locator hidden until the reveal")
 	for cell in chapter_run.data.tiles:
 		chapter_run.data.explored[cell] = true
 	chapter_run.actor("lorne").position = chapter_run.actor("hero").position
@@ -1199,11 +1181,8 @@ func execute() -> void:
 			"HUD changes only after confirming the final chapter page")
 	game._close_modal()
 	game._refresh()
-	await click("旅途手记")
-	for page in pages:
-		expect(contains_text(game.modal_layer, page[0]) and contains_text(game.modal_layer, page[1]),
-			"Journal preserves the read chapter and its witness record: " + page[0])
-	await click("合上手记")
+	await click("定位战神")
+	expect(game.selected_cell == chapter_run.data.boss, "Revealed boss can be located directly from the map header")
 	chapter_run.data.status = "won"
 	game._refresh()
 	await process_frame

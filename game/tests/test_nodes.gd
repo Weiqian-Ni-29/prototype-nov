@@ -103,6 +103,17 @@ func check_trade_and_recovery() -> void:
 	expect(continued.node_at(shop).stock.salve == stock.salve and continued.node_at(rest).result == "pack"
 		and continued.node_at(work).result == "work" and continued.data.lamp_coins == run.data.lamp_coins
 		and not continued.use_node("hero", "pack").ok, "Stock and claimed supply survive reload")
+	var recorded_save = run.data.duplicate(true)
+	var biome: String = recorded_save.tiles[rest].base_terrain
+	recorded_save.nodes[rest] = {"kind": "clue", "event": biome + "_clue_1", "result": "record"}
+	recorded_save.leads = {rest: true}
+	var old_file = FileAccess.open(run.save_path, FileAccess.WRITE)
+	old_file.store_string(JSON.stringify(recorded_save))
+	old_file.close()
+	expect(continued.load_game(run.save_path).ok and continued.node_at(rest).kind in ["choice", "rest"]
+		and continued.node_at(rest).result == "" and not continued.data.has("leads")
+		and continued.node_at(work).result == "work" and continued.data.lamp_coins == run.data.lamp_coins,
+		"A legacy clue becomes a playable local event without changing other progress")
 	var legacy = run.data.duplicate(true)
 	legacy.version = 3
 	legacy.relic_checks = {}
@@ -129,11 +140,11 @@ func check_trade_and_recovery() -> void:
 
 func check_catalog() -> void:
 	var source = JSON.parse_string(FileAccess.get_file_as_string("res://assets/story/node_events.json"))
-	expect(source is Dictionary and source.size() == 9, "Nine catalog kinds retain 108 events")
+	expect(source is Dictionary and source.size() == 8, "Eight themed catalog kinds retain 96 events")
 	if not source is Dictionary:
 		return
 	var ids = {}
-	for kind in ["trade", "supply", "rest", "choice", "clue", "cache", "battle", "elite", "haunt"]:
+	for kind in ["trade", "supply", "rest", "choice", "cache", "battle", "elite", "haunt"]:
 		var entries: Array = source.get(kind, [])
 		expect(entries.size() == 12, "Twelve events for " + kind)
 		for event in entries:
@@ -144,8 +155,6 @@ func check_catalog() -> void:
 				fields.append_array(["investigation_label", "investigation", "evidence", "work", "alternative", "alternative_resolved"])
 			elif kind == "choice":
 				fields.append_array(["work", "alternative", "alternative_resolved"])
-			elif kind == "clue":
-				fields.append("evidence")
 			for field in fields:
 				expect(event.get(field) is String and not str(event.get(field, "")).strip_edges().is_empty(), event.id + " has " + field)
 			if kind in ["haunt", "choice"]:
@@ -164,7 +173,7 @@ func check_catalog() -> void:
 			for index in [1, 2]:
 				var id = "%s_%s_%d" % [terrain, kind, index]
 				expect(entries.any(func(event): return event.id == id and terrain in event.terrains), "Original compatible event id retained: " + id)
-	expect(ids.size() == 108, "All 108 original event ids remain")
+	expect(ids.size() == 96, "All 96 themed event ids remain")
 
 func check_exhausted_haunts() -> void:
 	for terrain in ["plains", "forest", "mountain", "ruins", "desert", "swamp"]:
@@ -180,13 +189,13 @@ func check_exhausted_haunts() -> void:
 			roller.seed = hash("node:%d:%s" % [91, cell])
 			var roll = roller.randi_range(0, 99)
 			if roll >= 45 and roll < 72:
-				if nodes[cell].kind == "clue":
+				if nodes[cell].kind in ["choice", "rest"]:
 					fallbacks += 1
 				else:
-					expect(nodes[cell].kind == "haunt" and not haunt_ids.has(nodes[cell].event), "Unused haunt precedes clue fallback in " + terrain)
+					expect(nodes[cell].kind == "haunt" and not haunt_ids.has(nodes[cell].event), "Unused haunt precedes a local event in " + terrain)
 					haunt_ids[nodes[cell].event] = true
 			expect(terrain in Nodes.story(nodes[cell]).get("terrains", []), "Exhaustion keeps event terrain " + terrain)
-		expect(haunt_ids.size() == 2 and fallbacks > 0 and tiles == before, "Two haunts exhaust into clues without changing " + terrain)
+		expect(haunt_ids.size() == 2 and fallbacks > 0 and tiles == before, "Exhausted haunts become local events in " + terrain)
 
 func event_run(event: Dictionary, kind: String) -> RefCounted:
 	var run = Run.new()
@@ -231,7 +240,7 @@ func check_haunt_branches() -> void:
 			var peace = run.data.peace.duplicate(true)
 			var inspected = run.use_node("lorne", "inspect")
 			expect(inspected.ok and str(inspected.get("message", "")) == event.investigation, event.id + " companion reads the actual investigation")
-			expect(node.get("investigated", false) and node.result == "" and run.data.leads.has(cell)
+			expect(node.get("investigated", false) and node.result == ""
 				and run.data.peace == peace and run.data.lamp_coins == coins and run.data.actors == actors,
 				event.id + " investigation records evidence without completion, peace or resource changes")
 			before = run.data.duplicate(true)
@@ -240,7 +249,7 @@ func check_haunt_branches() -> void:
 			expect(run.save_game().ok, event.id + " save investigated checkpoint")
 			var loaded = Run.new()
 			expect(loaded.load_game(run.save_path).ok and loaded.node_at(cell).get("investigated", false)
-				and loaded.node_at(cell).result == "" and loaded.data.leads.has(cell) and not loaded.data.peace.has(cell), event.id + " reload preserves unfinished investigation")
+				and loaded.node_at(cell).result == "" and not loaded.data.peace.has(cell), event.id + " reload preserves unfinished investigation")
 			loaded.save_path = run.save_path
 			loaded.actor("hero").position = cell
 			loaded.actor("hero").hp = 0

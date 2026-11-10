@@ -445,7 +445,6 @@ func choose(visitor: String, subject: String, option_id: String) -> Dictionary:
 			var result = run.join_companion(subject, visitor)
 			if result.ok:
 				result.response = CHARACTER_BEHAVIOR[subject][1]
-				run.record_story_progress(run.actor(visitor).position, false)
 			return result
 		"duel":
 			var cell: String = run.actor(visitor).position
