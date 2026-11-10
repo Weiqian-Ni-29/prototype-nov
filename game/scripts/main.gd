@@ -451,7 +451,7 @@ func _crew_panel(screen: Vector2) -> void:
 			var squad_color: Color = view.squad_markers.color_for_actor(id)
 			var swatch = _text(row, "▼", 19, squad_color)
 			swatch.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-			swatch.tooltip_text = "同色箭头与边框标记同一小队"
+			swatch.tooltip_text = "箭头和边框颜色相同的队员属于同一小队。"
 			var toggle = CheckBox.new()
 			toggle.button_pressed = id in moving_ids
 			toggle.disabled = a.hp <= 0
@@ -488,7 +488,7 @@ func _cell_actions() -> void:
 		_button(box, "查看节点剧情", _node_dialog)
 	if run.knows_encounter(cell):
 		_text(box, "决战 · 已平息 %d 处纷争" % run.data.peace.size() if t.enemies.has("war_god") else "驻守敌人", 18, Color("e4ab87"))
-		_text(box, "首次上场每人 2 精力；同地最多四名角色出战。", 14, muted)
+		_text(box, "每人首次上场花 2 点精力。同一地块最多四人出战。", 14, muted)
 		for enemy in t.enemies:
 			_text(box, Catalog.ENEMIES[enemy].name + " · " + Catalog.ENEMIES[enemy].role, 14, muted)
 			if run.actor("grit").joined and run.actor("grit").hp > 0 and run.actor("grit").position == cell:
@@ -589,8 +589,8 @@ func _node_dialog(feedback: String = "", ready: bool = false) -> void:
 			"supply":
 				options.append(_node_option("collect", "采集%s ×%d · 1 精力" % [Catalog.item_name(tile.resource), tile.quantity]))
 			"rest":
-				options.append(_node_option("hp", "在此休整 · 同格可行动队员恢复 %d%% 生命" % run.recovery_percent(cell, "hp")))
-				options.append(_node_option("mp", "在此调息 · 同格可行动队员恢复 %d%% 魔力" % run.recovery_percent(cell, "mp")))
+				options.append(_node_option("hp", "在此休整 · 在场能行动的队员恢复 %d%% 生命" % run.recovery_percent(cell, "hp")))
+				options.append(_node_option("mp", "在此调息 · 在场能行动的队员恢复 %d%% 魔力" % run.recovery_percent(cell, "mp")))
 				options.append(_node_option("pack", "带走一份" + Catalog.item_name(node.item)))
 			"choice":
 				options.append(_node_option("work", "%s · 1 精力 · 得 %d 灯铢" % [event.work, node.coins]))
@@ -711,7 +711,7 @@ func _vouchers(channel: String) -> Array:
 func _split_squad_dialog() -> void:
 	var members: Array = run.squad_members(selected_id)
 	var dialog = _modal("拆分小队", 570, 520)
-	_text(dialog, "勾选要组成新小队的角色。拆分不消耗精力；两队留在原地，抵达其他小队所在格时自动合队。", 16, muted)
+	_text(dialog, "勾选要另组一队的人。拆队不用花精力，两队先留在原地。走到另一支小队所在的地块时会自动合队。", 16, muted)
 	var list = _scroll_content(dialog)
 	var chosen: Array = []
 	var confirm = _button(dialog, "组成新小队", func():
@@ -846,7 +846,7 @@ func _run_action(result: Dictionary) -> void:
 	if result.ok and run.data.status != "battle":
 		var saved = run.save_game()
 		if not saved.ok:
-			toast_text = "操作已结算，但存档失败：" + str(saved.message)
+			toast_text = "这次操作已完成，游戏没能保存。 " + str(saved.message)
 	_refresh()
 	if not result.ok and combat == null and run.data.status == "exploring" and modal_layer.get_child_count() == 0:
 		_notice(toast_text)
@@ -898,12 +898,12 @@ func _end_day_dialog() -> void:
 	for id in run.joined_ids():
 		if run.actor(id).ap > 0 and run.actor(id).hp > 0:
 			remaining.append("%s %d 精力" % [run.actor(id).name, run.actor(id).ap])
-	_confirm("结束这一天？", "尚余：" + " / ".join(remaining) + "\n\n全队进入次日，精力回各自上限。次日天气可能变化。生命与魔力靠节点、物资和治疗恢复。", func(): _run_action(run.end_day()))
+	_confirm("结束这一天？", "今天还剩：" + " / ".join(remaining) + "\n\n明天一早，全队精力回满，天气也可能变。生命和魔力可以靠休息、补给或治疗恢复。", func(): _run_action(run.end_day()))
 
 func _inventory_dialog(id: String, current_tab: int = 0, selected_consumable: String = "") -> void:
 	var a = run.actor(id)
 	var box = _modal(a.name + " · 背包与装备", 850, 670)
-	_text(box, "攻击 %d · 防御 %d · 速度 %d\n战斗外免费换装；物品只在同格交接，不刷新资源。" % [run.stat(id, "attack"), run.stat(id, "defense"), run.stat(id, "speed")], 16, muted)
+	_text(box, "攻击 %d · 防御 %d · 速度 %d\n战斗外换装备不用花精力。物品只能交给同一地块的人。" % [run.stat(id, "attack"), run.stat(id, "defense"), run.stat(id, "speed")], 16, muted)
 	var slots: Array[String] = []
 	for slot in ["weapon", "armor", "accessory"]:
 		var item = str(a.equipment.get(slot, ""))
@@ -915,7 +915,7 @@ func _inventory_dialog(id: String, current_tab: int = 0, selected_consumable: St
 	if not passive.is_empty():
 		_text(box, "专长 " + passive, 16, muted)
 	_text(box, "技能 · " + Catalog.SKILLS[a.skill].name + "\n" + Catalog.skill_description(a.skill), 16, muted)
-	_text(box, "终结技 · " + Catalog.SKILLS[a.ultimate].name + "\n" + Catalog.skill_description(a.ultimate) + "；满能量额外释放，不占正常行动。", 16, muted)
+	_text(box, "终结技 · " + Catalog.SKILLS[a.ultimate].name + "\n" + Catalog.skill_description(a.ultimate) + "。充能到 100% 就能放，不占正常行动。", 16, muted)
 	var tabs = TabContainer.new()
 	tabs.name = "InventoryTabs"
 	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -1147,7 +1147,7 @@ func _relic_information(content: VBoxContainer, actor_id: String, relic: String)
 		"survey_tally":
 			var visits: int = run.data.visited.size()
 			var upcoming: Array = [20, 60, 100].filter(func(value): return value > visits)
-			_text(content, "已实际到访 %d 格 · %s" % [visits, "里程碑已全部达成" if upcoming.is_empty() else "下一个 %d 格" % upcoming[0]], 16, gold)
+			_text(content, "已经走过 %d 格 · %s" % [visits, "里程碑已全部达成" if upcoming.is_empty() else "下一个 %d 格" % upcoming[0]], 16, gold)
 		"market_window":
 			for cell in run.data.explored:
 				var shop = run.node_at(cell)
@@ -1173,7 +1173,7 @@ func _relic_information(content: VBoxContainer, actor_id: String, relic: String)
 				var rd = Hex.distance(Hex.coord(origin), Hex.coord(right))
 				return left < right if ld == rd else ld < rd)
 			if candidates.is_empty():
-				_text(content, "附近未发现可公开的精英节点。", 16, muted)
+				_text(content, "附近还没发现精英战斗地点。", 16, muted)
 			else:
 				var cell: String = candidates[0]
 				var offset = Hex.coord(cell) - Hex.coord(origin)
@@ -1189,7 +1189,7 @@ func _relic_information(content: VBoxContainer, actor_id: String, relic: String)
 		"honest_ledger":
 			var node = run.node_at(origin)
 			if node.get("kind") == "choice":
-				_text(content, "当地委托 · " + ("已领取" if not node.result.is_empty() else "同地且需要 1 精力"), 16, gold)
+				_text(content, "当地委托 · " + ("已领取" if not node.result.is_empty() else "到场后花 1 点精力"), 16, gold)
 		"witness_slate":
 			for record in run.data.map_intel.get("observed_enemy_actions", []):
 				_text(content, "%s → %s · %s · HP −%d · 护盾 −%d" % [record.name, record.target,
@@ -1243,9 +1243,9 @@ func _transfer_dialog(owner: String, item: String) -> void:
 func _item_dialog(user_id: String, item_id: String = "") -> void:
 	var from_backpack = not item_id.is_empty()
 	var box = _modal("使用道具 · " + run.actor(user_id).name, 650, 460)
-	_text(box, "地图使用不耗精力；战斗中不占正常行动，可使用多件。", 16, muted)
+	_text(box, "在地图上用这些道具不用花精力。战斗中可以连续用，也不占正常行动。", 16, muted)
 	if from_backpack:
-		_text(box, "从当前角色的背包使用「%s」，请选择同地目标。" % Catalog.item_name(item_id), 16, gold)
+		_text(box, "要把背包里的「%s」给谁用？只能选在场的人。" % Catalog.item_name(item_id), 16, gold)
 	var targets: Array = []
 	if combat != null:
 		targets = combat.active.duplicate()
@@ -1317,7 +1317,7 @@ func _formation_dialog() -> void:
 		box.add_child(scene)
 		_text(box, "%s · %s\n%s" % [_node_title(encounter.position), event.title, _node_description(node, tile, event)], 15, gold)
 	var surprise = encounter.ambush or encounter.get("surprise", false)
-	_text(box, "每人本场首次上场支付 2 精力；同地候补可换入。" + ("\n突发遭遇：精力不足仍可出战，最多扣至 0。" if surprise else ""), 17, muted)
+	_text(box, "每人这场首次上场花 2 点精力。同一地块的队员可以做候补。" + ("\n突发遭遇：精力不足仍可出战，最多扣至 0。" if surprise else ""), 17, muted)
 	var chosen: Array = []
 	var lineup = _scroll_content(box)
 	for id in run.same_cell(encounter.position, true):
@@ -1352,7 +1352,7 @@ func _formation_dialog() -> void:
 			toast_text = result.message
 			_text(box, result.message, 16, gold))
 	# An entered encounter must be resolved; cancellation of known movement occurs before entry.
-	_text(box, "已进入遭遇，战斗中可选择撤退。", 14, muted)
+	_text(box, "已经遇到敌人了，开打后可以选择撤退。", 14, muted)
 
 func _battle_ui(screen: Vector2) -> void:
 	view.refresh_battle(run, combat)
@@ -1419,7 +1419,7 @@ func _battle_ui(screen: Vector2) -> void:
 	auto.toggle_mode = true
 	auto.set_pressed_no_signal(combat.auto_mode)
 	auto.add_theme_stylebox_override("hover_pressed", auto.get_theme_stylebox("pressed"))
-	auto.tooltip_text = "切换自动战斗，由队员自动选择并执行战斗指令。"
+	auto.tooltip_text = "开启后，队员会自己决定怎么打。"
 	var items = _button(quick_actions, "道具", func(): _item_dialog(combat.current), not is_friendly)
 	items.tooltip_text = "使用当前角色背包中的恢复道具。\n可给在场队友使用，不占正常行动。"
 	quick_actions.position = Vector2(enemy_panel_x - quick_actions.get_combined_minimum_size().x - 12, 120)
@@ -1439,8 +1439,8 @@ func _battle_ui(screen: Vector2) -> void:
 	guard.tooltip_text = "防守\n下次正常行动前受到的伤害降低，并获得 10% 充能。"
 	if is_friendly and not combat.reserves().is_empty():
 		var swap = _button(commands, "换人", _swap_dialog)
-		swap.tooltip_text = "用同地候补换下当前角色，消耗本次正常行动。\n每名候补首次上场支付参战精力。"
-	var retreat_hint = "已付精力不退还；本战出战者承受 10% 最大生命损伤，敌人恢复。"
+		swap.tooltip_text = "让同一地块的候补换下当前队员，占用这次正常行动。\n每名候补首次上场时也要花参战精力。"
+	var retreat_hint = "撤退后，花过的精力不退。出过战的队员各损失生命上限的 10%，敌人会恢复。"
 	var retreat = _button(commands, "撤退", func(): _confirm("撤退？", retreat_hint, func(): _run_action(combat.retreat()); _finish_battle()), combat.river or combat.madness.has(combat.current))
 	retreat.tooltip_text = retreat_hint
 	var field = combat.field_view()
@@ -1450,7 +1450,7 @@ func _battle_ui(screen: Vector2) -> void:
 		if field.fields.has(state):
 			context += " · %s %d 行动" % [field_names[state], field.fields[state]]
 	if combat.madness.has(combat.current):
-		context += " · 当前角色失去判断，将自行攻击"
+		context += " · 当前角色陷入疯狂，会自行攻击"
 	if field.burning:
 		context += " · 燃烧"
 		if run.has_relic("field_dial"):
@@ -1491,7 +1491,7 @@ func _enemy_card(parent: VBoxContainer, id: String, title: String) -> void:
 	card.add_theme_constant_override("separation", 4)
 	panel.add_child(card)
 	_button(card, ("◆ " if selected else "") + title, _select_battle_target.bind(id), enemy.hp <= 0)
-	var status = "已击败" if shown_hp <= 0 else "蓄力中！" if enemy.charged else "行动蓄积"
+	var status = "已击败" if shown_hp <= 0 else "蓄力中！" if enemy.charged else "等待行动"
 	if shown_hp > 0 and enemy.slow > 0:
 		status += " · 减速"
 	_text(card, "HP %d/%d · %s\n%s" % [shown_hp, enemy.hp_max, status, enemy.role], 14, muted)
@@ -1531,7 +1531,7 @@ func _ultimate(id: String) -> void:
 	var result = combat.request_ultimate(id, selected_target)
 	if result.ok:
 		if battle_timer > 0 or view.is_animating():
-			toast_text = "终结技已排队，在当前动作结束后释放。"
+			toast_text = "等眼前的动作结束，就会放出终结技。"
 			_refresh()
 			return
 		toast_text = ""
@@ -1588,7 +1588,7 @@ func _victory_dialog() -> void:
 	if result.get("coins", 0) > 0:
 		_text(content, "获得 %d 灯铢" % result.coins, 17, gold)
 	if result.salve_receiver.is_empty() and result.relic.is_empty() and result.get("coins", 0) <= 0:
-		_text(content, "本场没有新增战利品。", 17, muted)
+		_text(content, "这场没有战利品。", 17, muted)
 	content.add_child(HSeparator.new())
 	_text(content, "参战队员", 20, gold)
 	for id in result.members:
@@ -1641,10 +1641,10 @@ func _process(delta: float) -> void:
 
 func _chapter_pages() -> Array:
 	return [
-		["留下的人", "路边的行人指给你看，一位亡者反复走向断路，却怎么也离不开。死者家里早已办过葬礼。亲人去四座神殿都求过一遍，回来时仍然能听见同样的脚步。行人问，死人走到这里，究竟该向谁开口？\n\n你想伸手接住那踉跄的身影，脚边的碎石竟随手势轻轻浮起。记忆里也曾有一只手握着你。你答应过，要让无处可去的亡者有一个归处。"],
-		["失去的制衡", "两名逃难者在路边争抢水源。你把横在他们之间的刀压进土里，请双方说清来路。一边的井被滞留的亡魂困住，另一边的粮道毁于诸神交战。有个村庄曾向卡德兰求勇气守住粮仓，后来连受伤的人都在疯狂中追杀了已经退去的邻人。\n\n他们随身的旧约抄本提到，过去另有一股神明的势力约束诸方。那股力量消失后，卡德兰从扩大的纷争中不断获益。你记起了怎样将压住刀锋的力量铺开。"],
-		["未完成的停战会", "一名保存旧碑拓片的行者请你辨认残字。碑上记着，卡德兰曾邀另一位神赴停战会。侍从放下酒杯就被遣走，谁也没看到席间发生了什么。后来有人发现会场已毁。旁边的祭祀记载显示，从那以后，亡者再没有被接走。名字所在的一角早已破损。\n\n你记起自己曾走进同样的会场。你当时要诸神当面说清，每一次恩惠或惩罚落下去，究竟由谁承担。你甚至记得桌上那只还没碰过的杯子。"],
-		["找到战神", "一名刚离开卡德兰驻地的信使拦住你。信使带着盖有战神印记的征调书，也画下了亲自走过的道路。他只听过帐后不断响起的战鼓。你们把图上的山口、河岸与已探明的地貌逐一核对，确认了驻地的位置。\n\n征调书要求继续争夺粮道，还教围城者和守军用同一段祷词求胜。两边每多打一日，卡德兰便多得一日的力量。你把驻地标进地图。战火再这样拖下去，活人和无处可去的亡者都不会得到安宁。"],
+		["留下的人", "路边有人招手叫你过去，指给你看一位亡者。他一遍遍往路断掉的地方走，到了那里就折回来。家里早给他办过葬礼，也去四座神殿求过，可每天还是听得见他的脚步。那人问你：“都下葬了，他怎么还在这儿？我们还能找谁帮忙？”\n\n你伸手想扶他，脚边的碎石跟着浮了起来。你想起曾有人握着你的手，也想起自己答应过，要帮这些找不到路的亡者回去。"],
+		["失去的制衡", "两名逃难的人为了一口水拔了刀。你把刀压进泥里，让他们把话说清楚。一边的井被亡魂守着，没人敢靠近。另一边打仗毁了运粮的路。有个村庄求卡德兰给守粮仓的人一点勇气。结果敌人都撤了，村里连受伤的人也发了疯，追上去杀人。\n\n他们带着一份旧约的抄本。照上面写的，过去还有另一位神能拦住各方。那股力量一消失，仗越打越多，卡德兰也越来越强。你想起来，刚才按住那把刀的力气，也能用在不止一个人身上。"],
+		["未完成的停战会", "有人拿来一张从旧碑上拓下来的纸，问你认不认得那几个残字。碑上说，卡德兰曾约另一位神谈停战。侍从放下酒杯就被打发走了，没人知道后面发生了什么。等有人再进去，地方已经毁了。旁边还有一份祭祀记录，从那天起，再也没有亡者被接走。那位神的名字刻在碑角，已经掉了。\n\n你记得自己也走进过那间屋子。当时你问过那些神：“你们给人赏赐也好，降罚也好，最后吃亏的是谁？”你连桌上那杯没人喝过的酒都还记得。"],
+		["找到战神", "有个刚从卡德兰营地出来的信使拦住你。他带着一份盖了战神印记的征调书，还画了张自己走过的路。他没见着卡德兰，只听见帐后一直在打鼓。你和他对了对山口、河岸的位置，找到了营地。\n\n书上让两边继续抢运粮的路，连围城的人和守城的人，念的都是同一段求胜的祷词。仗多打一天，卡德兰就多一分力气。你把营地标上地图。这仗再打下去，活着的人没法过日子，死了的人也没地方去。"],
 	]
 
 func _show_chapter() -> bool:
@@ -1652,7 +1652,7 @@ func _show_chapter() -> bool:
 	if chapter == 0 or selected_id != "hero" or run.actor("hero").hp <= 0:
 		return false
 	var page = _chapter_pages()[chapter - 1]
-	_show_story(page[0], "旅人", page[1], _story_scene_at(run.actor(selected_id).position), [_story_portrait("hero")], [],
+	_show_story(page[0], "旅途见闻", page[1], _story_scene_at(run.actor(selected_id).position), [_story_portrait("hero")], [],
 		func(_option: String):
 			run.finish_chapter(chapter)
 			run.save_game()
@@ -1663,16 +1663,16 @@ func _show_chapter() -> bool:
 
 func _final_battle_page(index: int) -> void:
 	var pages = [
-		["旅人", "这道红光……卡德兰，我见过你这样举起武器。那天侍从都退下了，停战桌上的酒还没碰过。是你杀了我。"],
-		["旅人", "我是伊文洛，死亡之神。我记得那些在最后一段路上握过我手的人。战士、平民、向别的神祈祷过的人，我都接过。你看见我让碎石浮起来，那就是我领亡魂归去的力量。\n\n你毁了我的神躯。我也以为自己死了，直到现在才知道，死亡能再凝成我的肉身。有些逃难的人召唤恶魔求援，把昏迷的我意外带了回来。后来是村民救了我。"],
-		["卡德兰", "我亲手毁掉了你的肉身。送葬的人照旧念着他们的词，死者却一个都走不了。活人为了水、粮食和报复打起来，城里求我赐他们勇气，城外也这么求。我全都给了。他们打得越久，我便越强。\n\n我不知道你还能重生。连你当年，也从未说过还有这一条退路。"],
-		["旁白", "你伸出手，用重力为亡魂指出通往冥界的方向。一名仍在挥舞断剑的士兵慢慢放下手。有人最后回头看了一眼岸上的人，也有人只是终于停止了徘徊。\n\n灾厄失去了源头，活人的伤口仍留在世上。此刻，你要先让眼前的战神失去继续逼迫诸方交战的力量。"],
-		["旁白", "你将冥界的一部分引到战场，收住河界，留出仍属现世的岸地。冥河能够洗刷、剥夺、吞噬一切，不会天然分辨敌友。你留在岸上，以归来的权能挡住攻击，将河水约束在卡德兰脚下。\n\n河水逐步剥离战神的力量。现在，要亲手结束这一战。"],
+		["旅人", "这道红光……卡德兰，那天你也是这样举起武器的。侍从已经出去了，桌上的酒还没人喝。是你杀了我。"],
+		["旅人", "我是伊文洛，死亡之神。我记得那些临走时握过我手的人。有士兵，有平民，也有人向别的神求过平安。最后是我带他们去了冥界。你看见那些浮起来的碎石了吗？我就是用这股力量给亡魂引路的。\n\n你毁了我的身体。我自己都不知道，死亡还能让我重新有一副身体。后来有些逃难的人召唤恶魔求帮忙，竟把昏迷的我一起带到了这边。是村里的人救了我。"],
+		["卡德兰", "我亲手毁掉了你的身体。人们照旧办葬礼，可死者一个都走不了。活着的人为了水、为了粮，也为了报仇，又打了起来。城里求我给他们勇气，城外也来求。我两边都给了。他们打得越久，我就越强。\n\n我没想到你还能回来。你当年也没跟我说过，你还有这一手。"],
+		["旁白", "你伸出手，用重力给亡魂指了条去冥界的路。一个还在挥断剑的士兵慢慢放下了手。有人回头看了岸上的人一眼，也有人终于停下了脚步。\n\n亡魂找到了路，活着的人还有伤要治。你得先拦住卡德兰，让他没法再逼两边打下去。"],
+		["旁白", "你把冥河引到战场，把河水拦在卡德兰脚下，给活着的人留了一块能站稳的岸。冥河不会分辨敌友。谁掉下去，力量都会被河水一点点夺走。掉进去的东西，也可能被河水吞掉。\n\n卡德兰已经开始站不稳了。现在轮到你结束这场仗。"],
 	]
 	var page = pages[index]
 	var met_demon = Catalog.COMPANIONS.keys().any(func(id): return Catalog.COMPANIONS[id].race == "恶魔" and run.data.story[id].met)
 	if index == 3 and met_demon:
-		page[1] += "\n\n你也终于明白，恶魔在你身边感到熟悉，是因为它们认得故乡的气息。"
+		page[1] += "\n\n你也明白了，为什么那些恶魔总觉得你有点眼熟。他们认出了冥界的气息。"
 	var scene = "final_memory" if index < 2 else _story_scene_at(run.data.boss) if index == 2 else "finale"
 	var portraits = [] if index < 2 else [_story_portrait("hero", "battle"), _story_portrait("war_god", "anger" if index == 2 else "surprise")]
 	_show_story("记忆回来了", page[0], page[1], scene, portraits, [],
@@ -2144,7 +2144,7 @@ func _journal() -> void:
 		if run.data.story[id].met:
 			var relation = "已同行" if run.actor(id).joined else "已见过"
 			if run.actor(id).joined:
-				relation += " · 已作出个人抉择" if not str(run.data.story[id].get("personal_choice", "")).is_empty() else " · 可同地谈谈心事"
+				relation += " · 已作出个人抉择" if not str(run.data.story[id].get("personal_choice", "")).is_empty() else " · 见面可以谈谈心事"
 			_text(content, "%s · %s" % [run.actor(id).name, relation], 18, muted)
 	var clues: Array[String] = []
 	for cell in run.data.nodes:
@@ -2163,7 +2163,7 @@ func _journal() -> void:
 	if not clues.is_empty():
 		_text(content, "路上记录的线索", 20, gold)
 		_text(content, "\n".join(clues), 16, muted)
-	_text(content, "同地角色可当面交换亲历见闻，共享地图不传送物品。", 16, muted)
+	_text(content, "队员碰面时可以交换各自的见闻。物品得见了面才能交给对方。", 16, muted)
 	_button(box, "合上手记", _close_modal)
 
 func _summary(screen: Vector2) -> void:
@@ -2175,7 +2175,7 @@ func _summary(screen: Vector2) -> void:
 	else:
 		_text(box, narrative.main_ending().title, 25, gold)
 	var met_count = Catalog.COMPANIONS.keys().filter(func(id): return run.data.story[id].met).size()
-	_text(box, "主线结局与 %d 位相识者的后续已记下。查看结局剧情，逐页读完这段旅途。" % met_count, 18, muted)
+	_text(box, "结局里还记下了路上遇到的 %d 个人后来怎么样了。" % met_count, 18, muted)
 	_button(box, "查看结局剧情", _ending_story)
 	_button(box, "返回主菜单", _to_menu)
 
@@ -2209,7 +2209,7 @@ func _ending_page(pages: Array[Dictionary], index: int) -> void:
 
 func _to_menu() -> void:
 	if combat != null:
-		_confirm("返回菜单？", "未完成战斗将保留同一个战前检查点与随机状态；继续时重新进入本场遭遇。", func():
+		_confirm("返回菜单？", "进度会留在开战前。下次继续远征时，会从头打这一场。", func():
 			combat = null
 			view.end_battle()
 			_show_opening(Screen.MENU))
@@ -2218,7 +2218,7 @@ func _to_menu() -> void:
 		_show_opening(Screen.MENU)
 
 func _guide() -> void:
-	_notice("点队友所在格切换小队。移动时点相邻格预览精力，再点一次确认。要走到队友所在格，先点当前小队所在格。左栏可勾选同格角色同行。\n\n「行动」打开脚下的节点。歇脚点、药品和治疗技能恢复生命或魔力，结束一天恢复精力。灯铢由全队共享，买到的物品进入交易者背包。\n\n同地最多四人出战，候补换人占正常行动，终结技可插队。从沿途的故事和遭遇里找线索，找到并击败战神。")
+	_notice("点队友所在格切换小队。移动时点相邻格预览精力，再点一次确认。要走到队友所在格，先点当前小队所在格。左栏可勾选同格角色同行。\n\n点「行动」可以看看在脚下这个地方能做什么。歇脚、用药或治疗能恢复生命或魔力，结束一天能回满精力。灯铢由全队共享，买到的物品进入交易者背包。\n\n同一地块最多四人出战。换上候补要用掉这次正常行动，终结技充能满了就能放。从沿途的故事和遭遇里找线索，找到并击败战神。")
 
 func _settings_dialog() -> void:
 	var box = _modal("设置与操作", 650, 430)

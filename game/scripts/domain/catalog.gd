@@ -20,7 +20,7 @@ const PROFESSIONS = {
 	"wayfarer": {"name": "巡路客", "description": "善于探索和支援，行动频繁。", "hp": 95, "mp": 48, "ap": 9, "attack": 18, "defense": 5, "speed": 122, "skill": "trail_shot", "ultimate": "rally", "color": "caa76d", "attack_delivery": "ranged"},
 	"guardian": {"name": "守灯卫", "description": "高生命与防护，机动较低。", "hp": 145, "mp": 35, "ap": 5, "attack": 24, "defense": 10, "speed": 83, "skill": "guard_all", "ultimate": "dawn_strike", "color": "799cba", "attack_delivery": "melee"},
 	"arcanist": {"name": "烛纹师", "description": "以魔力施展火焰与治疗。", "hp": 83, "mp": 85, "ap": 7, "attack": 23, "defense": 4, "speed": 101, "skill": "ember", "ultimate": "warmth", "color": "b78aac", "attack_delivery": "ranged"},
-	"frost_archer": {"name": "霜弓手", "hero_name": "霜弦", "element": "ice", "description": "冰矢压慢单个敌人，终结技减速全场敌人。", "hp": 92, "mp": 64, "ap": 8, "attack": 20, "defense": 5, "speed": 108, "skill": "frost_arrow", "ultimate": "frostfall", "color": "93badd", "attack_delivery": "ranged"},
+	"frost_archer": {"name": "霜弓手", "hero_name": "霜弦", "element": "ice", "description": "用冰箭给一个敌人减速，终结技可以让所有敌人变慢。", "hp": 92, "mp": 64, "ap": 8, "attack": 20, "defense": 5, "speed": 108, "skill": "frost_arrow", "ultimate": "frostfall", "color": "93badd", "attack_delivery": "ranged"},
 	"storm_caller": {"name": "引雷师", "hero_name": "闻霆", "element": "lightning", "description": "雷击擅长爆发，在潮湿的场地伤害更高。", "hp": 82, "mp": 76, "ap": 7, "attack": 26, "defense": 4, "speed": 102, "skill": "thunderbolt", "ultimate": "thunderstorm", "color": "9f87d7", "attack_delivery": "ranged"},
 	"wind_runner": {"name": "逐风客", "hero_name": "岚翎", "element": "wind", "description": "风刃攻击全体敌人，终结技为己方提速。", "hp": 96, "mp": 56, "ap": 9, "attack": 19, "defense": 5, "speed": 124, "skill": "windblade", "ultimate": "tailwind", "color": "79bd9a", "attack_delivery": "ranged"},
 	"stone_guard": {"name": "岩卫", "hero_name": "石垣", "element": "earth", "description": "以石棘打击单个敌人，终结技为全队撑起护盾。", "hp": 142, "mp": 48, "ap": 6, "attack": 23, "defense": 10, "speed": 84, "skill": "stone_spike", "ultimate": "stonewall", "color": "ba9267", "attack_delivery": "ranged"},
@@ -111,9 +111,9 @@ const SKILLS = {
 	"stonewall": {"name": "磐城", "mp": 0, "shield": 42, "target": "all_allies", "element": "earth", "energy": 0, "delivery": "none"},
 }
 const ITEMS = {
-	"salve": {"name": "疗伤药", "description": "恢复 45 HP，可同地救援重伤者。", "hp": 45},
-	"ether": {"name": "澄露", "description": "恢复 30 MP。", "mp": 30},
-	"trail_food": {"name": "旅途干粮", "description": "可用于分享与任务；不设每日强制消耗。"},
+	"salve": {"name": "疗伤药", "description": "回复 45 点生命，也能救治同一地块的重伤队员。", "hp": 45},
+	"ether": {"name": "澄露", "description": "回复 30 点魔力。", "mp": 30},
+	"trail_food": {"name": "旅途干粮", "description": "可以送给别人或用来完成任务。每天赶路不用花干粮。"},
 	"trail_blade": {"name": "巡路短刃", "slot": "weapon", "attack": 4},
 	"padded_coat": {"name": "夹棉旅衣", "slot": "armor", "defense": 3},
 	"lamp_charm": {"name": "旧灯护符", "slot": "accessory", "speed": 8},
@@ -168,4 +168,4 @@ static func skill_description(id: String) -> String:
 	return " · ".join(parts)
 
 static func passive_description(id: String) -> String:
-	return {"hero": "以重力魔法作战。", "cen": "森林采集额外 +1。", "lorne": "山地移动只需 1 精力。", "eve": "同地可行动时，休整恢复额外 +10 个百分点。", "grit": "辨识附近已发现敌人；在场时令低于 35% HP 的队友减伤 20%。", "ember": "火术可在晴天点燃干燥的森林战场。", "tide": "水术可使当前战场潮湿，减弱火系技能伤害。"}.get(id, "")
+	return {"hero": "以重力魔法作战。", "cen": "在森林采集时多拿一份。", "lorne": "山地移动只需 1 精力。", "eve": "她在同一地块且能行动时，休整的回复比例增加 10 个百分点。", "grit": "能看出附近已发现敌人的能力。他在场时，生命低于 35% 的队友受到的伤害降低 20%。", "ember": "火术可在晴天点燃干燥的森林战场。", "tide": "水术可使当前战场潮湿，减弱火系技能伤害。"}.get(id, "")

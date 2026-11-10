@@ -231,7 +231,7 @@ func gear_transfer(id: String, target: String, uid: String) -> Dictionary:
 	var instance = data.gear_instances.get(uid, {})
 	if data.status != "exploring" or not data.pending_battle.is_empty() or a.is_empty() or b.is_empty() \
 			or id == target or not a.joined or not b.joined or a.position != b.position or same_cell(a.position, true).is_empty():
-		return fail("需要同地可行动的角色协助交接。")
+		return fail("同一地块得有能行动的队员帮忙，才能交接装备。")
 	if instance.get("owner") != {"kind": "actor", "id": id} or uid in a.equipment.values():
 		return fail("只能交接自己持有且已卸下的装备。")
 	instance.owner.id = target
@@ -320,7 +320,7 @@ func _item_result(message: String) -> Dictionary:
 
 func commit_item_operation(operation_id: String, revision: int, action: Callable) -> Dictionary:
 	if operation_id.is_empty():
-		return fail("操作标识缺失。")
+		return fail("这次操作没能确认，请重新试一次。")
 	var previous = data.last_item_operation
 	if previous.get("id") == operation_id:
 		return previous.result.duplicate(true)
@@ -379,7 +379,7 @@ func _node_access(id: String, cost: int) -> Dictionary:
 		return check
 	var tile = data.tiles[actor(id).position]
 	if not tile.enemies.is_empty():
-		return fail("需要先处理这个地块的危险。")
+		return fail("这里还有危险，先清掉敌人。")
 	return success()
 
 func trade(id: String, item: String, buying: bool, voucher: String = "") -> Dictionary:
@@ -488,7 +488,7 @@ func use_node(id: String, option: String) -> Dictionary:
 					recovered.append("%s +%d" % [target.name, gain])
 					recovered_members.append(member)
 			if recovered.is_empty():
-				return fail("在场可行动的队员已经全满，可以留待下次。")
+				return fail("在场能行动的队员都不需要恢复了，可以下次再来。")
 			message = "%s恢复 · %s" % ["生命" if option == "hp" else "魔力", "、".join(recovered)]
 		["rest", "pack"], ["cache", "search"]:
 			var relic = ""
@@ -523,7 +523,7 @@ func use_node(id: String, option: String) -> Dictionary:
 				if has_relic("farewell_receipt") and not data.item_effect_counts.has(key) and _restore_map(id, "mp", 6):
 					data.item_effect_counts[key] = 1
 		_:
-			return fail("当前节点没有这个选项。")
+			return fail("这里现在做不了这件事。")
 	visitor.ap -= cost
 	if node.kind == "rest" and not recovered_members.is_empty():
 		if _after_rest(option, recovered_members):
@@ -552,10 +552,10 @@ func investigate_relic(id: String) -> Dictionary:
 	var position: String = actor(id).position
 	var source = "site:" + position
 	if not relic_sites.has(position) or data.relic_claims.has(source):
-		return fail("这里没有尚待调查的遗器线索。")
+		return fail("这里没有新的遗器线索。")
 	var relic = roll_relic(source, [relic_sites[position]], 0.25, id, position)
 	data.last_move_windows.clear()
-	return {"ok": true, "relic": relic, "message": "你查看了旧物，能辨认的痕迹已经记录在路册里。"}
+	return {"ok": true, "relic": relic, "message": "你检查了旧物，把看得出来的线索记进了旅途手记。"}
 
 func relic_offer(source: String, candidates: Array, chance: float) -> String:
 	var pool = candidates.filter(func(id): return not data.relic_seen.has(id))
@@ -669,7 +669,7 @@ func use_relic(user: String, id: String, target: String = "") -> Dictionary:
 			var costs = _resource_changes(a, params.get("cost", {}), id == "stillwater_stone")
 			for resource in costs:
 				if int(a[resource]) < costs[resource] or (resource == "hp" and int(a.hp) <= costs.hp):
-					return fail("无法支付使用这件遗器所需的资源。")
+					return fail("使用这件遗器需要花费的生命、魔力或精力不够。")
 			var gains: Dictionary = {}
 			for member in recipients:
 				var recipient = actor(member)
@@ -697,7 +697,7 @@ func use_relic(user: String, id: String, target: String = "") -> Dictionary:
 			if target not in Hex.neighbors(a.position, data.tiles) or not data.visited.has(target) \
 					or not tile.get("discovered_enemy", false) or tile.enemies.is_empty() or target == data.boss \
 					or data.map_intel.has("encounter:" + target):
-				return fail("请选择相邻、已到访且敌情可公开的地块。")
+				return fail("请选一个相邻、已经去过、能查看敌情的地块。")
 			var elements: Array = []
 			for enemy in tile.enemies:
 				var definition = Catalog.ENEMIES.get(enemy, {})
@@ -707,12 +707,12 @@ func use_relic(user: String, id: String, target: String = "") -> Dictionary:
 			var receipt = data.last_move_windows.get(user, {})
 			var gain = mini(int(receipt.get("paid", 0)), mini(int(a.ap_max - a.ap), params.refund_ap_flat))
 			if receipt.get("day") != data.day or receipt.get("position") != a.position or receipt.get("weather") != "rain" or gain <= 0:
-				return fail("需要刚完成一次雨天付费移动且有精力缺口。")
+				return fail("刚在雨天花过精力走一步，而且精力还没满，才能用。")
 			a.ap += gain
 		"route_use":
 			var route = _known_route(user, target)
 			if route.is_empty() or data.route_records.get(user, {}) == route:
-				return fail("请选择已发现、可达且尚未记录此路线的地块。")
+				return fail("请选一个发现了、能走到、还没记过路线的地块。")
 			data.route_records[user] = route
 		"transaction_use":
 			return fail("在买入或强化的确认界面选择这张凭券。")
@@ -911,24 +911,24 @@ func movement_preview(ids: Array, destination: String) -> Dictionary:
 		return fail("湖面无法通行，请沿湖岸绕行。")
 	var source = actor(str(ids[0])).get("position", "")
 	if not data.tiles.has(source):
-		return fail("角色位置无效。")
+		return fail("找不到这名队员在地图上的位置。")
 	if not data.tiles[source].enemies.is_empty() and source != data.boss:
-		return fail("敌人阻挡此处；需交战，或在战斗中撤退。")
+		return fail("敌人拦住了路。你可以迎战，也可以在战斗中撤退。")
 	if destination not in Hex.neighbors(source, data.tiles):
-		return fail("每次移动一格；可点击远处地块查看路径。")
+		return fail("每次只能走一格。点远处的地块可以先看路线。")
 	var known_encounter = knows_encounter(destination)
 	if destination == data.boss and known_encounter:
 		var hero = actor("hero")
 		var can_enter = ("hero" in ids and hero.ap >= move_cost("hero", destination) + Catalog.BATTLE_AP) or (hero.position == destination and hero.ap >= Catalog.BATTLE_AP)
 		if hero.hp <= 0 or not can_enter:
-			return fail("需要旅人亲自前往，并留出 2 点精力迎战。")
+			return fail("旅人得亲自去，还要留 2 点精力开战。")
 	var costs = {}
 	for id in ids:
 		if costs.has(id):
 			return fail("同行名单不能重复。")
 		var a = actor(id)
 		if a.is_empty() or not a.joined or a.hp <= 0 or a.position != source:
-			return fail("只能让同格、可行动的己方角色一起移动。")
+			return fail("只有在同一地块、还能行动的队员可以一起走。")
 		costs[id] = move_cost(id, destination)
 		if int(a.ap) < int(costs[id]):
 			return fail("%s 精力不足（需要 %d）。" % [a.name, costs[id]])
@@ -941,7 +941,7 @@ func movement_preview(ids: Array, destination: String) -> Dictionary:
 			if actor(id).ap >= Catalog.BATTLE_AP:
 				available += 1
 		if available == 0:
-			return fail("进入已知遭遇需要至少一名角色能支付移动和参战费。")
+			return fail("至少要有一名队员的精力够走过去，还能接着开战。")
 	return {"ok": true, "costs": costs, "encounter": known_encounter, "source": source}
 
 func move(ids: Array, destination: String) -> Dictionary:
@@ -985,10 +985,10 @@ func join_companion(id: String, recruiter_id: String = "") -> Dictionary:
 		return fail("没有这位伙伴。")
 	var a = actor(id)
 	if a.hp <= 0:
-		return fail("对方重伤，需要同地实际救援后再交谈。")
+		return fail("对方伤得很重。到他身边救治后，再跟他交谈。")
 	var local_crew = same_cell(a.position, true)
 	if local_crew.is_empty() or (not recruiter_id.is_empty() and recruiter_id not in local_crew):
-		return fail("需要同格交谈。")
+		return fail("走到同一地块才能交谈。")
 	if a.joined:
 		return fail("已经同行。")
 	a.joined = true
@@ -1021,7 +1021,7 @@ func transfer(from_id: String, to_id: String, item: String, amount: int) -> Dict
 	if source.is_empty() or target.is_empty() or not source.joined or not target.joined or source.position != target.position:
 		return fail("只能在同一地块交接物品。")
 	if same_cell(source.position, true).is_empty():
-		return fail("需要同地可行动的角色协助整理物品。")
+		return fail("同一地块得有能行动的队员帮忙，才能整理物品。")
 	if amount <= 0 or int(source.inventory.get(item, 0)) < amount:
 		return fail("持有数量不足。")
 	if item in source.equipment.values():
@@ -1038,11 +1038,11 @@ func use_item(user_id: String, target_id: String, item: String, during_battle: b
 	var user = actor(user_id)
 	var target = actor(target_id)
 	if user.is_empty() or target.is_empty() or not user.joined or user.hp <= 0 or user.position != target.position:
-		return fail("使用者须可行动，并和目标在同一地块。")
+		return fail("只有还能行动的队员才能用道具，也只能给同一地块的人用。")
 	if not target.joined and not data.story.get(target_id, {}).get("met", false):
-		return fail("尚未接触这位角色。")
+		return fail("你还没见过这名角色。")
 	if data.status != "exploring" and not during_battle:
-		return fail("请在战斗正常行动窗口使用。")
+		return fail("等轮到己方正常行动时再用。")
 	var definition = Catalog.ITEMS.get(item, {})
 	if int(user.inventory.get(item, 0)) <= 0 or not (definition.has("hp") or definition.has("mp")):
 		return fail("没有可用的恢复道具。")
@@ -1104,7 +1104,7 @@ func heal_skill(user_id: String, target_id: String) -> Dictionary:
 	var a = actor(user_id)
 	var target = actor(target_id)
 	if a.skill != "heal" or a.mp < 12 or target.is_empty() or a.position != target.position:
-		return fail("需要同地医者及 12 MP。")
+		return fail("需要同一地块有医者，而且医者至少有 12 点魔力。")
 	if target.hp >= target.hp_max:
 		return fail("生命已满。")
 	a.ap -= 1
@@ -1207,7 +1207,7 @@ func save_game(path: String = "") -> Dictionary:
 	if path.is_empty():
 		path = save_path
 	if data.is_empty() or data.status == "battle":
-		return fail("只写入稳定检查点。")
+		return fail("现在还不能存档，等当前操作结束后再试。")
 	_ensure_squads()
 	data.rng_state = str(rng.state)
 	data.transaction += 1
@@ -1222,7 +1222,7 @@ func save_game(path: String = "") -> Dictionary:
 		DirAccess.copy_absolute(path, path + ".bak")
 	var error = DirAccess.rename_absolute(temporary, path)
 	if error != OK:
-		return fail("存档替换失败，旧存档已保留。")
+		return fail("没能更新存档，旧存档还在。")
 	return success()
 
 func load_game(path: String = "") -> Dictionary:
@@ -1232,10 +1232,10 @@ func load_game(path: String = "") -> Dictionary:
 		return fail("还没有远征存档。")
 	var json = JSON.new()
 	if json.parse(FileAccess.get_file_as_string(path)) != OK or not json.data is Dictionary:
-		return fail("存档损坏；旧文件没有被覆盖。")
+		return fail("存档损坏了，原来的文件还在。")
 	var loaded: Dictionary = json.data
 	if not _whole_number(loaded.get("version", -1)) or int(loaded.version) not in [3, SAVE_VERSION] or not loaded.has_all(["actors", "tiles", "rng_state", "day", "explored", "status"]):
-		return fail("存档版本不兼容或缺少字段。")
+		return fail("存档版本不兼容，或者进度记录不完整。")
 	if int(loaded.version) == SAVE_VERSION and (not loaded.get("relic_seen") is Dictionary or not loaded.get("nodes") is Dictionary):
 		return fail("遗器发现记录无效。")
 	var invalid = _validate_save(loaded)
@@ -1294,10 +1294,10 @@ func _restore_legacy_visits() -> void:
 
 func _validate_save(loaded: Dictionary) -> String:
 	if not loaded.has_all(["flags", "story", "knowledge", "rewards", "log", "pending_battle", "start", "boss", "leads", "peace", "chapter", "profession", "explored", "transaction", "battles", "weather"]):
-		return "缺少进度字段"
+		return "进度记录不完整"
 	for key in ["actors", "tiles", "flags", "story", "knowledge", "rewards", "pending_battle", "explored", "leads", "peace"]:
 		if not loaded[key] is Dictionary:
-			return "字段类型不符"
+			return "进度记录格式有误"
 	if loaded.tiles.size() != 217 or not loaded.tiles.has(loaded.start) or not loaded.tiles.has(loaded.boss):
 		return "地图不完整"
 	if loaded.status not in ["exploring", "won", "failed"] or loaded.weather not in ["sun", "rain"] or not Catalog.PROFESSIONS.has(loaded.profession):
@@ -1358,7 +1358,7 @@ func _validate_save(loaded: Dictionary) -> String:
 			return "六边形坐标无效"
 		var tile = loaded.tiles[k]
 		if not tile is Dictionary or not tile.has_all(["terrain", "base_terrain", "enemies", "site", "npc", "resource", "quantity", "height", "hidden", "discovered_enemy"]):
-			return "地块字段不完整"
+			return "地块记录不完整"
 		var legacy_forest = tile.terrain == "scorched" and tile.base_terrain == "forest"
 		if (not Catalog.TERRAIN.has(tile.terrain) and not legacy_forest) or not Catalog.TERRAIN.has(tile.base_terrain) or not tile.enemies is Array:
 			return "地形或遭遇无效"
@@ -1376,7 +1376,7 @@ func _validate_save(loaded: Dictionary) -> String:
 			return "角色缺失"
 		var a = loaded.actors[id]
 		if not a.has_all(["id", "name", "color", "element", "attack", "defense", "speed", "ap_initialized_day", "shield", "slow", "guard", "position", "joined", "hp", "hp_max", "mp", "mp_max", "ap", "ap_max", "energy", "equipment", "inventory", "skill", "ultimate"]):
-			return "角色字段不完整"
+			return "角色记录不完整"
 		if a.id != id or not a.name is String or not a.color is String or not a.element is String or not a.joined is bool:
 			return "角色标识无效"
 		if not Hex.is_land(loaded.tiles, a.position) or not a.inventory is Dictionary or not a.equipment is Dictionary:
@@ -1385,7 +1385,7 @@ func _validate_save(loaded: Dictionary) -> String:
 			return "角色技能无效"
 		for resource in ["hp", "mp", "ap"]:
 			if not _whole_number(a[resource]) or not _whole_number(a[resource + "_max"]) or a[resource + "_max"] <= 0 or a[resource] < 0 or a[resource] > a[resource + "_max"]:
-				return "角色资源越界"
+				return "队员的生命、魔力或精力超出正常范围"
 		for field in ["energy", "attack", "defense", "speed", "shield", "slow"]:
 			if not _whole_number(a[field]) or a[field] < 0 or (field == "speed" and a[field] == 0) or (field == "energy" and a[field] > 100):
 				return "角色数值无效"

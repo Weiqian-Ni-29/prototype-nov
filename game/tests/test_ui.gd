@@ -1,5 +1,6 @@
 extends SceneTree
 const Main = preload("res://scenes/main.tscn")
+const Catalog = preload("res://scripts/domain/catalog.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
@@ -532,11 +533,11 @@ func check_backpack_use() -> void:
 		"Consumable row labels the actual holder and retains handoff")
 	await select_consumable("疗伤药")
 	expect(row.get_parent().get_theme_stylebox("panel").border_color == game.gold
-		and contains_text(game.modal_layer, "恢复 45 HP") and lorne.inventory.salve == 2,
+		and contains_text(game.modal_layer, Catalog.ITEMS.salve.description) and lorne.inventory.salve == 2,
 		"Clicking the item row highlights it and explains its use without consuming it")
 	await select_consumable("澄露")
 	expect(row.get_parent().get_theme_stylebox("panel").border_color != game.gold
-		and contains_text(game.modal_layer, "恢复 30 MP"), "Selecting another consumable replaces the highlight and description")
+		and contains_text(game.modal_layer, Catalog.ITEMS.ether.description), "Selecting another consumable replaces the highlight and description")
 	await use_from_backpack("疗伤药")
 	var target = game.modal_layer.find_children("*", "OptionButton", true, false)[0]
 	expect(target.get_item_text(target.selected).begins_with("洛恩") and target.item_count == 2,
@@ -546,7 +547,7 @@ func check_backpack_use() -> void:
 		"Using from Lorne's bag heals him and consumes only his item without spending effort")
 	expect(saved_run().get("actors", {}).get("lorne", {}).get("hp") == 46 and consumable_row("疗伤药") != null,
 		"Successful use auto-saves and returns to the refreshed backpack")
-	expect(contains_text(game.modal_layer, "恢复 45 HP"), "The item remains selected after using it when another remains")
+	expect(contains_text(game.modal_layer, Catalog.ITEMS.salve.description), "The item remains selected after using it when another remains")
 	hero.hp = 0
 	await use_from_backpack("疗伤药")
 	target = game.modal_layer.find_children("*", "OptionButton", true, false)[0]
@@ -571,7 +572,7 @@ func check_backpack_use() -> void:
 	await press("背包")
 	expect(consumable_row("营地木料") == null, "New expeditions have no construction material")
 	await select_consumable("旅途干粮")
-	expect(contains_text(game.modal_layer, "可用于分享与任务"), "Food can be selected and inspected like every consumable")
+	expect(contains_text(game.modal_layer, Catalog.ITEMS.trail_food.description), "Food can be selected and inspected like every consumable")
 	await press("关闭")
 
 func saved_run() -> Dictionary:
@@ -803,8 +804,14 @@ func execute() -> void:
 	expect(contains_text(history, "维洛丹的人们") and contains_text(history, "你醒了"),
 		"History carries over from the world introduction into the village")
 	await click("关闭")
-	await advance_until_text("愿你一路平安")
-	expect(dialogue_contains("愿你一路平安"), "The villager sends off the traveler with supplies")
+	await advance_until_text("我也想帮帮其他人")
+	expect(dialogue_contains("我也想帮帮其他人"), "The traveler speaks plainly about helping others")
+	await click("历史对话")
+	expect(contains_text(game.modal_layer.get_node("StoryHistory"), "我也想帮帮其他人"),
+		"History shows the same traveler dialogue as the story screen")
+	await click("关闭")
+	await advance_until_text("一路平安")
+	expect(dialogue_contains("一路平安"), "The villager sends off the traveler with supplies")
 	await finish_linear_story()
 	expect(game.modal_layer.get_child_count() == 0 and game.run.actor("hero").name == "旅人", "Departure enters the map as the fixed traveler")
 	expect(saved_run().get("actors", {}).get("hero", {}).get("inventory", {}).get("salve") == 3, "Village supplies are saved on departure")
