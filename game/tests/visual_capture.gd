@@ -688,8 +688,10 @@ func execute() -> void:
 	# Seven-person inventory and portrait dialogue layout use explicit presentation fixtures.
 	game.run.data.status = "exploring"
 	game.run.data.pending_battle = {}
-	game._inventory_dialog("hero")
+	game._inventory_dialog("hero", 0, "salve")
 	await capture("inventory-seven-members")
+	game._inventory_dialog("hero", 1, str(game.run.actor("hero").equipment.weapon))
+	await capture("inventory-gear")
 	game._transfer_dialog("hero", "salve")
 	await capture("transfer-seven-members")
 	game._close_modal()
