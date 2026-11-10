@@ -319,6 +319,7 @@ func check_arrival_after_victory() -> void:
 	run.data.tiles[cell].hidden = true
 	run.data.tiles[cell].discovered_enemy = false
 	run.actor("hero").position = from
+	run.data.steps_today = run.STEPS_PER_DAY - 1
 	run.reveal(from)
 	game._select_actor("hero")
 	game._select_cell(cell)
@@ -328,9 +329,12 @@ func check_arrival_after_victory() -> void:
 	expect(game.modal_layer.has_node("StoryScreen") and find_button(game.modal_layer, "开始战斗") == null
 		and run.data.get("pending_arrival", {}).get("cell") == cell,
 		"Arriving at an encounter opens its story before formation and remembers the new tile")
+	expect(game.day_transition.has_node("CompactNotice") and contains_text(game.day_transition, "第 2 天"),
+		"A day change on an encounter shows a compact notice without delaying the story")
 	var pending: Dictionary = run.data.pending_battle.duplicate(true)
 	expect(pending.origin == from and pending.ambush, "The encounter records the original retreat tile and ambush")
 	game._continue_run()
+	expect(game.day_transition.get_child_count() == 0, "Loading does not replay a prior day change")
 	var introduction = await read_to_choices(func(): return game.combat == null and run.data.pending_battle == pending)
 	expect(compact(introduction).contains(compact(event.intro)) and introduction.contains("抢先扑了出来"),
 		"Resuming an encounter presents its complete node introduction and ambush before formation")

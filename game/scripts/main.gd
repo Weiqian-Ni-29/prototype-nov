@@ -13,6 +13,7 @@ const StoryPortrait = preload("res://scripts/presentation/story_portrait.gdshade
 const World = preload("res://scripts/presentation/world_view.gd")
 const MapMovePreview = preload("res://scripts/presentation/map_move_preview.gd")
 const InventoryPage = preload("res://scripts/presentation/inventory_page.gd")
+const DayTransition = preload("res://scripts/presentation/day_transition.gd")
 const FontAsset = preload("res://assets/fonts/NotoSansSC.ttf")
 const Sound = preload("res://scripts/presentation/sound.gd")
 enum Screen { MENU, OPENING_STORY, EXPEDITION }
@@ -41,7 +42,9 @@ var selected_id = "hero"
 var selected_cell = ""
 var move_target = ""
 var map_traveling = false
+var travel_clock: Dictionary = {}
 var move_preview = MapMovePreview.new()
+var day_transition = DayTransition.new()
 var crew_collapsed = false
 var chosen_seed = ""
 var opening_seed = 20261104
@@ -103,6 +106,10 @@ func _ready() -> void:
 	modal_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	modal_layer.theme = theme
 	canvas.add_child(modal_layer)
+	day_transition.theme = theme
+	day_transition.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	canvas.add_child(day_transition)
+	day_transition.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	run.new_run(20261104, "wayfarer")
 	narrative = Story.new(run)
 	get_viewport().size_changed.connect(func():
@@ -256,6 +263,7 @@ func _opening_image(texture: Texture2D) -> TextureRect:
 	return illustration
 
 func _show_opening(state: Screen) -> void:
+	day_transition.dismiss()
 	screen_state = state
 	_refresh()
 
@@ -316,12 +324,14 @@ func _seed_value() -> int:
 	return int(chosen_seed) if chosen_seed.is_valid_int() else hash(chosen_seed)
 
 func _start_new() -> void:
+	day_transition.dismiss()
 	_close_modal()
 	if screen_state != Screen.OPENING_STORY:
 		story_history.clear()
 	var value = opening_seed if screen_state == Screen.OPENING_STORY else _seed_value()
 	run.new_run(value, "wayfarer")
 	map_traveling = false
+	travel_clock.clear()
 	combat = null
 	_clear_map_move()
 	view.reset()
@@ -339,8 +349,10 @@ func _continue_run() -> void:
 	if not result.ok:
 		_notice(result.message)
 		return
+	day_transition.dismiss()
 	story_history.clear()
 	map_traveling = false
+	travel_clock.clear()
 	combat = null
 	_clear_map_move()
 	toast_text = ""
@@ -387,13 +399,14 @@ func _header(screen: Vector2) -> void:
 	balance.autowrap_mode = TextServer.AUTOWRAP_OFF
 	balance.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	balance.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var weather = "细雨" if run.data.weather == "rain" else "晴朗"
+	var weather = "细雨" if travel_clock.get("weather", run.data.weather) == "rain" else "晴朗"
 	var exploration = floori(100.0 * run.data.explored.size() / run.data.tiles.size())
-	var conditions = "第 %d 天 · %s" % [run.data.day, weather]
+	var conditions = "第 %d 天 · %s" % [travel_clock.get("day", run.data.day), weather]
 	if combat == null and run.data.status == "exploring":
 		var tile = run.data.tiles[run.actor(selected_id).position]
 		conditions += " · " + Catalog.terrain_name(tile.terrain)
 	var status = _text(row, "%s\n探索度：%d%%" % [conditions, exploration], 16)
+	status.name = "DayConditions"
 	status.autowrap_mode = TextServer.AUTOWRAP_OFF
 	status.custom_minimum_size.x = 168
 	var objective = HBoxContainer.new()
@@ -458,7 +471,7 @@ func _crew_stamina(parent: VBoxContainer) -> void:
 	steps.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	steps.add_theme_constant_override("separation", 4)
 	row.add_child(steps)
-	var remaining = run.remaining_steps()
+	var remaining: int = travel_clock.get("steps", run.remaining_steps())
 	var bright = _bar_style(Color("91c970"))
 	var faded = _bar_style(Color("47604c"))
 	for i in Run.STEPS_PER_DAY:
@@ -832,10 +845,15 @@ func _move_selected() -> void:
 		return
 	var destination = move_target
 	var first_visit = not run.has_visited(destination)
+	var previous_clock := {"day": run.data.day, "weather": run.data.weather, "steps": run.remaining_steps()}
 	_clear_map_move()
 	var result = run.move(destination)
+	var day_changed: bool = result.ok and run.data.day != previous_clock.day
 	if result.ok:
+		day_transition.dismiss()
 		map_traveling = true
+		if day_changed:
+			travel_clock = previous_clock
 		selected_id = "hero"
 		selected_cell = destination
 		if first_visit and not Nodes.story(run.node_at(destination)).is_empty():
@@ -850,11 +868,29 @@ func _move_selected() -> void:
 		if not is_same(run.data, expedition):
 			return
 	map_traveling = false
-	_update_world_input()
+	travel_clock.clear()
+	if day_changed:
+		_refresh()
+	else:
+		_update_world_input()
 	if result.get("battle", false):
 		_show_encounter_intro()
 	else:
 		_show_arrival()
+	if day_changed:
+		_show_day_transition()
+
+func _show_day_transition() -> void:
+	var compact := modal_layer.get_child_count() > 0
+	day_transition.show_day(run.data.day, run.data.weather == "rain", compact)
+	if not compact:
+		for indicator_name in ["DayConditions", "CrewStamina"]:
+			var indicator := ui.find_child(indicator_name, true, false) as Control
+			if indicator == null:
+				continue
+			var pulse := indicator.create_tween()
+			pulse.tween_property(indicator, "modulate", Color(1.26, 1.22, 1.08), 0.18)
+			pulse.tween_property(indicator, "modulate", Color.WHITE, 0.46)
 
 func _show_arrival() -> void:
 	if not _show_chapter() and not _show_relic_intro(_show_arrival_node):
@@ -881,6 +917,7 @@ func _run_action(result: Dictionary) -> void:
 		_notice(toast_text)
 
 func _modal(title: String, width: float = 650, height: float = 520) -> VBoxContainer:
+	day_transition.dismiss_map_notice()
 	_clear_map_move()
 	move_preview.hide()
 	_clear(modal_layer)
@@ -1775,6 +1812,7 @@ func _story_text_pages(body: String, label: Label) -> PackedStringArray:
 func _show_story(title: String, speaker: String, body: String, scene: String,
 		portraits: Array, options: Array, on_choice: Callable, actions: Dictionary, tint: Color = Color.WHITE,
 		page_index: int = 0, history_entry: Dictionary = {}) -> void:
+	day_transition.dismiss_map_notice()
 	_clear_map_move()
 	move_preview.hide()
 	_clear(modal_layer)
