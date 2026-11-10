@@ -3,39 +3,32 @@ extends Control
 const TITLE_COLOR = Color("fff0c5")
 const SHADE_COLOR = Color(0.07, 0.14, 0.12, 0.91)
 
-func show_day(day: int, rainy: bool, compact: bool) -> void:
+func show_day(day: int, rainy: bool) -> void:
 	dismiss()
 	var notice := Control.new()
-	notice.name = "CompactNotice" if compact else "MapNotice"
+	notice.name = "MapNotice"
 	notice.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	notice.modulate.a = 0.0
 	add_child(notice)
 	notice.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	var title := "第 %d 天" % day
-	if compact:
-		_gradient(notice, Rect2(0.34, 0.094, 0.32, 0.074), SHADE_COLOR, Vector2(0.5, 0.5), Vector2(1, 0.5))
-		var caption := _label(title, 25, TITLE_COLOR)
-		notice.add_child(caption)
-		_region(caption, Rect2(0.34, 0.094, 0.32, 0.074))
-	else:
-		var glow := Color(0.65, 0.78, 1.0, 0.15) if rainy else Color(1.0, 0.80, 0.39, 0.17)
-		_gradient(notice, Rect2(0.16, 0.117, 0.84, 0.34), glow, Vector2(0.52, 0), Vector2(0.52, 0.86))
-		_gradient(notice, Rect2(0.28, 0.163, 0.62, 0.16), SHADE_COLOR, Vector2(0.5, 0.5), Vector2(1, 0.5))
-		var caption := VBoxContainer.new()
-		caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		caption.alignment = BoxContainer.ALIGNMENT_CENTER
-		caption.add_theme_constant_override("separation", 4)
-		notice.add_child(caption)
-		_region(caption, Rect2(0.23, 0.163, 0.72, 0.16))
-		var title_row := HBoxContainer.new()
-		title_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		title_row.alignment = BoxContainer.ALIGNMENT_CENTER
-		title_row.add_theme_constant_override("separation", 22)
-		caption.add_child(title_row)
-		_title_rule(title_row)
-		title_row.add_child(_label(title, 53, TITLE_COLOR))
-		_title_rule(title_row)
-		caption.add_child(_label("精力已恢复", 21, Color("e9dec2")))
+	var glow := Color(0.65, 0.78, 1.0, 0.15) if rainy else Color(1.0, 0.80, 0.39, 0.17)
+	_gradient(notice, Rect2(0.16, 0.117, 0.84, 0.34), glow, Vector2(0.52, 0), Vector2(0.52, 0.86))
+	_gradient(notice, Rect2(0.28, 0.163, 0.62, 0.16), SHADE_COLOR, Vector2(0.5, 0.5), Vector2(1, 0.5))
+	var caption := VBoxContainer.new()
+	caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	caption.alignment = BoxContainer.ALIGNMENT_CENTER
+	caption.add_theme_constant_override("separation", 4)
+	notice.add_child(caption)
+	_region(caption, Rect2(0.23, 0.163, 0.72, 0.16))
+	var title_row := HBoxContainer.new()
+	title_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	title_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	title_row.add_theme_constant_override("separation", 22)
+	caption.add_child(title_row)
+	_title_rule(title_row)
+	title_row.add_child(_label("第 %d 天" % day, 53, TITLE_COLOR))
+	_title_rule(title_row)
+	caption.add_child(_label("精力已恢复", 21, Color("e9dec2")))
 	var animation := notice.create_tween()
 	animation.tween_property(notice, "modulate:a", 1.0, 0.2).set_trans(Tween.TRANS_SINE)
 	animation.tween_interval(0.95)
@@ -46,10 +39,6 @@ func dismiss() -> void:
 	for notice in get_children():
 		remove_child(notice)
 		notice.queue_free()
-
-func dismiss_map_notice() -> void:
-	if has_node("MapNotice"):
-		dismiss()
 
 func _region(control: Control, region: Rect2) -> void:
 	control.set_anchor_and_offset(SIDE_RIGHT, region.end.x, 0)

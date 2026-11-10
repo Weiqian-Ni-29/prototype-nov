@@ -45,6 +45,7 @@ var map_traveling = false
 var travel_clock: Dictionary = {}
 var move_preview = MapMovePreview.new()
 var day_transition = DayTransition.new()
+var day_transition_pending := false
 var crew_collapsed = false
 var chosen_seed = ""
 var opening_seed = 20261104
@@ -263,6 +264,7 @@ func _opening_image(texture: Texture2D) -> TextureRect:
 	return illustration
 
 func _show_opening(state: Screen) -> void:
+	day_transition_pending = false
 	day_transition.dismiss()
 	screen_state = state
 	_refresh()
@@ -324,6 +326,7 @@ func _seed_value() -> int:
 	return int(chosen_seed) if chosen_seed.is_valid_int() else hash(chosen_seed)
 
 func _start_new() -> void:
+	day_transition_pending = false
 	day_transition.dismiss()
 	_close_modal()
 	if screen_state != Screen.OPENING_STORY:
@@ -349,6 +352,7 @@ func _continue_run() -> void:
 	if not result.ok:
 		_notice(result.message)
 		return
+	day_transition_pending = false
 	day_transition.dismiss()
 	story_history.clear()
 	map_traveling = false
@@ -878,19 +882,23 @@ func _move_selected() -> void:
 	else:
 		_show_arrival()
 	if day_changed:
+		day_transition_pending = true
 		_show_day_transition()
 
 func _show_day_transition() -> void:
-	var compact := modal_layer.get_child_count() > 0
-	day_transition.show_day(run.data.day, run.data.weather == "rain", compact)
-	if not compact:
-		for indicator_name in ["DayConditions", "CrewStamina"]:
-			var indicator := ui.find_child(indicator_name, true, false) as Control
-			if indicator == null:
-				continue
-			var pulse := indicator.create_tween()
-			pulse.tween_property(indicator, "modulate", Color(1.26, 1.22, 1.08), 0.18)
-			pulse.tween_property(indicator, "modulate", Color.WHITE, 0.46)
+	if not day_transition_pending or not view.is_processing_unhandled_input() \
+			or combat != null or not run.data.pending_battle.is_empty():
+		return
+	day_transition_pending = false
+	day_transition.show_day(run.data.day, run.data.weather == "rain")
+	sound.play("day")
+	for indicator_name in ["DayConditions", "CrewStamina"]:
+		var indicator := ui.find_child(indicator_name, true, false) as Control
+		if indicator == null:
+			continue
+		var pulse := indicator.create_tween()
+		pulse.tween_property(indicator, "modulate", Color(1.26, 1.22, 1.08), 0.18)
+		pulse.tween_property(indicator, "modulate", Color.WHITE, 0.46)
 
 func _show_arrival() -> void:
 	if not _show_chapter() and not _show_relic_intro(_show_arrival_node):
@@ -917,7 +925,7 @@ func _run_action(result: Dictionary) -> void:
 		_notice(toast_text)
 
 func _modal(title: String, width: float = 650, height: float = 520) -> VBoxContainer:
-	day_transition.dismiss_map_notice()
+	day_transition.dismiss()
 	_clear_map_move()
 	move_preview.hide()
 	_clear(modal_layer)
@@ -949,6 +957,9 @@ func _update_world_input() -> void:
 	var can_explore = not view.battle_mode and run.data.status == "exploring"
 	view.set_world_input_enabled(not map_traveling and screen_state == Screen.EXPEDITION and view.visible
 		and modal_layer.get_child_count() == 0 and (can_target or can_explore))
+	if day_transition_pending and can_explore and view.is_processing_unhandled_input():
+		# Closing one modal may open another before the map is shown.
+		_show_day_transition.call_deferred()
 
 func _notice(message: String, dismiss: Callable = Callable()) -> void:
 	var box = _modal("旅途提示", 620, 270)
@@ -1812,7 +1823,7 @@ func _story_text_pages(body: String, label: Label) -> PackedStringArray:
 func _show_story(title: String, speaker: String, body: String, scene: String,
 		portraits: Array, options: Array, on_choice: Callable, actions: Dictionary, tint: Color = Color.WHITE,
 		page_index: int = 0, history_entry: Dictionary = {}) -> void:
-	day_transition.dismiss_map_notice()
+	day_transition.dismiss()
 	_clear_map_move()
 	move_preview.hide()
 	_clear(modal_layer)

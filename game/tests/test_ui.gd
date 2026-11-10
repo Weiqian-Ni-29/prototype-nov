@@ -274,6 +274,9 @@ func check_node_arrival() -> void:
 	var village: Label3D = game.view.tile_nodes[start].get_node("LocationName")
 	expect(village.text == "村庄" and village.position.x == 0 and village.position.z == 0,
 		"Village name is centered on the village tile")
+	run.data.steps_today = run.STEPS_PER_DAY - 1
+	var previous_volume: float = game.sound.volume
+	game.sound.set_volume(0.65, false)
 	game._select_cell(cell)
 	expect(game.modal_layer.get_child_count() == 0, "Previewing movement cannot open a story")
 	game._select_cell(cell)
@@ -284,10 +287,20 @@ func check_node_arrival() -> void:
 	await wait_for_map_arrival()
 	expect(not game.view.dolls.hero.is_moving() and game.modal_layer.has_node("StoryScreen") and contains_text(game.modal_layer, title),
 		"The first-arrival story opens once the hero has finished moving")
+	expect(run.data.day == 2 and game.day_transition.get_child_count() == 0 and not game.sound.cache.has("day"),
+		"The last step advances the day without a notice or chime in the arrival story")
 	var marker: Label3D = game.view.tile_nodes[cell].get_node("LocationName")
 	expect(marker.text == title and marker.position.x == 0 and marker.position.z == 0,
 		"The same name appears at the visited tile's center")
 	await click("返回地图")
+	expect(game.day_transition.has_node("MapNotice") and contains_text(game.day_transition, "精力已恢复")
+		and game.sound.cache.get("day") == game.sound.DAY_CHIME,
+		"Returning to the map shows the full notice and plays the selected chime")
+	var sound_count: int = game.sound.voice_index
+	game._refresh()
+	await process_frame
+	expect(game.sound.voice_index == sound_count, "Refreshing the map does not replay the day chime")
+	game.sound.set_volume(previous_volume, false)
 	village = game.view.tile_nodes[start].get_node("LocationName")
 	for label in [village, marker]:
 		expect(label.is_visible_in_tree() and label.outline_render_priority > game.view.FOG_REVEAL_PRIORITY
@@ -329,8 +342,8 @@ func check_arrival_after_victory() -> void:
 	expect(game.modal_layer.has_node("StoryScreen") and find_button(game.modal_layer, "开始战斗") == null
 		and run.data.get("pending_arrival", {}).get("cell") == cell,
 		"Arriving at an encounter opens its story before formation and remembers the new tile")
-	expect(game.day_transition.has_node("CompactNotice") and contains_text(game.day_transition, "第 2 天"),
-		"A day change on an encounter shows a compact notice without delaying the story")
+	expect(run.data.day == 2 and game.day_transition.get_child_count() == 0,
+		"A day change on an encounter leaves the story clear")
 	var pending: Dictionary = run.data.pending_battle.duplicate(true)
 	expect(pending.origin == from and pending.ambush, "The encounter records the original retreat tile and ambush")
 	game._continue_run()
@@ -349,6 +362,7 @@ func check_arrival_after_victory() -> void:
 	expect(game.modal_layer.has_node("StoryScreen") and contains_text(game.modal_layer, run.location_name(cell)),
 		"After resuming from victory, continuing opens the arrival story")
 	await click("返回地图")
+	expect(game.day_transition.get_child_count() == 0, "Returning to the map after loading does not replay the day notice")
 
 func check_manual_encounter_intro() -> void:
 	game._start_new()
