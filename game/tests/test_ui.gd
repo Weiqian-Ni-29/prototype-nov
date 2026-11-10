@@ -46,32 +46,34 @@ func contains_text(parent: Node, fragment: String) -> bool:
 			return true
 	return false
 
-func consumable_row(item_name: String) -> Node:
-	for label in game.modal_layer.find_children("*", "Label", true, false):
-		if label.text.begins_with(item_name + " ×"):
-			return label.get_parent()
+func consumable_slot(item_name: String) -> Button:
+	var tabs = game.modal_layer.find_child("InventoryTabs", true, false)
+	if tabs != null:
+		for slot in tabs.get_child(0).grid.get_children():
+			if slot is Button and slot.tooltip_text == item_name:
+				return slot
 	return null
 
 func use_from_backpack(item_name: String) -> void:
-	var row = consumable_row(item_name)
-	var use = find_button(row, "使用") if row != null else null
+	await select_consumable(item_name)
+	var use = find_button(game.modal_layer, "使用")
 	expect(use != null and not use.disabled, "Backpack can use " + item_name)
 	if use != null and not use.disabled:
 		use.pressed.emit()
 	await process_frame
 
 func select_consumable(item_name: String) -> void:
-	var row = consumable_row(item_name)
-	expect(row != null, "Consumable appears in the backpack: " + item_name)
-	if row != null:
-		var scroll: ScrollContainer = row.get_parent().get_parent().get_parent()
-		scroll.ensure_control_visible(row)
+	var slot = consumable_slot(item_name)
+	expect(slot != null, "Consumable appears in the backpack: " + item_name)
+	if slot != null:
+		var scroll: ScrollContainer = slot.get_parent().get_parent()
+		scroll.ensure_control_visible(slot)
 		await process_frame
 		for pressed in [true, false]:
 			var event = InputEventMouseButton.new()
 			event.button_index = MOUSE_BUTTON_LEFT
 			event.pressed = pressed
-			event.position = row.get_global_rect().get_center()
+			event.position = slot.get_global_rect().get_center()
 			root.push_input(event, true)
 	await process_frame
 
@@ -617,15 +619,18 @@ func check_backpack_use() -> void:
 	var hero_salves = hero.inventory.salve
 	game._select_actor("lorne")
 	await press("背包")
-	var row = consumable_row("疗伤药")
-	expect(row != null and contains_text(row, "持有者 · 洛恩") and find_button(row, "交接") != null,
-		"Consumable row labels the actual holder and retains handoff")
+	var slot = consumable_slot("疗伤药")
+	expect(slot != null and slot.icon != null and is_equal_approx(slot.size.x, slot.size.y)
+		and slot.get_parent().columns == 5 and slot.get_parent().get_child_count() == 15
+		and contains_text(slot, "2"), "Consumables use square icon slots with a stack count")
+	expect(contains_text(game.modal_layer, "洛恩 · 背包") and not contains_text(game.modal_layer, "终结技")
+		and find_button(game.modal_layer, "使用") == null, "Backpack shows the holder and waits for a selection before offering actions")
 	await select_consumable("疗伤药")
-	expect(row.get_parent().get_theme_stylebox("panel").border_color == game.gold
+	expect(slot != null and slot.button_pressed and find_button(game.modal_layer, "交接") != null
 		and contains_text(game.modal_layer, Catalog.ITEMS.salve.description) and lorne.inventory.salve == 2,
-		"Clicking the item row highlights it and explains its use without consuming it")
+		"Clicking a slot selects it and shows its description and handoff without consuming it")
 	await select_consumable("澄露")
-	expect(row.get_parent().get_theme_stylebox("panel").border_color != game.gold
+	expect(slot != null and not slot.button_pressed
 		and contains_text(game.modal_layer, Catalog.ITEMS.ether.description), "Selecting another consumable replaces the highlight and description")
 	await use_from_backpack("疗伤药")
 	var target = game.modal_layer.find_children("*", "OptionButton", true, false)[0]
@@ -634,9 +639,11 @@ func check_backpack_use() -> void:
 	await press("确认使用 疗伤药")
 	expect(lorne.hp == 46 and lorne.inventory.salve == 1 and hero.inventory.salve == hero_salves and run.remaining_steps() == steps,
 		"Using from Lorne's bag heals him and consumes only his item without spending effort")
-	expect(saved_run().get("actors", {}).get("lorne", {}).get("hp") == 46 and consumable_row("疗伤药") != null,
+	slot = consumable_slot("疗伤药")
+	expect(saved_run().get("actors", {}).get("lorne", {}).get("hp") == 46 and slot != null and contains_text(slot, "1"),
 		"Successful use auto-saves and returns to the refreshed backpack")
-	expect(contains_text(game.modal_layer, Catalog.ITEMS.salve.description), "The item remains selected after using it when another remains")
+	expect(slot != null and slot.button_pressed and contains_text(game.modal_layer, Catalog.ITEMS.salve.description),
+		"The item remains selected after using it when another remains")
 	hero.hp = 0
 	await use_from_backpack("疗伤药")
 	target = game.modal_layer.find_children("*", "OptionButton", true, false)[0]
@@ -646,6 +653,8 @@ func check_backpack_use() -> void:
 			break
 	await press("确认使用 疗伤药")
 	expect(hero.hp == 45 and lorne.inventory.salve == 0, "The same backpack flow rescues a downed local ally")
+	expect(consumable_slot("疗伤药") == null and find_button(game.modal_layer, "使用") == null,
+		"Using the final item clears the slot and removes its actions")
 	await use_from_backpack("澄露")
 	await press("确认使用 澄露")
 	expect(contains_text(game.modal_layer, "没有可恢复的资源") and lorne.inventory.ether == 1,
@@ -659,9 +668,18 @@ func check_backpack_use() -> void:
 	await press("关闭")
 	game._select_actor("hero")
 	await press("背包")
-	expect(consumable_row("营地木料") == null, "New expeditions have no construction material")
+	expect(consumable_slot("营地木料") == null, "New expeditions have no construction material")
 	await select_consumable("旅途干粮")
-	expect(contains_text(game.modal_layer, Catalog.ITEMS.trail_food.description), "Food can be selected and inspected like every consumable")
+	expect(contains_text(game.modal_layer, Catalog.ITEMS.trail_food.description)
+		and find_button(game.modal_layer, "使用") == null, "Food shows its purpose without a use button")
+	var hero_food: int = hero.inventory.trail_food
+	var lorne_food: int = lorne.inventory.get("trail_food", 0)
+	await press("交接")
+	await press("交给洛恩")
+	slot = consumable_slot("旅途干粮")
+	expect(hero.inventory.trail_food == hero_food - 1 and lorne.inventory.trail_food == lorne_food + 1
+		and slot != null and slot.button_pressed and contains_text(slot, str(hero_food - 1)),
+		"Handoff returns to the selected item and updates the stack and recipient")
 	await press("关闭")
 
 func saved_run() -> Dictionary:
