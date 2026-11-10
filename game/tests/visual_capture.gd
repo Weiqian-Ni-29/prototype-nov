@@ -466,7 +466,7 @@ func capture_branch_examples() -> void:
 		return
 	await click_story_button(event.alternative)
 	await capture_story_body("node-haunt-alternative-conclusion",
-		"送别时，旅人掌心传来轻微的牵引，引着亡魂离开。\n\n" + event.alternative_resolved)
+		"送别时，旅人伸出手，给亡魂指了条离开这里的路。\n\n" + event.alternative_resolved)
 	expect(not game.modal_layer.has_node("StoryScreen/StoryChoices"), "The narrative is separate from the action result")
 	await advance_story()
 	await capture_story_body("node-haunt-action-result", "这次送别已记入手记。")
@@ -582,6 +582,10 @@ func execute() -> void:
 	await capture("01-menu")
 	game._begin_opening_story()
 	await capture("story-world-intro")
+	await advance_until_text("战神卡德兰")
+	await capture("story-world-gods")
+	await advance_until_text("运粮的车过不来")
+	await capture("story-world-war")
 	await advance_until_text("你醒了")
 	await capture("story-village-waking")
 	await advance_until_text("一点也想不起来")

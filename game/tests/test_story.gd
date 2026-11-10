@@ -58,7 +58,7 @@ func check_player_advice(subject: String, quest: Dictionary) -> void:
 	var a: String = labels.get("personal_a", "")
 	var b: String = labels.get("personal_b", "")
 	if subject == "stone_guard":
-		expect("陪你" in a and "主路" in a and "爆破料" in a and "一起拦军官" in a,
+		expect("陪你" in a and "主路" in a and "爆破料" in a and "一起拦住军官" in a,
 			"Stone guard advice offers help with evacuation and explosives, not the guard's own specialist role")
 		expect("帮你" in b and "借梁" in b and "旧出口" in b and not "我下第一段" in b,
 			"Stone guard advice helps gather beams without claiming to take the guard's first support shift")
