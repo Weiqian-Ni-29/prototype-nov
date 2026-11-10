@@ -1148,6 +1148,8 @@ func _validate_save(loaded: Dictionary) -> String:
 		if id != "hero":
 			if not loaded.story.has(id) or not loaded.story[id] is Dictionary or not loaded.story[id].has_all(["met", "relation", "result"]):
 				return "故事状态缺失"
+			if not loaded.story[id].get("codex_first_meeting", "") is String or not loaded.story[id].get("codex_past_read", false) is bool:
+				return "角色图鉴记录无效"
 			if loaded.story[id].has("personal_choice"):
 				var choice = loaded.story[id].personal_choice
 				var god_choice = Catalog.COMPANIONS[id].race == "神" and choice in ["god_a", "god_b"]

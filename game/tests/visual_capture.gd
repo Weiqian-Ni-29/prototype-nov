@@ -695,6 +695,15 @@ func execute() -> void:
 	game._transfer_dialog("hero", "salve")
 	await capture("transfer-seven-members")
 	game._close_modal()
+	game._show_character_codex()
+	var codex = game.modal_layer.get_node("CharacterCodex")
+	codex._set_tab(1)
+	await capture("codex-list")
+	var grid_view = codex.find_child("CodexGridView", true, false) as Button
+	await click_at(grid_view.get_global_rect().get_center())
+	expect(game.character_codex_state.grid, "The joined grid segment opens the card layout")
+	await capture("codex-grid")
+	game._close_character_codex()
 	# Stage the courier before recruitment at his original encounter site.
 	for position in game.run.data.tiles:
 		if game.run.data.tiles[position].npc == "lorne":
