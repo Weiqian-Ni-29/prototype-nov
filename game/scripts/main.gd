@@ -447,8 +447,7 @@ func _crew_panel(screen: Vector2) -> void:
 		bar.custom_minimum_size.y = 5
 		member_box.add_child(bar)
 	var cell: String = run.actor(selected_id).position
-	var node = run.node_at(cell)
-	var action = _button(box, "行动 · " + Nodes.label(node.get("kind", "story")), _cell_actions)
+	var action = _button(box, "行动", _cell_actions)
 	action.tooltip_text = _node_title(cell)
 	_button(box, "背包", _inventory_dialog.bind(selected_id))
 
