@@ -12,6 +12,7 @@ const OpeningStory = preload("res://scripts/domain/opening_story.gd")
 const StoryPortrait = preload("res://scripts/presentation/story_portrait.gdshader")
 const World = preload("res://scripts/presentation/world_view.gd")
 const MapMovePreview = preload("res://scripts/presentation/map_move_preview.gd")
+const InventoryPage = preload("res://scripts/presentation/inventory_page.gd")
 const FontAsset = preload("res://assets/fonts/NotoSansSC.ttf")
 const Sound = preload("res://scripts/presentation/sound.gd")
 enum Screen { MENU, OPENING_STORY, EXPEDITION }
@@ -893,7 +894,8 @@ func _modal(title: String, width: float = 650, height: float = 520) -> VBoxConta
 	var screen = get_viewport().get_visible_rect().size
 	var size = Vector2(minf(width, screen.x - 70), minf(height, screen.y - 70))
 	var box = _panel(modal_layer, Rect2((screen - size) * 0.5, size), Color("243b34"))
-	_text(box, title, 27, gold)
+	if not title.is_empty():
+		_text(box, title, 27, gold)
 	return box
 
 func _close_modal() -> void:
@@ -922,152 +924,140 @@ func _confirm(title: String, message: String, action: Callable) -> void:
 	_button(box, "确认", func(): _close_modal(); action.call())
 	_button(box, "取消，继续远征", _close_modal)
 
-func _inventory_dialog(id: String, current_tab: int = 0, selected_consumable: String = "") -> void:
-	var a = run.actor(id)
-	var box = _modal(a.name + " · 背包与装备", 850, 670)
-	_text(box, "攻击 %d · 防御 %d · 速度 %d\n物品可以交给同队伙伴。" % [run.stat(id, "attack"), run.stat(id, "defense"), run.stat(id, "speed")], 16, muted)
-	var slots: Array[String] = []
-	for slot in ["weapon", "armor", "accessory"]:
-		var item = str(a.equipment.get(slot, ""))
-		slots.append({"weapon": "武器", "armor": "防具", "accessory": "饰品"}[slot] + "：" + (Gear.label(run.data.gear_instances[item]) if item != "" else "空"))
-	_text(box, "  ·  ".join(slots), 17, gold)
-	if id != "hero" and Story.BACKGROUNDS.has(id):
-		_text(box, "%s · %s" % [a.race, Story.CHARACTER_BEHAVIOR[id][0]], 15, muted)
-	var passive = Catalog.passive_description(id)
-	if not passive.is_empty():
-		_text(box, "专长 " + passive, 16, muted)
-	_text(box, "技能 · " + Catalog.SKILLS[a.skill].name + "\n" + Catalog.skill_description(a.skill), 16, muted)
-	_text(box, "终结技 · " + Catalog.SKILLS[a.ultimate].name + "\n" + Catalog.skill_description(a.ultimate) + "。充能到 100% 就能放，不占正常行动。", 16, muted)
-	var tabs = TabContainer.new()
+func _inventory_dialog(id: String, current_tab: int = 0, selected_item: String = "", feedback: String = "") -> void:
+	var box = _modal("", 900, 550)
+	var panel: PanelContainer = box.get_parent()
+	var frame := _style(Color("20352e"), Color("5a6855"), 10)
+	frame.set_content_margin_all(22)
+	panel.add_theme_stylebox_override("panel", frame)
+	var header := HBoxContainer.new()
+	box.add_child(header)
+	_text(header, run.actor(id).name + " · 背包", 27, gold).vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_button(header, "关闭", _close_modal).flat = true
+	box.add_child(HSeparator.new())
+
+	var tabs := TabContainer.new()
 	tabs.name = "InventoryTabs"
 	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var tab_body := _style(Color.TRANSPARENT, Color.TRANSPARENT, 0)
+	tab_body.set_content_margin_all(0)
+	tab_body.content_margin_top = 16
+	tabs.add_theme_stylebox_override("panel", tab_body)
+	var tab_style := _style(Color.TRANSPARENT, Color.TRANSPARENT, 0)
+	tabs.add_theme_stylebox_override("tab_unselected", tab_style)
+	tabs.add_theme_stylebox_override("tab_hovered", tab_style)
+	var active_tab := _style(Color.TRANSPARENT, gold, 0)
+	active_tab.set_border_width_all(0)
+	active_tab.border_width_bottom = 2
+	tabs.add_theme_stylebox_override("tab_selected", active_tab)
+	tabs.add_theme_color_override("font_selected_color", gold)
+	tabs.add_theme_color_override("font_unselected_color", ink)
 	box.add_child(tabs)
-	var lists: Array[VBoxContainer] = []
+	var width := panel.size.x - frame.content_margin_left - frame.content_margin_right
 	for title in ["消耗品", "装备", "遗器"]:
-		var page = VBoxContainer.new()
+		var page := InventoryPage.new()
 		page.name = title
 		tabs.add_child(page)
-		var list = _scroll_content(page)
-		list.get_parent().horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-		lists.append(list)
+		page.setup(width, gold)
 	tabs.current_tab = current_tab
-	var detail_panel = PanelContainer.new()
-	detail_panel.add_theme_stylebox_override("panel", _style(Color("243b34"), Color("536456"), 6))
-	tabs.get_child(0).add_child(detail_panel)
-	var description = _text(detail_panel, "选择一件消耗品查看用途。", 16)
-	description.name = "ConsumableDescription"
-	description.custom_minimum_size.y = 48
-	var cards = {}
-	var row_style = _style(Color("20352e"), Color("465b4f"), 6)
-	row_style.content_margin_top = 4
-	row_style.content_margin_bottom = 4
-	var selected_style = row_style.duplicate()
-	selected_style.bg_color = Color("354c3e")
-	selected_style.border_color = gold
-	var select_consumable = func(item: String):
-		for key in cards:
-			cards[key].add_theme_stylebox_override("panel", selected_style if key == item else row_style)
-		var purpose = str(Catalog.ITEMS.get(item, {}).get("description", "暂无用途说明。"))
+	_inventory_consumables(tabs.get_child(0), id, selected_item if current_tab == 0 else "")
+	_inventory_gear(tabs.get_child(1), id, selected_item if current_tab == 1 else "", feedback if current_tab == 1 else "")
+	_inventory_relics(tabs.get_child(2), id, selected_item if current_tab == 2 else "", feedback if current_tab == 2 else "")
+
+func _inventory_heading(content: VBoxContainer, title: String, icon_key: String) -> void:
+	var texture := InventoryPage.icon(icon_key)
+	if texture != null:
+		var icon := TextureRect.new()
+		icon.texture = texture
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		icon.custom_minimum_size = Vector2(110, 110)
+		content.add_child(icon)
+	_text(content, title, 24, gold)
+
+func _inventory_consumables(page: InventoryPage, id: String, selection: String) -> void:
+	var a = run.actor(id)
+	var entries: Array[Dictionary] = []
+	for item in a.inventory:
+		if a.inventory[item] > 0:
+			entries.append({"id": item, "title": Catalog.item_name(item), "icon": item, "count": a.inventory[item]})
+	page.item_selected.connect(func(item: String):
+		var content := page.details
+		if item.is_empty():
+			_text(content, "暂无物品。" if entries.is_empty() else "选择一个物品查看详情。", 16, muted)
+			return
+		var definition: Dictionary = Catalog.ITEMS.get(item, {})
+		_inventory_heading(content, Catalog.item_name(item), item)
+		var purpose := str(definition.get("description", "暂无用途说明。"))
 		if item == "salve" and run.has_relic("herbal_case"):
 			purpose += " 青枝药匣使恢复量提高 25%。"
-		description.text = Catalog.item_name(item) + "\n" + purpose
-	for item in a.inventory:
-		if a.inventory[item] <= 0:
-			continue
-		var definition = Catalog.ITEMS.get(item, {})
-		var row = HBoxContainer.new()
-		var card = PanelContainer.new()
-		card.focus_mode = Control.FOCUS_ALL
-		card.add_theme_stylebox_override("panel", row_style)
-		card.focus_entered.connect(select_consumable.bind(item))
-		card.gui_input.connect(func(event: InputEvent):
-			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-				card.accept_event()
-				card.grab_focus()
-				select_consumable.call(item))
-		cards[item] = card
-		lists[0].add_child(card)
-		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		card.add_child(row)
-		var item_label = _text(row, Catalog.item_name(item) + " ×%d" % a.inventory[item], 16)
-		item_label.size_flags_horizontal = Control.SIZE_FILL
-		item_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		item_label.autowrap_mode = TextServer.AUTOWRAP_OFF
-		var holder = PanelContainer.new()
-		holder.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var tag_style = _style(Color("2a4038"), Color("64725e"), 6)
-		tag_style.content_margin_top = 3
-		tag_style.content_margin_bottom = 3
-		holder.add_theme_stylebox_override("panel", tag_style)
-		row.add_child(holder)
-		_text(holder, "持有者 · " + a.name, 13, gold).autowrap_mode = TextServer.AUTOWRAP_OFF
-		var spacer = Control.new()
-		spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		row.add_child(spacer)
+		_text(content, purpose, 16)
+		var actions := HFlowContainer.new()
+		actions.add_theme_constant_override("h_separation", 8)
+		content.add_child(actions)
 		if definition.has("hp") or definition.has("mp"):
-			_button(row, "使用", _item_dialog.bind(id, item), a.hp <= 0 or run.data.status != "exploring")
+			var use := _button(actions, "使用", _item_dialog.bind(id, item), a.hp <= 0 or run.data.status != "exploring")
+			use.custom_minimum_size.x = 144
+			use.add_theme_stylebox_override("normal", _style(Color("50563c"), gold.darkened(0.38), 6))
 		if run.same_cell(a.position).size() > 1:
-			_button(row, "交接", _transfer_dialog.bind(id, item))
-	_gear_list(lists[1], id)
-	if lists[0].get_child_count() == 0:
-		_text(lists[0], "暂无物品。", 16, muted)
-	if cards.is_empty():
-		detail_panel.hide()
-	elif cards.has(selected_consumable):
-		select_consumable.call(selected_consumable)
-	_relic_list(lists[2], id)
-	_button(box, "关闭", _close_modal)
+			_button(actions, "交接", _transfer_dialog.bind(id, item)))
+	page.set_items(entries, selection)
 
-func _gear_list(list: VBoxContainer, id: String) -> void:
-	var filter = OptionButton.new()
+func _inventory_gear(page: InventoryPage, id: String, selection: String, feedback: String) -> void:
+	var filter := OptionButton.new()
 	for label in ["所有槽位", "武器", "护甲", "饰品"]:
 		filter.add_item(label)
-	list.add_child(filter)
-	var set_filter = OptionButton.new()
+	filter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	page.filters.add_child(filter)
+	var set_filter := OptionButton.new()
 	set_filter.add_item("所有套装")
 	for set_id in Gear.SETS:
 		set_filter.add_item(Gear.SETS[set_id].name)
-	list.add_child(set_filter)
-	var rows = VBoxContainer.new()
-	list.add_child(rows)
-	var refresh_rows = func(_index: int):
-		_clear(rows)
-		var instances: Array = run.gear_owned("actor", id)
-		instances.sort_custom(func(a, b):
-			var left: int = Gear.QUALITIES.find(run.data.gear_instances[a].quality)
-			var right: int = Gear.QUALITIES.find(run.data.gear_instances[b].quality)
-			return int(a) < int(b) if left == right else left > right)
+	set_filter.fit_to_longest_item = false
+	set_filter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	page.filters.add_child(set_filter)
+	page.filters.show()
+	var instances: Array = run.gear_owned("actor", id)
+	instances.sort_custom(func(a, b):
+		var left: int = Gear.QUALITIES.find(run.data.gear_instances[a].quality)
+		var right: int = Gear.QUALITIES.find(run.data.gear_instances[b].quality)
+		return int(a) < int(b) if left == right else left > right)
+	var entries: Array[Dictionary] = []
+	page.item_selected.connect(func(uid: String):
+		if uid.is_empty():
+			_text(page.details, "暂无符合条件的装备。" if entries.is_empty() else "选择一件装备查看详情。", 16, muted)
+			return
+		_gear_detail(page.details, id, uid, feedback if uid == selection else ""))
+	var refresh_grid := func(selected: String):
+		entries.clear()
 		for uid in instances:
 			var item = run.data.gear_instances[uid]
-			var def = Gear.DATA[item.definition_id]
-			if filter.selected > 0 and def.slot != Gear.SLOTS[filter.selected - 1]:
+			var definition = Gear.DATA[item.definition_id]
+			if filter.selected > 0 and definition.slot != Gear.SLOTS[filter.selected - 1]:
 				continue
-			if set_filter.selected > 0 and def.set_id != Gear.SETS.keys()[set_filter.selected - 1]:
+			if set_filter.selected > 0 and definition.set_id != Gear.SETS.keys()[set_filter.selected - 1]:
 				continue
 			var equipped: bool = uid in run.actor(id).equipment.values()
-			var suffix: String = (" · " + Gear.SETS[def.set_id].name) if not def.set_id.is_empty() else ""
-			_button(rows, "%s%s%s" % [Gear.label(item), suffix, " · 已装备" if equipped else ""], _gear_detail.bind(id, uid))
-		if rows.get_child_count() == 0:
-			_text(rows, "暂无符合条件的装备。", 16, muted)
-	filter.item_selected.connect(refresh_rows)
-	set_filter.item_selected.connect(refresh_rows)
-	refresh_rows.call(0)
+			entries.append({"id": uid, "title": Gear.label(item), "icon": definition.slot,
+				"caption": definition.name, "badge": "已装备" if equipped else ""})
+		page.set_items(entries, selected)
+	filter.item_selected.connect(func(_index: int): refresh_grid.call(page.selected_id))
+	set_filter.item_selected.connect(func(_index: int): refresh_grid.call(page.selected_id))
+	refresh_grid.call(selection)
 
-func _gear_detail(id: String, uid: String, feedback: String = "") -> void:
+func _gear_detail(content: VBoxContainer, id: String, uid: String, feedback: String) -> void:
 	var item = run.data.gear_instances[uid]
 	var definition = Gear.DATA[item.definition_id]
 	var a = run.actor(id)
-	var box = _modal(Gear.label(item), 780, 640)
-	var content = _scroll_content(box)
+	_inventory_heading(content, Gear.label(item), definition.slot)
 	if not feedback.is_empty():
 		_text(content, feedback, 16, gold)
 	var current_uid: String = a.equipment[definition.slot]
 	var stat_labels = {"attack": "攻击", "defense": "防御", "speed": "速度"}
 	for stat in definition.stats:
 		var current_value = 0 if current_uid.is_empty() else Gear.bonus(run.data.gear_instances[current_uid], stat)
-		_text(content, "%s +%d · 当前同槽 +%d · 持有者 %s" % [stat_labels[stat], Gear.bonus(item, stat), current_value, a.name], 17, gold)
+		_text(content, "%s +%d · 当前同槽 +%d" % [stat_labels[stat], Gear.bonus(item, stat), current_value], 17, gold)
 	_text(content, definition.effect, 16)
 	if not definition.set_id.is_empty():
 		var pieces: int = run.set_count(id, definition.set_id)
@@ -1079,12 +1069,12 @@ func _gear_detail(id: String, uid: String, feedback: String = "") -> void:
 			_text(content, ("已激活 · " if pieces >= 3 else "未激活 · ") + suite.three, 16)
 	_button(content, "阅读装备故事", func():
 		_show_story(definition.name, "器物故事", definition.story, _story_scene_at(a.position),
-			[], [], func(_option: String): _gear_detail(id, uid), {}))
+			[], [], func(_option: String): _inventory_dialog(id, 1, uid), {}))
 	var equip_action = _item_command(run.equip.bind(id, uid))
 	_button(content, "卸下" if current_uid == uid else "装备", func():
 		var result = equip_action.call()
 		_run_action(result)
-		_gear_detail(id, uid, result.get("message", "")))
+		_inventory_dialog(id, 1, uid, result.get("message", "")))
 	for other in run.same_cell(a.position):
 		if other == id or current_uid == uid:
 			continue
@@ -1092,10 +1082,7 @@ func _gear_detail(id: String, uid: String, feedback: String = "") -> void:
 		_button(content, "交给 " + run.actor(other).name, func():
 			var result = transfer_action.call()
 			_run_action(result)
-			if result.ok:
-				_inventory_dialog(id, 1)
-			else:
-				_gear_detail(id, uid, result.get("message", "")))
+			_inventory_dialog(id, 1, uid, result.get("message", "")))
 	_text(content, "持有 %d 灯铢" % run.data.lamp_coins, 16, gold)
 	for voucher in [""] + _vouchers("enhancement_fee"):
 		var quote = run.enhancement_quote(id, uid, voucher)
@@ -1104,51 +1091,53 @@ func _gear_detail(id: String, uid: String, feedback: String = "") -> void:
 				_text(content, quote.message, 15, muted)
 			continue
 		var stat: String = definition.stats.keys()[0]
-		var next_value = Gear.bonus(item, stat, int(item.enhance_level) + 1)
+		if voucher.is_empty():
+			_text(content, "强化后%s +%d" % [stat_labels[stat], Gear.bonus(item, stat, int(item.enhance_level) + 1)], 15, muted)
 		var enhance_action = _item_command(run.enhance.bind(id, uid, voucher))
-		_button(content, "强化至 +%d · %s +%d → +%d · %d 灯铢%s" % [
-			int(item.enhance_level) + 1, stat_labels[stat], Gear.bonus(item, stat), next_value, quote.price,
+		var enhance := _button(content, "强化至 +%d · %d 灯铢%s" % [
+			int(item.enhance_level) + 1, quote.price,
 			" · " + Relics.DATA[voucher].name if not voucher.is_empty() else ""], func():
 			var result = enhance_action.call()
 			_run_action(result)
-			_gear_detail(id, uid, result.get("message", "")), run.data.lamp_coins < quote.price)
-	_button(box, "返回装备", _inventory_dialog.bind(id, 1))
+			_inventory_dialog(id, 1, uid, result.get("message", "")), run.data.lamp_coins < quote.price)
+		enhance.tooltip_text = enhance.text
+		enhance.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 
-func _relic_list(list: VBoxContainer, id: String) -> void:
-	_text(list, "全队共鸣 · %d / 6" % run.data.relic_attunement.size(), 18, gold)
-	for i in 6:
-		var label = "%d. 空位" % (i + 1)
-		if i < run.data.relic_attunement.size():
-			var relic: String = run.data.relic_attunement[i]
-			_button(list, "%d. %s" % [i + 1, Relics.DATA[relic].name], _relic_detail.bind(id, relic))
-		else:
-			_text(list, label, 15, muted)
-	if run.data.relic_seen.is_empty():
-		_text(list, "本次远征尚未获得遗器。", 16, muted)
+func _inventory_relics(page: InventoryPage, id: String, selection: String, feedback: String) -> void:
+	var entries: Array[Dictionary] = []
 	for type in ["P", "C", "L"]:
-		_text(list, {"P": "持续", "C": "消耗", "L": "永久"}[type], 17, gold)
 		for relic in Relics.DATA:
 			var entry = Relics.DATA[relic]
 			if entry.type != type or not run.data.relic_seen.has(relic):
 				continue
 			var count: int = int(run.data.relic_inventory.get(relic, 0))
-			var status = " · 共鸣中" if run.has_relic(relic) else ""
-			_button(list, "%s · %s%s" % [entry.name, "×%d" % count if count > 0 else "已发现", status], _relic_detail.bind(id, relic))
+			var badge := "共鸣中" if run.has_relic(relic) else ("已发现" if count == 0 else "")
+			entries.append({"id": relic, "title": entry.name, "icon": "relic",
+				"caption": entry.name, "count": count, "badge": badge})
+	page.item_selected.connect(func(relic: String):
+		if relic.is_empty():
+			_text(page.details, "本次远征尚未获得遗器。" if entries.is_empty() else "选择一件遗器查看详情。", 16, muted)
+			return
+		_relic_detail(page.details, id, relic, feedback if relic == selection else ""))
+	page.set_items(entries, selection)
 
-func _relic_detail(id: String, relic: String, feedback: String = "") -> void:
+func _relic_detail(content: VBoxContainer, id: String, relic: String, feedback: String) -> void:
 	var entry = Relics.DATA[relic]
 	var a = run.actor(id)
-	var box = _modal(entry.name, 700, 590)
-	var content = _scroll_content(box)
+	_inventory_heading(content, entry.name, "relic")
 	if not feedback.is_empty():
 		_text(content, feedback, 16, gold)
+	var kind: String = {"P": "持续", "C": "消耗", "L": "永久"}[entry.type]
+	_text(content, kind + (" · 共鸣中" if relic in run.data.relic_attunement else ""), 15, muted)
+	if entry.type == "P":
+		_text(content, "全队共鸣 · %d / 6" % run.data.relic_attunement.size(), 15, muted)
 	_text(content, entry.effect, 17)
 	_text(content, "主要来源 · " + _relic_source(entry.source), 15, muted)
 	if run.has_relic(relic):
 		_relic_information(content, id, relic)
 	_button(content, "阅读遗器故事", func():
 		_show_story(entry.name, "器物故事", entry.story, _story_scene_at(a.position),
-			[], [], func(_option: String): _relic_detail(id, relic), {}))
+			[], [], func(_option: String): _inventory_dialog(id, 2, relic), {}))
 	var count: int = int(run.data.relic_inventory.get(relic, 0))
 	if count > 0 and Relics.is_active(relic):
 		if entry.type == "P":
@@ -1156,12 +1145,11 @@ func _relic_detail(id: String, relic: String, feedback: String = "") -> void:
 			_button(content, "解除共鸣" if run.has_relic(relic) else "共鸣", func():
 				var result = execute.call()
 				_run_action(result)
-				_relic_detail(id, relic, result.get("message", "")))
+				_inventory_dialog(id, 2, relic, result.get("message", "")))
 		elif entry.hook == "transaction_use":
 			_text(content, "在交易或强化时选择使用此凭券。", 16, muted)
 		else:
 			_relic_use_buttons(content, id, relic)
-	_button(box, "返回遗器", _inventory_dialog.bind(id, 2))
 
 func _relic_information(content: VBoxContainer, actor_id: String, relic: String) -> void:
 	var a = run.actor(actor_id)
@@ -1247,7 +1235,7 @@ func _relic_use_buttons(content: VBoxContainer, id: String, relic: String) -> vo
 		_button(content, label, func():
 			var result = execute.call()
 			_run_action(result)
-			_relic_detail(id, relic, result.get("message", "")))
+			_inventory_dialog(id, 2, relic, result.get("message", "")))
 
 func _transfer_dialog(owner: String, item: String) -> void:
 	var box = _modal("同地交接 · " + Catalog.item_name(item), 650, 540)

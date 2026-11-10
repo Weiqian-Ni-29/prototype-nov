@@ -227,8 +227,15 @@ func check_ui() -> void:
 	game.run.data.lamp_coins = 100
 	game._inventory_dialog("hero", 1)
 	await process_frame
-	var item = find_button(game.modal_layer, "巡路短刃 · 普通")
-	expect(item != null, "Gear tab exposes the existing weapon instance")
+	var tabs := game.modal_layer.find_child("InventoryTabs", true, false) as TabContainer
+	var grid: GridContainer = tabs.get_child(1).grid
+	var item: Button
+	for slot in grid.get_children():
+		if slot is Button and slot.tooltip_text.begins_with("巡路短刃 · 普通"):
+			item = slot
+			break
+	expect(item != null and item.icon != null and is_equal_approx(item.size.x, item.size.y),
+		"Gear grid exposes the existing weapon instance in a square icon slot")
 	if item != null:
 		item.pressed.emit()
 		await process_frame
@@ -238,8 +245,10 @@ func check_ui() -> void:
 			enhance.pressed.emit()
 			await process_frame
 			var uid: String = game.run.actor("hero").equipment.weapon
-			expect(game.run.data.gear_instances[uid].enhance_level == 1 and game.run.data.lamp_coins == 96,
-				"UI enhancement updates both the instance and wallet")
+			tabs = game.modal_layer.find_child("InventoryTabs", true, false) as TabContainer
+			expect(game.run.data.gear_instances[uid].enhance_level == 1 and game.run.data.lamp_coins == 96
+				and tabs.current_tab == 1 and tabs.get_child(1).selected_id == uid,
+				"UI enhancement updates both the instance and wallet and keeps the gear selected")
 	game.queue_free()
 	await create_timer(0.3).timeout
 

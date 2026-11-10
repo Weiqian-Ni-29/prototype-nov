@@ -175,8 +175,18 @@ func check_exploration() -> void:
 		and not run.investigate_relic("hero").ok, "Closing the story starts the fog dissolve and prevents a second investigation")
 	game._inventory_dialog("hero", 2)
 	var tabs = game.modal_layer.find_child("InventoryTabs", true, false)
-	expect(tabs != null and tabs.get_tab_count() == 3 and tabs.get_tab_title(2) == "遗器"
-		and tabs.get_child(2).find_children("*", "Button", true, false).any(func(button): return "望远镜" in button.text), "Backpack exposes the team relic in its own tab")
+	var page = tabs.get_child(2)
+	var telescope: Button
+	for slot in page.grid.get_children():
+		if slot is Button and "望远镜" in slot.tooltip_text:
+			telescope = slot
+			break
+	expect(tabs.get_tab_count() == 3 and tabs.get_tab_title(2) == "遗器" and telescope != null,
+		"Backpack exposes the team relic as an icon in its own tab")
+	if telescope != null:
+		telescope.pressed.emit()
+		expect(page.selected_id == "telescope" and page.details.find_children("*", "Label", true, false).any(
+			func(label): return label.text == Relics.DATA.telescope.effect), "Selecting the relic shows its effect beside the grid")
 	game.queue_free()
 
 func execute() -> void:

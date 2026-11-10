@@ -18,6 +18,8 @@ Source pages: [Adventurers](https://kaylousberg.itch.io/kaykit-adventurers), [An
 
 `story/` contains original widescreen scene illustrations generated with the built-in image_gen tool. The three `opening-*.png` images paint the protagonist into each opening scene. Other images provide locations and terrain backdrops for the game's character portraits.
 
+`ui/inventory-items.png` contains original item icons generated with the built-in image_gen tool. The inventory uses shared icons for the three equipment slots and for relics.
+
 `portraits/mattes/` contains grayscale opacity masks derived from the existing portraits using U²-NetP and refined around clothing and props. The dialogue shader uses the original portrait colors and samples these masks for opacity only.
 
 Godot and its components retain their notices in `licenses/`. Standard export templates are used. No editor, Blender, original download archive, access token or paid source pack is shipped.
