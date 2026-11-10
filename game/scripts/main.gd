@@ -167,14 +167,13 @@ func _shortcut_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		close.pressed.emit()
 
-func _hp_bar(parent: Node, hp: float, maximum: float, enemy: bool = false) -> void:
+func _enemy_hp_bar(parent: Node, hp: float, maximum: float) -> void:
 	var bar = ProgressBar.new()
 	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar.value = hp / maxf(1.0, maximum) * 100
 	bar.show_percentage = false
 	bar.custom_minimum_size.y = 6
-	if enemy:
-		bar.add_theme_stylebox_override("fill", _bar_style(Color("bd8b6e")))
+	bar.add_theme_stylebox_override("fill", _bar_style(Color("bd8b6e")))
 	parent.add_child(bar)
 
 func _bar_style(color: Color) -> StyleBoxFlat:
@@ -497,16 +496,19 @@ func _crew_member(parent: VBoxContainer, id: String) -> void:
 	if selected_id != id:
 		button.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
 
-	var content = HBoxContainer.new()
-	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	content.add_theme_constant_override("separation", 12)
-	button.add_child(content)
+	var content = _member_status(button, id, int(a.hp))
 	content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	content.offset_left = 5
 	content.offset_right = -5
 	content.offset_top = 3
 	content.offset_bottom = -3
 
+func _member_status(parent: Control, id: String, shown_hp: int, status: String = "") -> HBoxContainer:
+	var a = run.actor(id)
+	var content = HBoxContainer.new()
+	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.add_theme_constant_override("separation", 12)
+	parent.add_child(content)
 	var identity = VBoxContainer.new()
 	identity.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	identity.custom_minimum_size.x = 80
@@ -541,7 +543,7 @@ func _crew_member(parent: VBoxContainer, id: String) -> void:
 		image.offset_top = 1
 		image.offset_bottom = -1
 
-	var caption = _text(identity, a.name, 12, ink if a.hp > 0 else muted)
+	var caption = _text(identity, a.name, 12, ink if shown_hp > 0 else muted)
 	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var meters = VBoxContainer.new()
 	meters.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -549,9 +551,12 @@ func _crew_member(parent: VBoxContainer, id: String) -> void:
 	meters.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	meters.add_theme_constant_override("separation", 5)
 	content.add_child(meters)
-	_crew_meter(meters, "HP", a.hp, a.hp_max, Color("e16562"))
+	_crew_meter(meters, "HP", shown_hp, a.hp_max, Color("e16562"))
 	_crew_meter(meters, "MP", a.mp, a.mp_max, Color("65a6e6"))
 	_crew_meter(meters, "充能", a.energy, Catalog.ENERGY_MAX, Color("eea353"))
+	if not status.is_empty():
+		_text(meters, status, 11, muted)
+	return content
 
 func _crew_meter(parent: VBoxContainer, caption: String, amount: float, maximum: float, color: Color) -> void:
 	var row = HBoxContainer.new()
@@ -1434,36 +1439,14 @@ func _battle_ui(screen: Vector2) -> void:
 	view.set_battle_target(selected_target)
 	var battle_bottom = screen.y - 20
 	var side_height = battle_bottom - 120
-	var left_outer = _panel(ui, Rect2(20, 120, 250, side_height))
+	var left_outer = _panel(ui, Rect2(20, 120, CREW_PANEL_WIDTH, side_height))
 	_text(left_outer, "出战角色", 24, gold)
 	var left = _scroll_content(left_outer)
-	left.add_theme_constant_override("separation", 4)
+	left.get_parent().horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	left.add_theme_constant_override("separation", 6)
+	var acting_id = view.presentation_actor(combat.current)
 	for id in combat.active:
-		var a = run.actor(id)
-		var shown_hp = view.display_hp(id,int(a.hp))
-		var shown_shield = view.display_shield(id,int(a.shield))
-		var label = ("▶ " if view.presentation_actor(combat.current) == id else "") + a.name
-		if shown_shield > 0:
-			label += " · 盾%d" % shown_shield
-		if combat.madness.has(id):
-			label += " · 疯狂"
-		if shown_hp > 0 and combat.haste_turns.has(id):
-			label += " · 提速"
-		var heading = HBoxContainer.new()
-		left.add_child(heading)
-		var portrait = _story_portrait(id, "grief" if shown_hp <= 0 else "anger" if combat.madness.has(id) else "battle")
-		if portrait != null:
-			var icon = TextureRect.new()
-			icon.texture = portrait
-			icon.custom_minimum_size = Vector2(32, 32)
-			icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-			icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-			heading.add_child(icon)
-		_text(heading, label, 19, ink if shown_hp > 0 else muted)
-		_text(left, "HP %d/%d · MP %d/%d" % [shown_hp, a.hp_max, a.mp, a.mp_max], 14, muted)
-		_hp_bar(left, shown_hp, a.hp_max)
-		var ultimate = _button(left, "%d%% · " % a.energy + Catalog.SKILLS[a.ultimate].name, _ultimate.bind(id), a.energy < 100 or a.hp <= 0 or combat.madness.has(id))
-		ultimate.tooltip_text = "%s\n%s\n充能达到 100%% 时可释放，不占正常行动。" % [Catalog.SKILLS[a.ultimate].name, Catalog.skill_description(a.ultimate)]
+		_battle_member(left, id, id == acting_id)
 	var enemy_panel_x = screen.x - 330
 	var right_outer = _panel(ui, Rect2(enemy_panel_x, 120, 310, side_height))
 	_text(right_outer, "敌方阵容", 24, gold)
@@ -1499,7 +1482,8 @@ func _battle_ui(screen: Vector2) -> void:
 	items.tooltip_text = "使用当前角色背包中的恢复道具。\n可给在场队友使用，不占正常行动。"
 	quick_actions.position = Vector2(enemy_panel_x - quick_actions.get_combined_minimum_size().x - 12, 120)
 
-	var center = _panel(ui, Rect2(290, battle_bottom - 155, screen.x - 640, 155))
+	var commands_x = CREW_PANEL_WIDTH + 40.0
+	var center = _panel(ui, Rect2(commands_x, battle_bottom - 155, enemy_panel_x - commands_x - 20.0, 155))
 	center.get_parent().grow_vertical = Control.GROW_DIRECTION_BEGIN
 	_text(center, view.presentation_title((combat.unit(combat.current).name + " 的行动") if combat.current != "" else "战斗结算"), 20, gold)
 	var commands = HBoxContainer.new()
@@ -1548,6 +1532,40 @@ func _battle_ui(screen: Vector2) -> void:
 	if not toast_text.is_empty():
 		_text(center, toast_text, 13, gold)
 
+func _battle_member(parent: VBoxContainer, id: String, acting: bool) -> void:
+	var a = run.actor(id)
+	var shown_hp = view.display_hp(id, int(a.hp))
+	var shown_shield = view.display_shield(id, int(a.shield))
+	var status: Array[String] = []
+	if acting:
+		status.append("行动中")
+	if shown_hp <= 0:
+		status.append("重伤")
+	if shown_shield > 0:
+		status.append("盾%d" % shown_shield)
+	if combat.madness.has(id):
+		status.append("疯狂")
+	if shown_hp > 0 and combat.haste_turns.has(id):
+		status.append("提速")
+
+	var panel = PanelContainer.new()
+	panel.name = "BattleMember_" + id
+	var style = _style(Color("29413c"), gold if acting else Color("536456"), 6)
+	style.content_margin_left = 5
+	style.content_margin_right = 5
+	style.content_margin_top = 4
+	style.content_margin_bottom = 4
+	panel.add_theme_stylebox_override("panel", style)
+	parent.add_child(panel)
+	var card = VBoxContainer.new()
+	card.add_theme_constant_override("separation", 4)
+	panel.add_child(card)
+	_member_status(card, id, shown_hp, " · ".join(status))
+	var skill_name: String = Catalog.SKILLS[a.ultimate].name
+	var ultimate = _button(card, "终结技 · " + skill_name, _ultimate.bind(id),
+		a.energy < Catalog.ENERGY_MAX or a.hp <= 0 or combat.madness.has(id))
+	ultimate.tooltip_text = "%s\n%s\n充能达到 100%% 时可释放，不占正常行动。" % [skill_name, Catalog.skill_description(a.ultimate)]
+
 func _enemy_card(parent: VBoxContainer, id: String, title: String) -> void:
 	var enemy = combat.enemies[id]
 	var selected = selected_target == id and enemy.hp > 0
@@ -1570,7 +1588,7 @@ func _enemy_card(parent: VBoxContainer, id: String, title: String) -> void:
 	if shown_hp > 0 and enemy.slow > 0:
 		status += " · 减速"
 	_text(card, "HP %d/%d · %s\n%s" % [shown_hp, enemy.hp_max, status, enemy.role], 14, muted)
-	_hp_bar(card, shown_hp, enemy.hp_max, true)
+	_enemy_hp_bar(card, shown_hp, enemy.hp_max)
 
 func _select_battle_target(id: String) -> void:
 	if combat == null or combat.outcome != "" or id == selected_target or id not in combat.alive_enemies():
