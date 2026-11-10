@@ -1,5 +1,6 @@
 uniform bool deep_ocean = false;
 #ifdef MOUNTAIN_OCCLUSION
+const float MIN_MOUNTAIN_OPACITY = 0.38;
 uniform vec3 mountain_targets[32];
 uniform int mountain_target_count = 0;
 uniform vec3 mountain_sight;
@@ -43,7 +44,8 @@ void fragment() {
 			float foreground = (1.0 - smoothstep(-0.10, -0.025, depth)) * smoothstep(-3.0, -2.0, depth);
 			window = max(window, foreground * (1.0 - smoothstep(0.10, 0.21, across)));
 		}
-		ALPHA -= window * mountain_fade * smoothstep(0.08, 0.38, mountain_weight) * 0.90;
+		float coverage = window * mountain_fade * smoothstep(0.08, 0.38, mountain_weight);
+		ALPHA = mix(1.0, MIN_MOUNTAIN_OPACITY, coverage);
 	}
 #endif
 	highp vec2 p = world_point.xz;
