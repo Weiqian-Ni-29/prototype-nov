@@ -46,9 +46,10 @@ func execute():
 	expect(run.data.pending_battle.origin == origin and run.remaining_steps() == 4, "Encounter remembers origin and committed step")
 	expect(run.same_cell(destination).size() == 3, "All companions arrive together")
 	var deadline = Time.get_ticks_msec() + 5000
-	expect(game.map_traveling and game.modal_layer.get_child_count() == 0, "Formation waits while the traveler is walking")
+	expect(game.map_traveling and game.modal_layer.get_child_count() == 0, "Encounter story waits while the traveler is walking")
 	while game.map_traveling and Time.get_ticks_msec() < deadline:
 		await process_frame
+	await press("选择出战阵容")
 	await press("开始战斗")
 	expect(game.combat != null and run.data.status == "battle", "actual Battle.begin through formation button")
 	# Retreat wounds one mover; the survivor remains selectable and can move.
