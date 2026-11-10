@@ -21,6 +21,16 @@ const STORY_TERRAIN = {
 	"plains": "road", "forest": "woodland", "mountain": "highland", "ruins": "ruins",
 	"desert": "drylands", "swamp": "wetlands",
 }
+const CREW_PORTRAIT_BACKGROUNDS = {
+	"gravity": Color("17161e"),
+	"fire": Color("773831"),
+	"water": Color("24536e"),
+	"wind": Color("376452"),
+	"ice": Color("496978"),
+	"lightning": Color("513b69"),
+	"earth": Color("5e482f"),
+	"normal": Color("3d4741"),
+}
 var run = Run.new()
 var view: Node3D
 var ui: Control
@@ -424,32 +434,129 @@ func _crew_panel(screen: Vector2) -> void:
 	if crew_collapsed:
 		return
 	_text(box, "点相邻格预览 · 再点确认", 13, muted)
-	var scroll = ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	box.add_child(scroll)
-	var roster = VBoxContainer.new()
-	roster.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	roster.add_theme_constant_override("separation", 10)
-	scroll.add_child(roster)
+	_crew_stamina(box)
+	var roster = _scroll_content(box)
+	roster.get_parent().horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	roster.add_theme_constant_override("separation", 6)
 	for id in run.joined_ids():
-		var a = run.actor(id)
-		var member_box = VBoxContainer.new()
-		roster.add_child(member_box)
-		var text = ("◆ " if selected_id == id else "") + a.name + ("  重伤" if a.hp <= 0 else "")
-		_button(member_box, text, _select_actor.bind(id))
-		var stats = "HP %d/%d   MP %d/%d\n充能 %d%%" % [a.hp, a.hp_max, a.mp, a.mp_max, a.energy]
-		if id == "hero":
-			stats += "\n今日剩余移动步数 %d" % run.remaining_steps()
-		_text(member_box, stats, 13, muted)
-		var bar = ProgressBar.new()
-		bar.value = float(a.hp) / a.hp_max * 100
-		bar.show_percentage = false
-		bar.custom_minimum_size.y = 5
-		member_box.add_child(bar)
+		_crew_member(roster, id)
 	var cell: String = run.actor(selected_id).position
 	var action = _button(box, "行动", _cell_actions)
 	action.tooltip_text = _node_title(cell)
 	_button(box, "背包", _inventory_dialog.bind(selected_id))
+
+func _crew_stamina(parent: VBoxContainer) -> void:
+	var row = HBoxContainer.new()
+	parent.add_child(row)
+	var steps = HBoxContainer.new()
+	steps.name = "CrewStamina"
+	steps.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	steps.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	steps.add_theme_constant_override("separation", 4)
+	row.add_child(steps)
+	var remaining = run.remaining_steps()
+	var bright = _bar_style(Color("91c970"))
+	var faded = _bar_style(Color("47604c"))
+	for i in Run.STEPS_PER_DAY:
+		var segment = Panel.new()
+		segment.custom_minimum_size.y = 7
+		segment.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		segment.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		segment.add_theme_stylebox_override("panel", bright if i < remaining else faded)
+		steps.add_child(segment)
+	_crew_meter_label(row, "精力")
+
+func _crew_member(parent: VBoxContainer, id: String) -> void:
+	var a = run.actor(id)
+	var button = _button(parent, "", _select_actor.bind(id))
+	button.name = "CrewMember_" + id
+	button.custom_minimum_size.y = 82
+	button.accessibility_name = a.name
+	if a.hp <= 0:
+		button.tooltip_text = "%s · 重伤" % a.name
+	if selected_id != id:
+		button.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
+
+	var content = HBoxContainer.new()
+	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.add_theme_constant_override("separation", 12)
+	button.add_child(content)
+	content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	content.offset_left = 5
+	content.offset_right = -5
+	content.offset_top = 3
+	content.offset_bottom = -3
+
+	var identity = VBoxContainer.new()
+	identity.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	identity.custom_minimum_size.x = 61
+	identity.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	identity.add_theme_constant_override("separation", 2)
+	content.add_child(identity)
+	var element: String = "gravity" if id == "hero" else a.element
+	var background: Color = CREW_PORTRAIT_BACKGROUNDS.get(element, CREW_PORTRAIT_BACKGROUNDS.normal)
+	var portrait = Panel.new()
+	portrait.name = "Portrait"
+	portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	portrait.custom_minimum_size.y = 54
+	portrait.add_theme_stylebox_override("panel", _style(background, background.lightened(0.30), 5))
+	identity.add_child(portrait)
+	var texture = _story_portrait(str(a.get("portrait", id)))
+	if texture != null:
+		var dimensions = Vector2(texture.get_size())
+		var width = dimensions.x * 0.54
+		var face = AtlasTexture.new()
+		face.atlas = texture
+		face.region = Rect2((dimensions.x - width) * 0.5, 0, width, minf(width, dimensions.y))
+		face.filter_clip = true
+		var image = TextureRect.new()
+		image.texture = face
+		image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		image.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		portrait.add_child(image)
+		image.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		image.offset_left = 1
+		image.offset_right = -1
+		image.offset_top = 1
+		image.offset_bottom = -1
+
+	var caption = _text(identity, a.name, 12, ink if a.hp > 0 else muted)
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var meters = VBoxContainer.new()
+	meters.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	meters.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	meters.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	meters.add_theme_constant_override("separation", 5)
+	content.add_child(meters)
+	_crew_meter(meters, "HP", a.hp, a.hp_max, Color("e16562"))
+	_crew_meter(meters, "MP", a.mp, a.mp_max, Color("65a6e6"))
+	_crew_meter(meters, "充能", a.energy, Catalog.ENERGY_MAX, Color("eea353"))
+
+func _crew_meter(parent: VBoxContainer, caption: String, amount: float, maximum: float, color: Color) -> void:
+	var row = HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(row)
+	var bar = ProgressBar.new()
+	bar.accessibility_name = caption
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	bar.custom_minimum_size.y = 7
+	bar.max_value = maxf(1.0, maximum)
+	bar.value = amount
+	bar.show_percentage = false
+	bar.add_theme_stylebox_override("background", _bar_style(Color("3b524b")))
+	bar.add_theme_stylebox_override("fill", _bar_style(color))
+	row.add_child(bar)
+	_crew_meter_label(row, caption)
+
+func _crew_meter_label(parent: HBoxContainer, caption: String) -> void:
+	var label = _text(parent, caption, 12)
+	label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	label.custom_minimum_size.x = 32
+	label.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 func _cell_actions() -> void:
 	var actor = run.actor(selected_id)
