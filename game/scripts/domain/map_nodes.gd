@@ -2,12 +2,10 @@ extends RefCounted
 ## Node placement uses a separate seed stream from terrain, combat and weather.
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const STARTING_COINS = 8
-const REST_HP = 25
-const REST_MP = 35
 const PRICES = {"salve": 6, "ether": 7, "trail_food": 3, "trail_blade": 12, "padded_coat": 15, "lamp_charm": 18}
 const GEAR = ["trail_blade", "padded_coat", "lamp_charm"]
 const LABELS = {
-	"story": "地点", "trade": "交易", "supply": "补给", "rest": "歇脚",
+	"story": "地点", "trade": "交易", "supply": "补给", "rest": "补给点",
 	"choice": "委托", "clue": "线索", "haunt": "亡灵", "cache": "寻宝", "battle": "遭遇", "elite": "险地",
 }
 static var events: Dictionary = {}

@@ -35,11 +35,10 @@ func execute() -> void:
 	label.position = Vector2(310, 115)
 	label.add_theme_font_size_override("font_size", 22)
 	game.ui.add_child(label)
-	label.text = "探索样板 · 近战 / 弓手 / 医者 / 巨狼"
+	label.text = "探索样板 · 旅人"
 	await create_timer(1.0).timeout
 	await snapshot("map")
-	for id in ["hero", "cen", "eve", "grit"]:
-		game.view.dolls[id].play_action("walk")
+	game.view.dolls.hero.play_action("walk")
 	await create_timer(1.5).timeout
 	r.data.tiles[position].enemies = ["boar", "archer", "spider", "swarm"]
 	var b = Combat.new()

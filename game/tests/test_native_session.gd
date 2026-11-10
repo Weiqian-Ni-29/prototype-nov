@@ -79,19 +79,19 @@ func execute() -> void:
 	r.actor("ember").hp = 0
 	game._refresh()
 	await create_timer(1.5).timeout
-	expect(game.view.dolls.ember.rigged.holding_down,"Down NPC stays visibly injured")
+	expect(game.view.dolls.keys() == ["hero"] and r.actor("ember").hp == 0, "Injured NPC stays in domain state without a map figure")
 	var salves = r.actor("hero").inventory.get("salve",0)
 	expect(salves>0 and r.use_item("hero","ember","salve").ok,"Same-cell actual item rescues the NPC")
 	game._refresh()
 	await create_timer(1.5).timeout
-	expect(r.actor("ember").hp>0 and not game.view.dolls.ember.rigged.holding_down,"Rescue state makes the same NPC stand up")
+	expect(r.actor("ember").hp > 0, "Rescue restores the NPC")
 	expect(r.save_game().ok,"Updated run saves")
 	var hp = r.actor("ember").hp
 	expect(r.load_game().ok and r.actor("ember").hp==hp,"Continue preserves actual rescue state")
 	game.view.reset()
 	game._refresh()
 	await process_frame
-	expect(not game.view.dolls.ember.down,"Recreated exploration actor reflects loaded HP")
+	expect(game.view.dolls.keys() == ["hero"], "Loading does not add extra map figures")
 	print("NATIVE SESSION: %d checks, %d failures" % [checks,failures])
 	game.queue_free()
 	await create_timer(1.0).timeout

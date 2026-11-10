@@ -45,7 +45,7 @@ func check_catalogs() -> void:
 	for id in Relics.DATA:
 		var definition = Relics.DATA[id]
 		counts[definition.type] += 1
-		expect(not definition.effect.is_empty() and not definition.story.is_empty() and definition.params.has("limit"),
+		expect(not definition.effect.is_empty() and not definition.story.is_empty() and (definition.params.has("limit") or not Relics.is_active(id)),
 			"Relic has effect parameters and player text: " + id)
 	expect(counts == {"P": 80, "C": 19, "L": 1}, "Relic categories")
 	for id in Gear.SETS:
@@ -82,7 +82,7 @@ func check_equipment() -> void:
 	expect(result.ok and run.commit_item_operation("test-enhance", revision, enhance) == result
 		and not run.commit_item_operation("stale", revision, enhance).ok, "Repeated or stale enhancement confirmations are harmless")
 	expect(run.data.gear_instances[spare].enhance_level == 1 and run.data.gear_instances[primary].enhance_level == 0
-		and run.data.lamp_coins == 994 and hero.ap == hero.ap_max, "Only the selected instance is strengthened")
+		and run.data.lamp_coins == 994 and run.remaining_steps() == 5, "Only the selected instance is strengthened")
 	expect(run.gear_transfer("hero", "lorne", spare).ok and not run.gear_transfer("hero", "lorne", primary).ok,
 		"An unmounted copy can be transferred while the worn copy remains equipped")
 	var sale: Dictionary = run.gear_trade("lorne", spare, false)
@@ -102,7 +102,7 @@ func check_equipment() -> void:
 func check_relics() -> void:
 	var run = fixture()
 	var hero: Dictionary = run.actor("hero")
-	var first: Array = ["telescope", "trail_boots", "ranged_sight", "lamp_badge", "herbal_case", "rainstone"]
+	var first: Array = ["telescope", "uphill_kneepad", "ranged_sight", "lamp_badge", "herbal_case", "rainstone"]
 	for id in first:
 		run.grant_relic(id, "hero", hero.position)
 	run.grant_relic("opening_flint", "hero", hero.position)
@@ -132,22 +132,6 @@ func check_relics() -> void:
 	expect(run.relic_offer("battle:test:", ["life_seed", "telescope"], 1.0) == "telescope", "Prefer a new relic")
 	run.data.relic_seen["telescope"] = true
 	expect(not run.relic_offer("battle:test:", ["life_seed", "telescope"], 1.0).is_empty(), "An exhausted pool yields a duplicate")
-
-func check_recovery_relic() -> void:
-	var run = fixture()
-	var hero: Dictionary = run.actor("hero")
-	var cell = position_for(run, "rest")
-	expect(not cell.is_empty(), "Fixture has a recovery node")
-	if cell.is_empty():
-		return
-	hero.position = cell
-	hero.ap = 1
-	run.grant_relic("rest_step_counter", "hero", cell)
-	expect(not run.use_node("hero", "hp").ok and hero.ap == 1, "A full-health rest cannot award effort")
-	hero.hp = 1
-	expect(run.use_node("hero", "hp").ok and hero.ap == 2 and hero.hp > 1,
-		"Positive recovery at a rest node grants a single effort point")
-	expect(not run.use_node("hero", "hp").ok and hero.ap == 2, "Spent rest nodes cannot award effort twice")
 
 func check_migration() -> void:
 	var run = fixture()
@@ -183,7 +167,7 @@ func check_migration() -> void:
 	if loaded.data.is_empty():
 		return
 	var a = loaded.actor("hero")
-	expect(loaded.data.version == 4 and loaded.gear_owned("actor", "hero").size() == 4
+	expect(loaded.data.version == Run.SAVE_VERSION and loaded.gear_owned("actor", "hero").size() == 4
 		and loaded.equipped_definition("hero", "weapon") == "trail_blade" and not a.inventory.has("trail_blade"),
 		"Migration does not create an extra copy for the worn weapon")
 	expect(a.hp == 21 and a.hp_max == 114 and loaded.data.relic_effect_flags.life_seed_applied
@@ -263,7 +247,6 @@ func execute() -> void:
 	check_catalogs()
 	check_equipment()
 	check_relics()
-	check_recovery_relic()
 	check_migration()
 	check_battle()
 	await check_ui()

@@ -289,11 +289,9 @@ func check_node_arrival() -> void:
 	game._continue_run()
 	expect(game.view.tile_nodes[cell].get_node("LocationName").text == title and not game.modal_layer.has_node("StoryScreen"),
 		"Loading preserves the visited name without reopening its story")
-	run.actor("hero").ap = run.actor("hero").ap_max
 	game._select_cell(start)
 	game._select_cell(start)
 	await wait_for_map_arrival()
-	run.actor("hero").ap = run.actor("hero").ap_max
 	game._select_cell(cell)
 	game._select_cell(cell)
 	await wait_for_map_arrival()
@@ -410,7 +408,7 @@ func check_personal_dialogue() -> void:
 	expect(contains_text(game.modal_layer.get_node("StoryHistory"), join_line), "The selected reply appears in dialogue history")
 	await click("关闭")
 	await click_story_blank()
-	expect(person.joined and "lorne" in game.moving_ids, "Actual recruitment checks the companion into the squad")
+	expect(person.joined and person.position == run.actor("hero").position, "Actual recruitment adds the companion to the party")
 	var acceptance = await read_to_choices()
 	expect(story_speaker() == "洛恩" and acceptance.contains(Story.CHARACTER_BEHAVIOR.lorne[1]), "Recruitment receives an answer from the companion")
 	var before_past = run.data.duplicate(true)
@@ -504,7 +502,7 @@ func check_node_dialogs() -> void:
 
 	var rest_cells = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "rest")
 	var shop_cells = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "trade")
-	expect(not rest_cells.is_empty() and not shop_cells.is_empty(), "This seed has rest and trade nodes")
+	expect(not rest_cells.is_empty() and not shop_cells.is_empty(), "This seed has supply stops and trade nodes")
 	if rest_cells.is_empty() or shop_cells.is_empty():
 		return
 	var rest_cell: String = rest_cells[0]
@@ -518,11 +516,14 @@ func check_node_dialogs() -> void:
 	expect(scene.texture.resource_path.ends_with("/" + game._story_scene_at(rest_cell) + ".png"),
 		"The node story uses the occupied tile's terrain art")
 	await read_to_choices()
-	await click("在此休整")
-	expect(hero.hp == 1 + ceili(hero.hp_max * 0.25) and hero.mp == 0,
-		"The node recovers the chosen resource")
-	expect(find_button(game.modal_layer, "在此调息") == null and find_button(game.modal_layer, "带走一份") == null,
-		"The other uses disappear after the shared supplies are spent")
+	expect(find_button(game.modal_layer, "在此休整") == null and find_button(game.modal_layer, "在此调息") == null,
+		"The node offers supplies without recovery options")
+	var supply: String = run.node_at(rest_cell).item
+	var quantity = int(hero.inventory.get(supply, 0))
+	await click("带走一份")
+	expect(hero.hp == 1 and hero.mp == 0 and hero.inventory[supply] == quantity + 1,
+		"The node grants a finite supply item")
+	expect(find_button(game.modal_layer, "带走一份") == null, "Supply cannot be claimed twice")
 	await read_to_choices()
 	await click("返回地图")
 
@@ -561,7 +562,7 @@ func check_backpack_use() -> void:
 	tide.position = away
 	lorne.inventory.salve = 2
 	lorne.hp = 1
-	var effort = lorne.ap
+	var steps = run.remaining_steps()
 	var hero_salves = hero.inventory.salve
 	game._select_actor("lorne")
 	await press("背包")
@@ -580,7 +581,7 @@ func check_backpack_use() -> void:
 	expect(target.get_item_text(target.selected).begins_with("洛恩") and target.item_count == 2,
 		"Backpack use defaults to the holder and only offers local characters")
 	await press("确认使用 疗伤药")
-	expect(lorne.hp == 46 and lorne.inventory.salve == 1 and hero.inventory.salve == hero_salves and lorne.ap == effort,
+	expect(lorne.hp == 46 and lorne.inventory.salve == 1 and hero.inventory.salve == hero_salves and run.remaining_steps() == steps,
 		"Using from Lorne's bag heals him and consumes only his item without spending effort")
 	expect(saved_run().get("actors", {}).get("lorne", {}).get("hp") == 46 and consumable_row("疗伤药") != null,
 		"Successful use auto-saves and returns to the refreshed backpack")
@@ -602,7 +603,7 @@ func check_backpack_use() -> void:
 	lorne.mp = 5
 	await use_from_backpack("澄露")
 	await press("确认使用 澄露")
-	expect(lorne.mp == 35 and lorne.inventory.ether == 0 and lorne.ap == effort,
+	expect(lorne.mp == 35 and lorne.inventory.ether == 0 and run.remaining_steps() == steps,
 		"Backpack ether restores magic from the holder's inventory without spending effort")
 	await press("关闭")
 	game._select_actor("hero")

@@ -30,9 +30,8 @@ func check_effects(run: RefCounted) -> void:
 	var later = run.actor("lorne")
 	var later_max = later.hp_max
 	var initial_attack = run.stat("hero", "attack")
-	var mountain = run.data.tiles.keys().filter(func(id): return run.data.tiles[id].terrain == "mountain")[0]
-	expect(run.move_cost("hero", mountain) == 2 and run.grant_relic("trail_boots", "hero", start)
-		and run.move_cost("hero", mountain) == 1, "Boots reduce the actual cost of every costly move")
+	expect(not run.grant_relic("trail_boots", "hero", start)
+		and run.relic_offer("retired-only", ["trail_boots"], 1.0).is_empty(), "Retired effort relics cannot drop")
 	run.grant_relic("ranged_sight", "hero", start)
 	expect(run.stat("hero", "attack") == initial_attack, "Ranged relic modifies battle damage, not the attack stat")
 	hero.hp = 18
@@ -49,19 +48,17 @@ func check_effects(run: RefCounted) -> void:
 	run.join_companion("grit")
 	expect(run.stat("grit", "attack") == grit.attack, "Melee recruits do not receive the ranged bonus")
 	grit.hp = 0
-	hero.ap = 1
 	hero.mp = 0
-	grit.ap = 0
 	grit.mp = 0
-	run.grant_relic("road_hourglass", "hero", start)
 	run.grant_relic("stillwater_stone", "hero", start)
-	expect(hero.ap == 1 and hero.mp == 0 and run.use_relic("hero", "road_hourglass").ok and run.use_relic("hero", "stillwater_stone").ok
-		and hero.ap == 3 and hero.mp == roundi(hero.mp_max * 0.40) and grit.ap == 0 and grit.mp == 0, "Explicit restoration only applies to able allies")
+	expect(run.use_relic("hero", "stillwater_stone").ok
+		and hero.mp == roundi(hero.mp_max * 0.40) and grit.mp == 0, "Finite restoration only applies to able allies")
 	run.grant_relic("herbal_case", "hero", start)
 	expect(run.use_item("hero", "hero", "salve").ok and hero.hp == 74, "Health items use the relic multiplier")
 	run.grant_relic("rainstone", "hero", start)
 	var weather = run.next_weather()
-	expect(is_equal_approx(run.rain_chance(), 0.48) and run.end_day().ok and run.data.weather == weather, "Forecast and day settlement use the adjusted rain probability")
+	run._advance_day()
+	expect(is_equal_approx(run.rain_chance(), 0.48) and run.data.weather == weather, "Forecast and day settlement use the adjusted rain probability")
 	run.grant_relic("rain_bell", "hero", start)
 	run.data.weather = "sun"
 	expect(run.use_relic("hero", "rain_bell").ok and run.data.weather == "rain", "Rain bell changes the current weather when used")

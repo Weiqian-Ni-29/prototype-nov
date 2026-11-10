@@ -1,5 +1,6 @@
 extends SceneTree
 ## Native rendered-frame gate for the four required samples; no battle resource changes.
+const Doll = preload("res://scripts/presentation/doll.gd")
 const Main = preload("res://scenes/main.tscn")
 var checks = 0
 var failures = 0
@@ -28,7 +29,9 @@ func execute() -> void:
 	await create_timer(0.2).timeout
 	var original = JSON.stringify(game.run.data)
 	for id in ["hero","cen","eve","grit"]:
-		var doll = game.view.dolls[id]
+		var doll = Doll.new()
+		game.view.actor_root.add_child(doll)
+		doll.configure(game.run.actor(id))
 		var rig = doll.rigged
 		var original_position = doll.position
 		expect(rig != null and rig.animator != null,"Sample uses a real AnimationPlayer " + id)
@@ -48,7 +51,8 @@ func execute() -> void:
 		rig.set_down(false)
 		await create_timer(1.6).timeout
 		expect(not rig.down and rig.action=="idle","Explicit recovery returns to idle " + id)
-		expect(doll.position.is_equal_approx(original_position),"Animation does not relocate map actor " + id)
+		expect(doll.position.is_equal_approx(original_position),"Animation does not relocate the presentation fixture " + id)
+		doll.queue_free()
 	expect(JSON.stringify(game.run.data)==original,"Presentation sample does not change any domain state")
 	print("ANIMATION SAMPLES: %d checks, %d failures" % [checks,failures])
 	game.queue_free()

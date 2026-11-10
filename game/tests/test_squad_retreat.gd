@@ -24,6 +24,7 @@ func execute():
 	game = Main.instantiate()
 	root.add_child(game)
 	await process_frame
+	game.sound.set_volume(0.0, false)
 	game.run.save_path = "user://test-squad-retreat.json"
 	game._start_new()
 	game.set_process(false)
@@ -32,28 +33,20 @@ func execute():
 	for id in ["lorne", "grit"]:
 		run.actor(id).position = origin
 		expect(run.join_companion(id).ok, "recruit " + id)
-	expect(run.split_squad(["lorne"]).ok, "resident receives own squad")
 	var destination = ""
 	for cell in Hex.neighbors(origin, run.data.tiles):
 		if Hex.is_land(run.data.tiles, cell):
 			destination = cell
 			break
-	run.actor("lorne").position = destination
-	var resident_id = run.actor("lorne").squad_id
-	var resident_color = run.data.squad_colors[resident_id]
 	run.data.tiles[origin].enemies = []
 	run.data.tiles[destination].enemies = ["boar"]
 	game._select_actor("hero")
 	game.move_target = destination
 	game._move_selected()
-	expect(run.data.pending_battle.get("movers", []) == ["hero", "grit"], "encounter remembers actual arriving movers")
-	expect(run.squad_groups().size() == 1 and run.actor("hero").squad_id == resident_id, "arrival merges into resident squad")
-	game.view.dolls.grit.move_tween.set_speed_scale(0.5)
+	expect(run.data.pending_battle.origin == origin and run.remaining_steps() == 4, "Encounter remembers origin and committed step")
+	expect(run.same_cell(destination).size() == 3, "All companions arrive together")
 	var deadline = Time.get_ticks_msec() + 5000
-	while game.view.dolls.hero.is_moving() and Time.get_ticks_msec() < deadline:
-		await process_frame
-	expect(game.view.dolls.grit.is_moving() and game.modal_layer.get_child_count() == 0,
-		"Formation waits for the last moving squad member")
+	expect(game.map_traveling and game.modal_layer.get_child_count() == 0, "Formation waits while the traveler is walking")
 	while game.map_traveling and Time.get_ticks_msec() < deadline:
 		await process_frame
 	await press("开始战斗")
@@ -65,32 +58,16 @@ func execute():
 	expect(game.combat == null and run.data.status == "exploring", "retreat confirmation completes _finish_battle")
 	expect(not run.data.has("pending_arrival") and not game.modal_layer.has_node("StoryScreen"),
 		"Retreat clears the abandoned encounter's arrival story")
-	expect(run.actor("hero").position == origin and run.actor("grit").position == origin, "actual battle retreat relocates movers")
-	expect(run.actor("lorne").position == destination, "resident remains at encounter")
-	expect(run.actor("grit").hp == 0, "retreat can incapacitate squad member")
-	expect(run.squad_groups().size() == 2, "retreat splits merged squad across locations")
-	expect(run.actor("hero").squad_id != run.actor("lorne").squad_id, "different locations have distinct identities")
-	expect(run.actor("lorne").squad_id == resident_id and run.data.squad_colors[resident_id] == resident_color, "stationary resident keeps original identity and color after retreat")
-	expect(game.selected_cell == run.actor(game.selected_id).position, "selected cell follows retreat")
-	expect(game.moving_ids.size() == 1 and game.moving_ids[0] == "hero", "post-retreat moving selection excludes resident and wounded mover")
-	var colors = {}
-	var identities = {}
-	for id in run.joined_ids():
-		identities[id] = run.actor(id).squad_id
-		colors[id] = game.view.squad_markers.color_for_actor(id)
-	game._refresh()
-	expect(game.view.squad_markers.groups.size() == 2, "map displays both post-retreat squads")
+	expect(run.same_cell(origin).size() == 3, "Actual battle retreat moves the whole party")
+	expect(run.actor("grit").hp == 0, "Retreat can incapacitate a companion")
+	expect(game.selected_cell == origin and run.remaining_steps() == 4, "Retreat returns without advancing or refunding a step")
+	expect(game.view.dolls.keys() == ["hero"], "Map still shows only the traveler")
 	var loaded = Model.new()
-	expect(loaded.load_game(run.save_path).ok, "retreat checkpoint reloads")
-	for id in run.joined_ids():
-		expect(loaded.actor(id).position == run.actor(id).position and loaded.actor(id).squad_id == identities[id], "saved position/identity retained: " + id)
-		expect(loaded.data.squad_colors[loaded.actor(id).squad_id] == run.data.squad_colors[identities[id]], "saved color index retained: " + id)
-	game._continue_run()
-	await process_frame
-	expect(game.moving_ids.size() == 1 and game.moving_ids[0] == "hero", "reload selects only healthy members at hero location")
-	for id in run.joined_ids():
-		expect(game.view.squad_markers.color_for_actor(id) == colors[id], "reload preserves visible marker color: " + id)
+	expect(loaded.load_game(run.save_path).ok, "Retreat checkpoint reloads")
+	expect(loaded.same_cell(origin).size() == 3 and loaded.actor("grit").hp == 0 and loaded.remaining_steps() == 4,
+		"Reload retains the party, injury and remaining steps")
 	for suffix in ["", ".bak", ".tmp"]: DirAccess.remove_absolute(run.save_path + suffix)
-	game.free()
+	game.queue_free()
+	await process_frame
 	print("SQUAD RETREAT: %d checks, %d failures" % [checks, failures])
 	quit(1 if failures else 0)

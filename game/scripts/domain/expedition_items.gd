@@ -7,8 +7,7 @@ static func initialize(data: Dictionary) -> void:
 	data.merge({"gear_instances": {}, "next_gear_uid": 1, "item_revision": 0,
 		"last_item_operation": {}, "relic_inventory": {}, "relic_attunement": [],
 		"relic_seen": {}, "relic_effect_flags": {}, "relic_claims": {}, "relic_intros": [],
-		"battle_offers": {}, "item_effect_counts": {}, "map_intel": {}, "route_records": {},
-		"last_move_windows": {}, "next_move_uid": 1})
+		"battle_offers": {}, "item_effect_counts": {}, "map_intel": {}, "route_records": {}})
 
 static func add_gear(data: Dictionary, definition: String, quality: String, kind: String, owner: String) -> String:
 	var uid = str(int(data.next_gear_uid))
@@ -29,7 +28,7 @@ static func stock(data: Dictionary, legacy: bool) -> void:
 			if node.has("relic_stock"):
 				continue
 			node.relic_stock = {}
-			var pool = Relics.DATA.keys()
+			var pool = Relics.DATA.keys().filter(Relics.is_active)
 			pool.sort()
 			for i in 2:
 				var index = roller.randi_range(0, pool.size() - 1)
@@ -107,10 +106,10 @@ static func whole(value: Variant, minimum: int = 0) -> bool:
 
 static func validate(data: Dictionary) -> bool:
 	for field in ["gear_instances", "last_item_operation", "relic_inventory", "relic_seen", "relic_effect_flags",
-			"relic_claims", "battle_offers", "item_effect_counts", "map_intel", "route_records", "last_move_windows"]:
+			"relic_claims", "battle_offers", "item_effect_counts", "map_intel", "route_records"]:
 		if not data.get(field) is Dictionary:
 			return false
-	if not whole(data.get("next_gear_uid"), 1) or not whole(data.get("item_revision")) or not whole(data.get("next_move_uid"), 1):
+	if not whole(data.get("next_gear_uid"), 1) or not whole(data.get("item_revision")):
 		return false
 	for uid in data.gear_instances:
 		var instance = data.gear_instances[uid]
@@ -159,7 +158,7 @@ static func validate(data: Dictionary) -> bool:
 	if not data.get("relic_attunement") is Array or data.relic_attunement.size() > 6:
 		return false
 	for id in data.relic_attunement:
-		if seen.has(id) or not data.relic_inventory.has(id) or Relics.DATA[id].type != "P":
+		if seen.has(id) or not data.relic_inventory.has(id) or not Relics.is_active(id) or Relics.DATA[id].type != "P":
 			return false
 		seen[id] = true
 	for id in data.relic_effect_flags:
@@ -178,7 +177,7 @@ static func validate(data: Dictionary) -> bool:
 			if not node.get("relic_stock") is Dictionary:
 				return false
 			for id in node.relic_stock:
-				if not Relics.DATA.has(id) or not whole(node.relic_stock[id]):
+				if not Relics.is_active(id) or not whole(node.relic_stock[id]):
 					return false
 		elif node.has("gear_uid") and not data.gear_instances.has(node.gear_uid):
 			return false
