@@ -936,7 +936,7 @@ func _confirm(title: String, message: String, action: Callable) -> void:
 
 func _show_character_codex() -> void:
 	if character_codex_state.is_empty():
-		character_codex_state = {"actor": selected_id, "tab": 0, "filter": 0, "pose": "",
+		character_codex_state = {"actor": selected_id, "tab": 0, "filter": 0, "pose": "", "grid": false,
 			"move_target": move_target}
 	_clear(modal_layer)
 	ui.show()

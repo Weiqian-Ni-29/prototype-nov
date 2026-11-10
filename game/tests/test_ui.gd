@@ -80,6 +80,10 @@ func click(prefix: String) -> bool:
 	expect(not prefix.is_empty() and button != null and not button.disabled, "Clickable UI control: " + prefix)
 	if prefix.is_empty() or button == null or button.disabled:
 		return false
+	await click_button(button)
+	return true
+
+func click_button(button: Button) -> void:
 	var parent = button.get_parent()
 	while parent != null:
 		if parent is ScrollContainer:
@@ -94,7 +98,6 @@ func click(prefix: String) -> bool:
 		event.position = point
 		root.push_input(event, true)
 	await process_frame
-	return true
 
 func option_label(result: Dictionary, id: String) -> String:
 	for option in result.get("options", []):
@@ -562,16 +565,37 @@ func check_character_codex() -> void:
 	expect(not contains_text(codex, "死神") and not contains_text(codex, "伊文洛"), "The traveler profile hides the final revelation")
 	await click("见过未加入")
 	expect(contains_text(codex, "暂无角色"), "An empty filter displays its own empty state")
+	var list_view = codex.find_child("CodexListView", true, false) as Button
+	var grid_view = codex.find_child("CodexGridView", true, false) as Button
+	expect(list_view.text.is_empty() and grid_view.text.is_empty() and list_view.icon != null and grid_view.icon != null
+		and list_view.get_parent() == grid_view.get_parent()
+		and is_equal_approx(list_view.get_global_rect().end.x, grid_view.get_global_rect().position.x),
+		"The view switch is icon-only and the segments share a seam")
+	await click_button(grid_view)
+	expect(grid_view.button_pressed and not list_view.button_pressed and game.character_codex_state.filter == 2
+		and codex.roster_empty.visible, "Switching to the grid preserves the empty filter and selects one segment")
 	await click("全部")
-	await click("？？？")
+	var grid = codex.find_child("CodexRoster", true, false) as GridContainer
+	var unknown = grid.find_child("CodexUnknown", false, false) as Button
+	expect(grid.columns == 5 and grid.find_children("CodexUnknown*", "Button", false, false).size() == 25,
+		"The five-column grid shows all anonymous slots")
+	await click_button(unknown)
+	var background = codex.find_child("CodexPortraitBackdrop", true, false) as TextureRect
 	expect(not contains_text(codex, "洛恩") and codex.find_child("CodexPortrait", true, false).disabled,
 		"An unknown entry never exposes an identity or opens a real portrait")
+	expect(list_view.button_pressed and not grid_view.button_pressed and background.texture == null,
+		"Opening an anonymous grid card returns to list details without revealing a backdrop")
 	await click("旅人")
+	var traveler_background = background.texture
+	expect(traveler_background != null and background.get_global_rect().is_equal_approx(background.get_parent().get_global_rect()),
+		"The known character backdrop covers the portrait frame")
 	await click("技能")
 	expect(contains_text(codex, "重力魔法"), "The traveler profile uses the current skills")
 	await click("战斗")
 	expect(game.character_codex_state.pose == "battle", "Battle pose changes the displayed art")
 	var portrait = codex.find_child("CodexPortrait", true, false) as TextureButton
+	expect(background.texture == traveler_background and portrait.get_global_rect().end.y >= background.get_global_rect().end.y,
+		"The battle pose reaches the bottom edge without replacing the character backdrop")
 	portrait.pressed.emit()
 	expect(game.modal_layer.has_node("CodexPortraitZoom"), "Known portraits can be enlarged")
 	await story_key(KEY_ESCAPE)
@@ -598,6 +622,9 @@ func check_character_codex() -> void:
 	await click("角色")
 	await click("见过未加入")
 	expect(game.character_codex_state.actor == "lorne", "Meeting a companion makes that character appear in the filter")
+	codex = game.modal_layer.get_node("CharacterCodex")
+	background = codex.find_child("CodexPortraitBackdrop", true, false)
+	expect(background.texture != null and background.texture != traveler_background, "Selecting another character changes the illustrated setting")
 	await click("装备")
 	expect(contains_text(game.modal_layer, "尚未加入远征队。"), "A known but unjoined character has no player equipment")
 	await click("×")
