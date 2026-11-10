@@ -8,6 +8,7 @@ const Catalog = preload("res://scripts/domain/catalog.gd")
 const Board = preload("res://scripts/presentation/board_surface.gd")
 const BattleTargeting = preload("res://scripts/presentation/battle_targeting.gd")
 const OCCLUSION = preload("res://scripts/presentation/board_occlusion.gdshader")
+const GROUND_FADE = preload("res://scripts/presentation/board_ground_fade.gdshader")
 const NATURE_PALETTE = preload("res://scripts/presentation/nature_palette.gdshader")
 const MAP_PLANE = Plane(Vector3.UP, 0.05)
 const DRAG_THRESHOLD = 8.0
@@ -16,6 +17,7 @@ const MIN_MAP_ZOOM = 3.8
 const MAX_MAP_ZOOM = 38.0
 const MAP_ZOOM_STEP = 1.14
 const OCCLUSION_ZOOM = 9.0
+const MAX_MOUNTAIN_OCCLUSION_TARGETS = 32
 const FOG_REVEAL_SECONDS = 0.7
 signal cell_clicked(id: String)
 signal enemy_clicked(id: String)
@@ -646,12 +648,15 @@ func _clear_battle_target() -> void:
 func _update_occlusion(delta: float) -> void:
 	var blocked: Dictionary = {}
 	var sight = -camera.global_basis.z
+	var mountain_targets := PackedVector3Array()
 	if zoom_size <= OCCLUSION_ZOOM:
 		for id in map_squad:
 			var model = dolls.get(id)
 			if not is_instance_valid(model) or not model.visible:
 				continue
 			var feet: Vector3 = model.global_position
+			if mountain_targets.size() < MAX_MOUNTAIN_OCCLUSION_TARGETS:
+				mountain_targets.append(feet)
 			var target = feet + Vector3.UP * 0.20
 			var head = feet + Vector3.UP * 0.38
 			for instance in map_occluders:
@@ -662,6 +667,16 @@ func _update_occlusion(delta: float) -> void:
 					var targets: PackedVector3Array = blocked.get(instance, PackedVector3Array())
 					targets.append(target)
 					blocked[instance] = targets
+	if board_ground_material != null:
+		var fade = 1.0 - smoothstep(7.75, OCCLUSION_ZOOM, zoom_size)
+		var ground_shader = GROUND_FADE if fade > 0.0 and not mountain_targets.is_empty() else Board.GROUND
+		if board_ground_material.shader != ground_shader:
+			board_ground_material.shader = ground_shader
+		if ground_shader == GROUND_FADE:
+			board_ground_material.set_shader_parameter("mountain_target_count", mountain_targets.size())
+			board_ground_material.set_shader_parameter("mountain_fade", fade)
+			board_ground_material.set_shader_parameter("mountain_targets", mountain_targets)
+			board_ground_material.set_shader_parameter("mountain_sight", sight)
 	for instance in blocked:
 		if not fading_occluders.has(instance):
 			_begin_occlusion(instance)
