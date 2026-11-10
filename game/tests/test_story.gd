@@ -114,7 +114,6 @@ func check_personal_choices() -> void:
 			check_personal_blocked(story, run, ally_id, id, "visitor not recruited")
 			expect(story.choose("hero", ally_id, "join").ok, "Recruit local visitor for " + id)
 			var visitor = "hero" if branch == "personal_a" else ally_id
-			run.actor(visitor).ap = 0
 			var before = unrelated_state(run)
 			var dialogue = story.dialogue(visitor, id)
 			expect(dialogue.ok and has_option(dialogue, "quest"), id + " joined dialogue offers personal quest")
@@ -368,8 +367,6 @@ func check_hero_only_mystery() -> void:
 		for visitor in ["hero", "lorne"]:
 			check_topics_blocked(story, run, visitor, id, "subject not recruited")
 		expect(story.choose("hero", id, "join").ok, id + " joins before any past or echo")
-		hero.ap = 0
-		companion.ap = 0
 		var ready = run.data.duplicate(true)
 		for visitor in ["hero", "lorne"]:
 			var chat = story.dialogue(visitor, id)
@@ -445,7 +442,7 @@ func execute() -> void:
 		positions[person.position] = true
 		expect(person.race in ["龙", "恶魔", "神", "人类", "矮人", "精灵"] and Catalog.SKILLS.has(person.skill) and Catalog.SKILLS.has(person.ultimate), "Complete character " + id)
 		expect(Nodes.story(r.node_at(person.position)).size() > 0, "Character is placed in a real node " + id)
-		r.actor("hero").position = person.position
+		r.retreat_party(person.position)
 		if not r.data.tiles[person.position].enemies.is_empty():
 			expect(not story.dialogue("hero", id).ok, "The encounter has to be cleared first")
 			r.data.tiles[person.position].enemies.clear()
@@ -454,14 +451,12 @@ func execute() -> void:
 		expect(dialogue.speaker == person.name and dialogue.options.all(func(option): return option.spoken),
 			"First encounter uses the companion's voice and player replies " + id)
 		check_topics_blocked(story, r, "hero", id, "first meeting before recruitment")
-		expect(story.choose("hero", id, "join").ok and person.squad_id == r.actor("hero").squad_id, "Actual recruitment " + id)
+		expect(story.choose("hero", id, "join").ok and person.position == r.actor("hero").position, "Actual recruitment " + id)
 		check_past(story, r, "hero", id, "immediately after first meeting and recruitment")
 		expect(str(r.data.story[id].get("personal_choice", "")).is_empty(), id + " learning the background never selects a personal branch")
 
 	var haunt: String = r.data.nodes.keys().filter(func(cell): return r.node_at(cell).kind == "haunt")[0]
-	r.actor("lorne").position = haunt
-	expect(not r.use_node("lorne", "settle").ok and not r.data.peace.has(haunt), "Remote squads cannot perform the hero’s unseen work")
-	r.actor("hero").position = haunt
+	r.retreat_party(haunt)
 	expect(not r.use_node("hero", "settle").ok, "The hero must investigate before settlement")
 	expect(r.use_node("hero", "inspect").ok and r.node_at(haunt).get("investigated", false)
 		and r.node_at(haunt).result == "" and r.data.leads.has(haunt) and not r.data.peace.has(haunt),
@@ -483,7 +478,7 @@ func execute() -> void:
 		expect(r.pending_chapter() == 0 and r.actor("hero").name == "旅人", "Chapter acknowledges once and preserves the mystery")
 	expect(r.boss_known() and r.data.tiles[r.data.boss].enemies == ["war_god"], "80 percent locates the actual boss")
 	expect(r.actor("hero").ultimate == "gravity_wave", "A memory unlocks the upgraded gravity skill")
-	r.actor("hero").position = r.data.boss
+	r.retreat_party(r.data.boss)
 	var b = Combat.new()
 	var encounter = {"position": r.data.boss, "origin": r.data.boss, "movers": [], "npc": "", "ambush": false}
 	expect(b.begin(r, encounter, ["hero"]).ok, "Boss battle begins")

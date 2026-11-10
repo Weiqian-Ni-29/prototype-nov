@@ -32,9 +32,7 @@ func journey(seed_value: int) -> bool:
 			continue
 		var path = Hex.path(r.data.tiles, hero.position, cell)
 		for next in path.slice(1):
-			if hero.ap < 4 and not r.end_day().ok:
-				return false
-			var result = r.move(["hero"], next)
+			var result = r.move(next)
 			if not result.ok:
 				return false
 			steps += 1
@@ -50,9 +48,7 @@ func journey(seed_value: int) -> bool:
 		return false
 	var route = Hex.path(r.data.tiles, hero.position, r.data.boss)
 	for next in route.slice(1):
-		if hero.ap < 4 and not r.end_day().ok:
-			return false
-		var result = r.move(["hero"], next)
+		var result = r.move(next)
 		if not result.ok or (result.battle and not fight(r)):
 			return false
 		steps += 1

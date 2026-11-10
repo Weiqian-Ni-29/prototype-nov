@@ -45,10 +45,7 @@ func execute() -> void:
 		expect(Hex.distance(Hex.coord(generated.start), Hex.coord(generated.boss)) >= 11, "Distant boss seed %d" % seed_value)
 		var route = Hex.path(tiles, generated.start, generated.boss, true)
 		expect(not route.is_empty(), "Safe boss approach seed %d" % seed_value)
-		var route_cost = 0
-		for k in route.slice(1):
-			route_cost += int(Catalog.TERRAIN[tiles[k].terrain].cost)
-		expect(route_cost >= 11, "Boss route cost seed %d" % seed_value)
+		expect(route.size() - 1 >= 11, "Boss route distance seed %d" % seed_value)
 		var counts = {}
 		var terrains = {}
 		var lake: Array[String] = []
@@ -92,42 +89,38 @@ func execute() -> void:
 	var original_terrain = r.data.tiles[destination].terrain
 	r.data.tiles[destination].terrain = "lake"
 	var before_lake = JSON.stringify(r.data)
-	var blocked = r.move(["hero"], destination)
+	var blocked = r.move(destination)
 	expect(not blocked.ok and "绕行" in blocked.message and JSON.stringify(r.data) == before_lake,
-		"Attempting to enter lake water spends no AP and does not reveal tiles")
+		"Attempting to enter lake water spends no steps and does not reveal tiles")
 	r.data.tiles[destination].terrain = original_terrain
-	var before_ap = int(r.actor("hero").ap)
+	var before_steps = r.remaining_steps()
 	var before_energy = int(r.actor("hero").energy)
-	var cost = r.move_cost("hero", destination)
-	expect(r.move(["hero"], destination).ok, "Valid move")
+	expect(r.move(destination).ok, "Valid move")
 	expect(r.has_visited(destination), "Successful movement records the destination as visited")
-	expect(r.actor("hero").ap == before_ap - cost, "Individual movement charge")
+	expect(r.remaining_steps() == before_steps - 1, "One tile uses one step")
 	expect(r.actor("hero").energy == before_energy, "Exploration never charges ultimate")
 	var explored = r.data.explored.size()
-	r.actor("hero").ap = 0
-	expect(not r.move(["hero"], r.data.start).ok, "Insufficient movement blocked")
-	expect(r.data.explored.size() == explored, "Blocked move does not reveal")
 	r.actor("hero").hp = 0
+	expect(not r.move(r.data.start).ok, "A wounded leader cannot move")
+	expect(r.data.explored.size() == explored, "Blocked move does not reveal")
 	fixture_ally(r, "lorne", r.data.start)
-	expect(r.end_day().ok, "Advance day with rescuer")
-	expect(r.actor("hero").hp == 0, "Daily healing cannot revive")
-	expect(r.actor("lorne").ap == r.actor("lorne").ap_max, "Personal daily AP")
 	expect(not r.transfer("lorne", "hero", "salve", 1).ok, "No remote inventory transfer")
 	r.actor("lorne").position = r.actor("hero").position
 	expect(r.use_item("lorne", "hero", "salve").ok, "Physical rescue")
 	expect(r.actor("hero").hp > 0, "Rescued actor can act")
-	var old_ap = r.actor("hero").ap
+	var steps = r.remaining_steps()
 	expect(r.equip("hero", r.actor("hero").equipment.accessory).ok, "Equipment outside combat")
-	expect(r.actor("hero").ap == old_ap, "Equipment does not refresh AP")
+	expect(r.remaining_steps() == steps, "Equipment does not spend movement")
 	expect(r.save_game().ok and r.save_game().ok, "Repeated atomic save")
 	var loaded = fresh(1)
 	expect(loaded.load_game("user://test-run.json").ok, "Load stable checkpoint")
 	# JSON numbers are parsed as floats; compare the serialization contract, not native int tags.
 	expect(loaded.data == JSON.parse_string(JSON.stringify(r.data)), "State round-trip including RNG and inventory")
 	expect(loaded.rng.state == r.rng.state, "RNG state survives save/load exactly")
-	expect(loaded.end_day().ok, "Loaded numeric state supports subsequent gameplay")
-	for i in range(14):
-		r.end_day()
+	expect(loaded.move(r.data.start).ok, "Loaded numeric state supports subsequent gameplay")
+	for i in range(70):
+		var next = r.data.start if r.actor("hero").position == destination else destination
+		r.move(next)
 	expect(r.data.day > 12 and r.data.status == "exploring", "No deadline")
 	r.actor("hero").position = r.data.boss
 	expect(r.data.status == "exploring" and not r.boss_known(), "Arriving early does not reveal the boss")
@@ -142,7 +135,7 @@ func execute() -> void:
 func test_combat() -> void:
 	var r = fresh()
 	var b = encounter(r, ["boar"], ["hero"])
-	expect(r.actor("hero").ap == r.actor("hero").ap_max - 2, "First deployment charge")
+	expect(r.remaining_steps() == Run.STEPS_PER_DAY and b.deployed.has("hero"), "Battle deployment does not spend steps")
 	var wrong_actor = "enemy_0" if b.current == "hero" else "hero"
 	expect(b.current == "hero", "Fast hero acts before boar")
 	var original_time = b.next_time.hero
@@ -164,14 +157,11 @@ func test_combat() -> void:
 			b.step_auto()
 		else:
 			b.act("guard")
-	var first_ap = r.actor("hero").ap
 	expect(b.swap("eve").ok, "Same-cell reserve swap")
-	expect(r.actor("eve").ap == r.actor("eve").ap_max - 2, "Reserve first deploy pays")
-	expect(b.paid.has("hero") and b.paid.has("eve") and r.actor("hero").ap == first_ap, "Paid collection persists across swap")
+	expect(r.remaining_steps() == Run.STEPS_PER_DAY, "Reserve deployment does not spend steps")
+	expect(b.deployed.has("hero") and b.deployed.has("eve"), "Participants tracked across swaps")
 	r = fresh()
-	r.actor("hero").ap = 0
 	b = encounter(r, ["spider"], ["hero"], true)
-	expect(r.actor("hero").ap == 0, "Ambush charge clamps at zero")
 	expect(b.next_time.enemy_0 < 1000.0 / Catalog.ENEMIES.spider.speed, "Ambush initial action advanced")
 	r = fresh()
 	b = encounter(r, ["boar"], ["hero"])
@@ -248,7 +238,8 @@ func test_environment() -> void:
 	tiles_before[position] = cleared_tile
 	expect(b.outcome == "victory" and r.data.tiles == tiles_before, "Victory only clears the encounter on the map")
 	var hp_after: int = r.actor("hero").hp
-	expect(r.end_day().ok and r.data.tiles == tiles_before and r.actor("hero").hp == hp_after,
+	r._advance_day()
+	expect(r.data.tiles == tiles_before and r.actor("hero").hp == hp_after,
 		"No post-battle fire damage, spreading or terrain changes during day settlement")
 
 	var legacy = r.data.tiles[position]

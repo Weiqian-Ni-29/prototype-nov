@@ -69,7 +69,6 @@ func check_trade_and_recovery() -> void:
 	hero.position = shop
 	lorne.position = shop
 	run.join_companion("lorne")
-	run.split_squad(["lorne"])
 	var stock = run.node_at(shop).stock
 	var original_stock = int(stock.salve)
 	var original_salve = int(hero.inventory.salve)
@@ -80,7 +79,7 @@ func check_trade_and_recovery() -> void:
 	expect(not run.trade("lorne", "ether", true).ok and not run.trade("hero", "trail_blade", false).ok
 		and JSON.stringify(run.data) == before, "Unfunded purchases and equipped sales have no side effects")
 	expect(run.trade("lorne", "salve", false).ok and run.data.lamp_coins == 4 and stock.salve == original_stock,
-		"Another squad sells from its own bag into the same wallet")
+		"A companion sells from its own bag into the same wallet")
 	expect(not run.trade("hero", "Q-T", false).ok, "Story documents cannot be sold")
 
 	hero.position = work
@@ -91,21 +90,19 @@ func check_trade_and_recovery() -> void:
 	hero.hp = 20
 	hero.mp = 5
 	lorne.hp = 0
-	hero.ap = 0
-	for day in range(3):
-		expect(run.end_day().ok, "Days can still advance")
-	expect(hero.hp == 20 and hero.mp == 5 and hero.ap == hero.ap_max, "Repeated days restore effort only")
-	var percent = run.recovery_percent(rest, "hp")
-	expect(run.use_node("hero", "hp").ok and hero.hp == 20 + ceili(hero.hp_max * percent / 100.0)
-		and hero.mp == 5 and lorne.hp == 0, "Rest treats only the chosen resource of living people here")
-	expect(not run.use_node("hero", "mp").ok and not run.use_node("hero", "pack").ok,
-		"All recovery choices spend the same supply")
+	expect(not run.use_node("hero", "hp").ok and not run.use_node("hero", "mp").ok,
+		"Supply stop does not offer recovery")
+	var item: String = run.node_at(rest).item
+	var count = int(hero.inventory.get(item, 0))
+	expect(run.use_node("hero", "pack").ok and hero.inventory[item] == count + 1
+		and hero.hp == 20 and hero.mp == 5 and lorne.hp == 0, "Supply stop grants a finite item")
+	expect(not run.use_node("hero", "pack").ok, "Supply can only be claimed once")
 	expect(run.save_game().ok, "Save resolved nodes and wallet")
 	var continued = Run.new()
 	expect(continued.load_game(run.save_path).ok, "Load the expedition with node state")
-	expect(continued.node_at(shop).stock.salve == stock.salve and continued.node_at(rest).result == "hp"
+	expect(continued.node_at(shop).stock.salve == stock.salve and continued.node_at(rest).result == "pack"
 		and continued.node_at(work).result == "work" and continued.data.lamp_coins == run.data.lamp_coins
-		and not continued.use_node("hero", "hp").ok, "Stock and spent recovery survive reload")
+		and not continued.use_node("hero", "pack").ok, "Stock and claimed supply survive reload")
 	var legacy = run.data.duplicate(true)
 	legacy.version = 3
 	legacy.relic_checks = {}
@@ -228,7 +225,7 @@ func check_haunt_branches() -> void:
 				expect(not run.use_node("hero", option).ok and run.data == before, event.id + " requires investigation before " + option)
 			run.actor("lorne").position = cell
 			expect(run.join_companion("lorne").ok, "Recruit investigator")
-			run.actor("hero").position = run.data.start
+			run.actor("hero").hp = 0
 			var actors = run.data.actors.duplicate(true)
 			var coins = run.data.lamp_coins
 			var peace = run.data.peace.duplicate(true)
@@ -239,7 +236,7 @@ func check_haunt_branches() -> void:
 				event.id + " investigation records evidence without completion, peace or resource changes")
 			before = run.data.duplicate(true)
 			for option in ["inspect", "settle", "settle_alternative"]:
-				expect(not run.use_node("lorne", option).ok and run.data == before, event.id + " no repeated investigation or remote-hero settlement: " + option)
+				expect(not run.use_node("lorne", option).ok and run.data == before, event.id + " no repeated investigation or wounded-hero settlement: " + option)
 			expect(run.save_game().ok, event.id + " save investigated checkpoint")
 			var loaded = Run.new()
 			expect(loaded.load_game(run.save_path).ok and loaded.node_at(cell).get("investigated", false)
@@ -282,19 +279,14 @@ func check_choice_branches() -> void:
 			var run = event_run(event, "choice")
 			var hero = run.actor("hero")
 			var node = run.node_at(hero.position)
-			hero.ap = 0
-			var before = run.data.duplicate(true)
-			expect(not run.use_node("hero", branch).ok and run.data == before, event.id + " insufficient AP has no effects for " + branch)
-			hero.ap = 1
 			var expected_actor = hero.duplicate(true)
-			expected_actor.ap = 0
+			var steps = run.remaining_steps()
 			var coins = run.data.lamp_coins
 			expect(run.use_node("hero", branch).ok and hero == expected_actor and run.data.lamp_coins == coins + node.coins
-				and node.result == branch, event.id + " spends exactly one AP and pays once for " + branch)
+				and node.result == branch and run.remaining_steps() == steps, event.id + " pays once without spending a step for " + branch)
 			var expected = event.resolved if branch == "work" else event.alternative_resolved
 			expect(Nodes.resolution(node) == expected, event.id + " chosen commission conclusion")
-			hero.ap = hero.ap_max
-			before = run.data.duplicate(true)
+			var before = run.data.duplicate(true)
 			for option in ["work", "work_alternative"]:
 				expect(not run.use_node("hero", option).ok and run.data == before, event.id + " cannot repay or switch commission")
 			expect(run.save_game().ok, event.id + " save commission branch")

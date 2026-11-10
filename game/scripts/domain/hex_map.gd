@@ -52,26 +52,17 @@ static func path(tiles: Dictionary, start: String, goal: String, avoid_enemies: 
 	if not is_land(tiles, start) or not is_land(tiles, goal):
 		return []
 	var frontier: Array[String] = [start]
-	var costs = {start: 0}
-	var previous = {}
+	var previous = {start: ""}
 	while not frontier.is_empty():
-		var current = frontier[0]
-		for candidate in frontier:
-			if costs[candidate] < costs[current]:
-				current = candidate
-		frontier.erase(current)
+		var current: String = frontier.pop_front()
 		if current == goal:
 			break
 		for next in neighbors(current, tiles):
-			if not is_land(tiles, next) or (avoid_enemies and not tiles[next].get("enemies", []).is_empty()):
+			if previous.has(next) or not is_land(tiles, next) or (avoid_enemies and not tiles[next].get("enemies", []).is_empty()):
 				continue
-			var cost = int(costs[current]) + int(Catalog.TERRAIN[tiles[next].terrain].cost)
-			if not costs.has(next) or cost < costs[next]:
-				costs[next] = cost
-				previous[next] = current
-				if next not in frontier:
-					frontier.append(next)
-	if not costs.has(goal):
+			previous[next] = current
+			frontier.append(next)
+	if not previous.has(goal):
 		return []
 	var result: Array[String] = [goal]
 	while result[0] != start:

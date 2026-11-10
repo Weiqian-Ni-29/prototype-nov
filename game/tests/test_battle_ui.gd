@@ -254,9 +254,9 @@ func execute() -> void:
 	game.battle_timer = 0
 	game._refresh()
 	await press("换人")
-	var lorne_ap = run.actor("lorne").ap
+	var steps = run.remaining_steps()
 	await press("洛恩")
-	expect("lorne" in b.active and "hero" not in b.active and run.actor("lorne").ap == lorne_ap - 2, "Reserve UI swaps same-cell character and charges once")
+	expect("lorne" in b.active and "hero" not in b.active and run.remaining_steps() == steps, "Reserve UI swaps companion without spending movement")
 	expect(b.active.size() == 4, "Swap never exceeds four active fighters")
 	await press("自动战斗")
 	expect(b.auto_mode and find_button(game.ui, "自动战斗").button_pressed,

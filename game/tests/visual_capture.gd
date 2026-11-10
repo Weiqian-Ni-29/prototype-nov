@@ -300,30 +300,16 @@ func inspect_occlusion(forest: String) -> void:
 	if not is_instance_valid(occluder):
 		expect(false, "A tall forest occluder exists for the close-up")
 		return
-	var courier = run.actor("lorne")
-	var original_courier = courier.duplicate()
-	courier.joined = true
-	courier.position = forest
-	game._refresh()
-	var companion = view.dolls.lorne
 	var bounds: AABB = occluder.global_transform * occluder.get_aabb()
 	var sight: Vector3 = -view.camera.global_basis.z
-	var side = view.camera.global_basis.x * minf(0.16, minf(bounds.size.x, bounds.size.z) * 0.25)
-	var covered_feet = bounds.get_center() + sight * 0.48 - Vector3.UP * 0.20
-	companion.global_position = covered_feet + side
-	actor.global_position = covered_feet - sight * 2.0
+	actor.global_position = bounds.get_center() + sight * 0.48 - Vector3.UP * 0.20
 	view.set_process(false)
 	await capture("terrain-forest-covered")
 	view._update_occlusion(1.0)
 	var targets: PackedVector3Array = view.fading_occluders.get(occluder, {}).get("targets", PackedVector3Array())
-	expect(targets.size() == 1 and targets[0].is_equal_approx(companion.global_position + Vector3.UP * 0.20),
-		"A tree covering only a non-selected squad member still fades")
-	actor.global_position = covered_feet - side
-	view._update_occlusion(1.0)
-	expect(view.fading_occluders.has(occluder) and view.fading_occluders[occluder].targets.size() == 2
-		and view.fading_occluders[occluder].amount > 0.9, "One tree can fade around two squad members at the same time")
+	expect(targets.size() == 1 and targets[0].is_equal_approx(actor.global_position + Vector3.UP * 0.20),
+		"A tree covering the traveler fades around their position")
 	if not view.fading_occluders.has(occluder):
-		run.data.actors.lorne = original_courier
 		view.set_process(true)
 		return
 	var original: Material = view.fading_occluders[occluder].originals[0]
@@ -333,7 +319,6 @@ func inspect_occlusion(forest: String) -> void:
 	view._update_occlusion(1.0)
 	expect(not view.fading_occluders.has(occluder) and occluder.get_surface_override_material(0) == original, "Zooming out restores the tree's original material")
 	expect(view.canopy_batch.visible and not view.canopy_individual, "Wide view groups canopy meshes for rendering")
-	run.data.actors.lorne = original_courier
 	game._refresh()
 	view.set_process(true)
 
@@ -352,7 +337,7 @@ func capture_node_examples() -> void:
 		forest_rest = run.data.nodes.keys().filter(func(cell):
 			return run.node_at(cell).kind == "rest" and run.data.tiles[cell].terrain == "forest")
 	var shops = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "trade")
-	expect(not forest_rest.is_empty() and not shops.is_empty(), "Node fixture seed has a forest recovery site and a shop")
+	expect(not forest_rest.is_empty() and not shops.is_empty(), "Node fixture seed has a forest supply stop and a shop")
 	if forest_rest.is_empty() or shops.is_empty():
 		return
 	game.chosen_seed = str(seed_value)
@@ -362,7 +347,7 @@ func capture_node_examples() -> void:
 	run.reveal(rest)
 	game._select_actor("hero")
 	game._node_dialog()
-	await capture("node-forest-rest")
+	await capture("node-forest-supply-stop")
 	game._close_modal()
 	var shop: String = shops[0]
 	run.actor("hero").position = shop

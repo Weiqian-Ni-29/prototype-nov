@@ -331,7 +331,7 @@ func _apply_resource(battle, target: String, params: Dictionary) -> bool:
 	if a.hp <= 0:
 		return false
 	var changed = false
-	for resource in ["hp", "mp", "ap", "energy"]:
+	for resource in ["hp", "mp", "energy"]:
 		var maximum = 100 if resource == "energy" else int(a.get(resource + "_max", 0))
 		var amount = int(params.get(resource + "_flat", 0)) + floori(maximum * int(params.get(resource + "_max_pp", 0)) / 100.0)
 		var gain = mini(amount, maximum - int(a.get(resource, 0)))
@@ -734,6 +734,6 @@ func enemy_damage(battle, enemy: String, target: String, result: Dictionary, sna
 
 func victory(battle) -> void:
 	if battle.run.has_relic("return_seam"):
-		for id in battle.paid:
+		for id in battle.deployed:
 			if hp_losses.has(id):
 				_resource(battle, id, "return_seam", 1, {"hp_max_pp": 5})

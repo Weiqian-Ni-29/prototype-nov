@@ -17,12 +17,10 @@ const MIN_MAP_ZOOM = 3.8
 const MAX_MAP_ZOOM = 38.0
 const MAP_ZOOM_STEP = 1.14
 const OCCLUSION_ZOOM = 9.0
-const MAX_MOUNTAIN_OCCLUSION_TARGETS = 32
 const FOG_REVEAL_SECONDS = 0.7
 signal cell_clicked(id: String)
 signal enemy_clicked(id: String)
-signal squad_clicked(id: String)
-var squad_markers = preload("res://scripts/presentation/squad_markers.gd").new()
+var hero_marker = preload("res://scripts/presentation/squad_markers.gd").new()
 var camera: Camera3D
 var light: DirectionalLight3D
 var map_root: Node3D
@@ -72,8 +70,6 @@ var board_stamp: Dictionary
 var outline_cell = ""
 var map_occluders: Array[MeshInstance3D] = []
 var fading_occluders: Dictionary
-var map_actor = ""
-var map_squad: Array = []
 signal presentation_changed
 signal sound_cue(kind: String)
 
@@ -109,7 +105,7 @@ func _ready() -> void:
 	var marker_canvas = CanvasLayer.new()
 	marker_canvas.layer = 1
 	add_child(marker_canvas)
-	marker_canvas.add_child(squad_markers)
+	marker_canvas.add_child(hero_marker)
 	ocean = preload("res://scripts/presentation/ocean.gd").new()
 	add_child(ocean)
 	selection_ring = MeshInstance3D.new()
@@ -143,14 +139,12 @@ func _ready() -> void:
 	presenter.feedback_changed.connect(func(): presentation_changed.emit())
 	presenter.started.connect(func(): presentation_changed.emit())
 	visibility_changed.connect(func():
-		squad_markers.visible = is_visible_in_tree() and not battle_mode)
+		hero_marker.visible = is_visible_in_tree() and not battle_mode)
 	_update_camera()
 
 func reset() -> void:
 	_cancel_map_pointer()
-	squad_markers.groups.clear()
-	squad_markers.markers.clear()
-	squad_markers.queue_redraw()
+	hero_marker.hide()
 	_clear_battle_target()
 	map_follow_actor = null
 	zoom_size = DEFAULT_MAP_ZOOM
@@ -175,7 +169,6 @@ func reset() -> void:
 	map_occluders.clear()
 	chunk_occluders.clear()
 	fading_occluders.clear()
-	map_squad.clear()
 	tile_signatures.clear()
 	dolls.clear()
 	battle_dolls.clear()
@@ -187,13 +180,8 @@ func reset() -> void:
 	ocean.visible = true
 	camera_impulse = 0.0
 
-func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> void:
+func refresh(run: RefCounted, _selected_id: String, selected_cell: String) -> void:
 	current_tiles = run.data.tiles
-	squad_markers.refresh(run, selected_id)
-	if selected_id != map_actor:
-		map_follow_actor = null
-	map_actor = selected_id
-	map_squad = run.squad_members(selected_id)
 	if tile_nodes.is_empty() and not current_tiles.is_empty():
 		board_surface.prepare(current_tiles, int(run.data.seed))
 		map_min = Hex.world(current_tiles.keys()[0])
@@ -266,48 +254,24 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 			tile_signatures[id] = signature
 	if not dirty_details.is_empty():
 		_batch_map_geometry(dirty_details)
-	var counts = {}
-	var visible_counts = {}
-	var visible_actor_ids: Array = []
-	var actor_ids = run.data.actors.keys()
-	actor_ids.sort_custom(func(a,b):
-		if a==b: return false
-		if a=="hero": return true
-		if b=="hero": return false
-		return str(a)<str(b))
-	for id in actor_ids:
-		var a = run.actor(id)
-		var show_npc = run.has_visited(a.position) and current_tiles[a.position].npc == id
-		if not a.joined and not show_npc:
-			if dolls.has(id):
-				dolls[id].visible = false
-			continue
-		visible_actor_ids.append(id)
-		visible_counts[a.position] = int(visible_counts.get(a.position, 0)) + 1
-	for id in visible_actor_ids:
-		var a = run.actor(id)
-		if not dolls.has(id):
-			var doll = Doll.new()
-			actor_root.add_child(doll)
-			doll.configure(a)
-			doll.map_height_source = board_surface
-			dolls[id] = doll
-		var model = dolls[id]
-		model.visible = true
-		model.selected = id == selected_id
-		model.set_down(a.hp <= 0)
-		var count = int(counts.get(a.position, 0))
-		counts[a.position] = count + 1
-		var total = int(visible_counts[a.position])
-		model.scale = Vector3.ONE * (0.13 if total > 7 else 0.19 if total > 4 else 0.22 if total > 1 else 0.24)
-		var offset = _actor_offset(count, total)
-		var point = Hex.world(a.position) + offset
-		point.y = board_surface.height_at(point) + 0.025
-		if model.has_meta("cell") and model.get_meta("cell") != a.position:
-			model.move_to(point)
-		elif not model.is_moving():
-			model.position = point
-		model.set_meta("cell", a.position)
+	var hero = run.actor("hero")
+	if not dolls.has("hero"):
+		var doll = Doll.new()
+		actor_root.add_child(doll)
+		doll.configure(hero)
+		doll.map_height_source = board_surface
+		dolls["hero"] = doll
+	var model = dolls["hero"]
+	model.selected = true
+	model.set_down(hero.hp <= 0)
+	model.scale = Vector3.ONE * 0.24
+	var point = Hex.world(hero.position)
+	point.y = board_surface.height_at(point) + 0.025
+	if model.has_meta("cell") and model.get_meta("cell") != hero.position:
+		model.move_to(point)
+	elif not model.is_moving():
+		model.position = point
+	model.set_meta("cell", hero.position)
 	if relief_changed or outline_cell != selected_cell:
 		outline_cell = selected_cell
 		selection_ring.mesh = board_surface.outline(selected_cell, visible_layout.has(selected_cell)) if current_tiles.has(selected_cell) else null
@@ -468,12 +432,9 @@ func follow_map_movement(id: String) -> void:
 	map_follow_actor = actor
 	map_follow_offset = focus_point - _map_actor_ground(actor)
 
-func is_map_moving(ids: Array) -> bool:
-	for id in ids:
-		var actor = dolls.get(id)
-		if is_instance_valid(actor) and actor.is_moving():
-			return true
-	return false
+func is_map_moving() -> bool:
+	var hero = dolls.get("hero")
+	return is_instance_valid(hero) and hero.is_moving()
 
 func _map_actor_ground(actor: Node3D) -> Vector3:
 	return Vector3(actor.position.x, 0.0, actor.position.z)
@@ -569,10 +530,6 @@ func _input(event: InputEvent) -> void:
 			map_follow_offset = focus_point - _map_actor_ground(map_follow_actor)
 		get_viewport().set_input_as_handled()
 		if click:
-			var squad = squad_markers.pick(map_pointer_position)
-			if not squad.is_empty():
-				squad_clicked.emit(squad)
-				return
 			var id = board_surface.pick(camera.project_ray_origin(map_pointer_position), camera.project_ray_normal(map_pointer_position))
 			if id != "":
 				cell_clicked.emit(id)
@@ -631,7 +588,7 @@ func _process(delta: float) -> void:
 		if not map_pointer_down:
 			_update_map_follow()
 		_update_occlusion(delta)
-	squad_markers.update_positions(camera, dolls, is_visible_in_tree() and not battle_mode)
+	hero_marker.update_position(camera, dolls.get("hero"), is_visible_in_tree() and not battle_mode)
 
 func _battle_enemy_at(screen_position: Vector2) -> String:
 	return battle_targeting.pick(camera, screen_position, battle_dolls, battle_combat.alive_enemies())
@@ -656,24 +613,20 @@ func _update_occlusion(delta: float) -> void:
 	var blocked: Dictionary = {}
 	var sight = -camera.global_basis.z
 	var mountain_targets := PackedVector3Array()
-	if zoom_size <= OCCLUSION_ZOOM:
-		for id in map_squad:
-			var model = dolls.get(id)
-			if not is_instance_valid(model) or not model.visible:
+	var model = dolls.get("hero")
+	if zoom_size <= OCCLUSION_ZOOM and is_instance_valid(model) and model.visible:
+		var feet: Vector3 = model.global_position
+		mountain_targets.append(feet)
+		var target = feet + Vector3.UP * 0.20
+		var head = feet + Vector3.UP * 0.38
+		for instance in map_occluders:
+			if instance.global_position.distance_squared_to(feet) > 9.0:
 				continue
-			var feet: Vector3 = model.global_position
-			if mountain_targets.size() < MAX_MOUNTAIN_OCCLUSION_TARGETS:
-				mountain_targets.append(feet)
-			var target = feet + Vector3.UP * 0.20
-			var head = feet + Vector3.UP * 0.38
-			for instance in map_occluders:
-				if instance.global_position.distance_squared_to(feet) > 9.0:
-					continue
-				var bounds: AABB = (instance.global_transform * instance.get_aabb()).grow(0.025)
-				if bounds.intersects_segment(target - sight * 3.0, target) != null or bounds.intersects_segment(head - sight * 3.0, head) != null:
-					var targets: PackedVector3Array = blocked.get(instance, PackedVector3Array())
-					targets.append(target)
-					blocked[instance] = targets
+			var bounds: AABB = (instance.global_transform * instance.get_aabb()).grow(0.025)
+			if bounds.intersects_segment(target - sight * 3.0, target) != null or bounds.intersects_segment(head - sight * 3.0, head) != null:
+				var targets: PackedVector3Array = blocked.get(instance, PackedVector3Array())
+				targets.append(target)
+				blocked[instance] = targets
 	if board_ground_material != null:
 		var fade = 1.0 - smoothstep(7.75, OCCLUSION_ZOOM, zoom_size)
 		var ground_shader = GROUND_FADE if fade > 0.0 and not mountain_targets.is_empty() else Board.GROUND
@@ -889,24 +842,6 @@ func impact_camera(strength: float) -> void:
 
 func _battle_signature(tile: Dictionary) -> String:
 	return "%s:%s:%s:%s" % [tile.terrain, tile.burning, tile.wet, tile.get("river", false)]
-
-static func _actor_offset(index: int, total: int) -> Vector3:
-	if total <= 1 or (total >= 7 and index == 0):
-		return Vector3.ZERO
-	var radius = 0.52 if total > 3 else 0.34
-	var slots = total - 1 if total >= 7 else total
-	var slot = index - 1 if total >= 7 else index
-	if total > 7:
-		var inner = mini(8, ceili((total - 1) / 3.0))
-		if slot < inner:
-			radius = 0.36
-			slots = inner
-		else:
-			radius = 0.74
-			slot -= inner
-			slots -= inner
-	var angle = TAU * float(slot) / slots
-	return Vector3(cos(angle), 0, sin(angle)) * radius
 
 static func _label_location(parent: Node3D, text: String, height: float) -> void:
 	var label = Label3D.new()

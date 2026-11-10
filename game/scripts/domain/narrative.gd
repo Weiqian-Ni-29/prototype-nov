@@ -392,7 +392,7 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 		choices.append(_choice("join", "我想请你跟我一起上路。"))
 		if not node.result.is_empty():
 			choices.append(_choice("discuss", "我想听听你怎么看这里发生的事。"))
-		if subject in ["granite", "ashhorn", "oathguard", "highdrake", "siltguard", "snowforge"] and not run.data.story[subject].get("duel", false) and run.actor(visitor).ap >= Catalog.BATTLE_AP:
+		if subject in ["granite", "ashhorn", "oathguard", "highdrake", "siltguard", "snowforge"] and not run.data.story[subject].get("duel", false):
 			choices.append(_choice("duel", "我想跟你试几招，看看彼此的本事。"))
 	choices.append(_choice("leave", "我先去看看路，回头再聊。" if person.joined else "那就聊到这儿吧，我先走了。"))
 	var pose = "friendly" if person.joined or not node.result.is_empty() else "serious" if node.get("kind") == "haunt" or person.hp <= 0 else ""
@@ -422,7 +422,7 @@ func choose(visitor: String, subject: String, option_id: String) -> Dictionary:
 		"duel":
 			var cell: String = run.actor(visitor).position
 			run.data.story[subject].duel = true
-			run.data.pending_battle = {"position": cell, "origin": cell, "npc": subject, "ambush": false, "movers": []}
+			run.data.pending_battle = {"position": cell, "origin": cell, "npc": subject, "ambush": false}
 			return {"ok": true, "battle": true}
 		"discuss":
 			return {"ok": true, "response": CHARACTER_BEHAVIOR[subject][3]}
