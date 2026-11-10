@@ -173,11 +173,7 @@ func check_camera_drag(game: Node, start: String, next: String) -> void:
 	expect(view.focus_point.is_equal_approx(initial_focus), "Confirming movement does not jump the camera")
 	expect(far_fog.mesh == far_mesh, "Movement does not rebuild distant fog")
 	expect(view.fog_reveals.get_child_count() == 1, "A move starts one veil over its newly revealed hexes")
-	expect(game.modal_layer.has_node("StoryScreen"), "Two real map clicks open the first-arrival story")
-	for button in game.modal_layer.find_children("*", "Button", true, false):
-		if button.text == "返回地图":
-			button.pressed.emit()
-			break
+	expect(game.modal_layer.get_child_count() == 0 and view.visible, "Two real map clicks start walking with the map still visible")
 	var veil = view.fog_reveals.get_child(0) if view.fog_reveals.get_child_count() > 0 else null
 	var material: ShaderMaterial = veil.material_override if veil != null else null
 	expect(material != null and is_zero_approx(material.get_shader_parameter("progress")), "The reveal starts fully opaque")
@@ -186,16 +182,22 @@ func check_camera_drag(game: Node, start: String, next: String) -> void:
 	var dissolve_seen = false
 	var destination = Hex.world(next)
 	var deadline = Time.get_ticks_msec() + 3000
-	while (is_instance_valid(view.map_follow_actor) or is_instance_valid(veil)) and Time.get_ticks_msec() < deadline:
+	while (game.map_traveling or is_instance_valid(veil)) and Time.get_ticks_msec() < deadline:
 		await process_frame
 		if mover.is_moving() and view.focus_point.distance_to(initial_focus) > 0.15 and view.focus_point.distance_to(destination) > 0.15:
-			midpoint_seen = true
+			midpoint_seen = game.modal_layer.get_child_count() == 0 and view.visible
 		if not dissolve_seen and is_instance_valid(veil):
 			var progress: float = material.get_shader_parameter("progress")
 			if progress > 0.3 and progress < 0.85:
 				dissolve_seen = true
 				await RenderingServer.frame_post_draw
 				root.get_texture().get_image().save_png("user://fog-reveal-mid.png")
+	expect(game.modal_layer.has_node("StoryScreen") and not mover.is_moving(), "The first-arrival story waits for walking to finish")
+	for button in game.modal_layer.find_children("*", "Button", true, false):
+		if button.text == "返回地图":
+			button.pressed.emit()
+			break
+	await process_frame
 	expect(midpoint_seen and view.focus_point.is_equal_approx(destination), "Camera follows the walking doll and settles on arrival")
 	expect(dissolve_seen and not is_instance_valid(veil), "The reveal fades through intermediate opacity and then removes its veil")
 	await RenderingServer.frame_post_draw

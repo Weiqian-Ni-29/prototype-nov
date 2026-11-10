@@ -622,6 +622,10 @@ func execute() -> void:
 		return Hex.is_land(arrival_run.data.tiles, cell) and arrival_run.data.tiles[cell].enemies.is_empty())[0]
 	game._select_cell(first_tile)
 	game._select_cell(first_tile)
+	var arrival_deadline = Time.get_ticks_msec() + 5000
+	while game.map_traveling and Time.get_ticks_msec() < arrival_deadline:
+		await process_frame
+	expect(game.modal_layer.has_node("StoryScreen"), "First-arrival story appears after the walk")
 	await capture("node-first-arrival")
 	await click_story_button("返回地图")
 	await create_timer(0.9).timeout

@@ -48,6 +48,14 @@ func execute():
 	game._move_selected()
 	expect(run.data.pending_battle.get("movers", []) == ["hero", "grit"], "encounter remembers actual arriving movers")
 	expect(run.squad_groups().size() == 1 and run.actor("hero").squad_id == resident_id, "arrival merges into resident squad")
+	game.view.dolls.grit.move_tween.set_speed_scale(0.5)
+	var deadline = Time.get_ticks_msec() + 5000
+	while game.view.dolls.hero.is_moving() and Time.get_ticks_msec() < deadline:
+		await process_frame
+	expect(game.view.dolls.grit.is_moving() and game.modal_layer.get_child_count() == 0,
+		"Formation waits for the last moving squad member")
+	while game.map_traveling and Time.get_ticks_msec() < deadline:
+		await process_frame
 	await press("开始战斗")
 	expect(game.combat != null and run.data.status == "battle", "actual Battle.begin through formation button")
 	# Retreat wounds one mover; the survivor remains selectable and can move.
