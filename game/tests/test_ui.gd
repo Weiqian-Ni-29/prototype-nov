@@ -539,6 +539,18 @@ func check_node_dialogs() -> void:
 	expect(find_button(game.modal_layer, "休整") == null, "Ordinary tiles have no general rest command")
 	await press("关闭")
 
+	var clue_cells = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "clue")
+	expect(not clue_cells.is_empty(), "This seed has a clue node")
+	if not clue_cells.is_empty():
+		hero.position = clue_cells[0]
+		run.reveal(hero.position)
+		game._select_actor("hero")
+		var action = find_button(game.ui, "行动")
+		expect(action != null and action.text == "行动", "A clue node uses the plain action button label")
+		await press("行动")
+		expect(find_button(game.modal_layer, "查看节点剧情") != null, "The action button opens the clue node menu")
+		await press("关闭")
+
 	var rest_cells = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "rest")
 	var shop_cells = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "trade")
 	expect(not rest_cells.is_empty() and not shop_cells.is_empty(), "This seed has supply stops and trade nodes")
