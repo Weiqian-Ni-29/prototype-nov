@@ -904,7 +904,7 @@ func check_final_reveal() -> void:
 		await click_story_blank()
 	expect(not game.modal_layer.has_node("StoryScreen") and battle.river and not battle.reveal_pending
 		and run.actor("hero").name == "伊文洛", "Only the completed revelation awakens Ivenlo and returns to battle")
-	for phrase in ["是你杀了我", "没有一个亡魂被接走", "我是伊文洛", "不会分辨敌友"]:
+	for phrase in ["是你杀了我", "没有一个亡魂被接走", "我是伊文洛", "掉进去也一样"]:
 		expect(complete.contains(phrase), "The full final confrontation is readable: " + phrase)
 	expect(not complete.contains("路上那些恶魔认出的"), "A run without a demon encounter does not invent one")
 	game.combat = null
@@ -921,15 +921,26 @@ func execute() -> void:
 	game._refresh()
 	expect(find_button(game.ui, "继续上次远征") == null, "A main menu with no save does not show a resume button")
 	await press("开始新远征")
-	expect(dialogue_contains("维洛丹") and not dialogue_contains("伊文洛"), "Opening presents the war without revealing the protagonist")
+	expect(dialogue_contains("很早以前，维洛丹") and not dialogue_contains("军队封了不少路"), "Opening starts with life before the war")
 	expect(story_owns_focus(), "Opening retains the story interface and focus")
 	await story_key(KEY_ESCAPE)
 	expect(dialogue_contains("维洛丹"), "Escape leaves an opening scene without an End Conversation action in place")
-	await advance_until_text("你醒了")
+	var world_text = ""
+	for index in range(32):
+		if story_text() == null or story_speaker() != "旁白":
+			break
+		world_text += story_text().text
+		await advance_story()
+	var last_topic = -1
+	for topic in ["村庄和城邦", "人类", "精灵", "矮人", "龙和恶魔", "卡德兰", "梅文娜", "多兰克", "莱文索", "军队封了不少路", "已经下葬"]:
+		var position = world_text.find(topic)
+		expect(position > last_topic, "Opening introduces this topic in order: " + topic)
+		last_topic = position
+	expect(not world_text.contains("伊文洛") and not world_text.contains("死神"), "World introduction keeps the protagonist's identity for the final battle")
 	expect(dialogue_contains("你醒了"), "Reading reaches the hero waking without assuming a page count")
 	await click("历史对话")
 	var history = game.modal_layer.get_node("StoryHistory")
-	expect(contains_text(history, "维洛丹的人们") and contains_text(history, "你醒了"),
+	expect(contains_text(history, "很早以前，维洛丹") and contains_text(history, "你醒了"),
 		"History carries over from the world introduction into the village")
 	await click("关闭")
 	await advance_until_text("我也想帮帮其他人")
