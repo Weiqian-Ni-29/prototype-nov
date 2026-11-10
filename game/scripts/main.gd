@@ -6,6 +6,7 @@ const Combat = preload("res://scripts/domain/battle.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
+const CharacterCodex = preload("res://scripts/presentation/character_codex.gd")
 var item_operation_serial = 0
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const OpeningStory = preload("res://scripts/domain/opening_story.gd")
@@ -19,6 +20,7 @@ const Sound = preload("res://scripts/presentation/sound.gd")
 enum Screen { MENU, OPENING_STORY, EXPEDITION }
 const OBJECTIVE_ICON = preload("res://assets/ui/expedition-objective.svg")
 const LAMP_COIN_ICON = preload("res://assets/ui/lamp-coin.svg")
+const CREW_PANEL_WIDTH = 288
 const STORY_TERRAIN = {
 	"plains": "road", "forest": "woodland", "mountain": "highland", "ruins": "ruins",
 	"desert": "drylands", "swamp": "wetlands",
@@ -55,6 +57,7 @@ var battle_timer = 0.0
 var toast_text = ""
 var narrative: RefCounted
 var dialogue_subject = ""
+var character_codex_state: Dictionary = {}
 var story_history: Array[Dictionary] = []
 var sound: Node
 var gold = Color("dec38e")
@@ -156,6 +159,12 @@ func _button(parent: Node, text: String, callback: Callable, disabled: bool = fa
 func _shortcut_input(event: InputEvent) -> void:
 	if not event.is_action_pressed("ui_cancel"):
 		return
+	var codex = modal_layer.get_node_or_null("CharacterCodex")
+	if codex != null:
+		get_viewport().set_input_as_handled()
+		if not codex.close_zoom():
+			_close_character_codex()
+		return
 	var layer = modal_layer.get_node_or_null("StoryHistory")
 	if layer == null:
 		layer = modal_layer.get_node_or_null("StoryScreen")
@@ -166,14 +175,13 @@ func _shortcut_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		close.pressed.emit()
 
-func _hp_bar(parent: Node, hp: float, maximum: float, enemy: bool = false) -> void:
+func _enemy_hp_bar(parent: Node, hp: float, maximum: float) -> void:
 	var bar = ProgressBar.new()
 	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar.value = hp / maxf(1.0, maximum) * 100
 	bar.show_percentage = false
 	bar.custom_minimum_size.y = 6
-	if enemy:
-		bar.add_theme_stylebox_override("fill", _bar_style(Color("bd8b6e")))
+	bar.add_theme_stylebox_override("fill", _bar_style(Color("bd8b6e")))
 	parent.add_child(bar)
 
 func _bar_style(color: Color) -> StyleBoxFlat:
@@ -266,6 +274,7 @@ func _opening_image(texture: Texture2D) -> TextureRect:
 func _show_opening(state: Screen) -> void:
 	day_transition_pending = false
 	day_transition.dismiss()
+	character_codex_state = {}
 	screen_state = state
 	_refresh()
 
@@ -328,6 +337,7 @@ func _seed_value() -> int:
 func _start_new() -> void:
 	day_transition_pending = false
 	day_transition.dismiss()
+	character_codex_state = {}
 	_close_modal()
 	if screen_state != Screen.OPENING_STORY:
 		story_history.clear()
@@ -354,6 +364,7 @@ func _continue_run() -> void:
 		return
 	day_transition_pending = false
 	day_transition.dismiss()
+	character_codex_state = {}
 	story_history.clear()
 	map_traveling = false
 	travel_clock.clear()
@@ -442,7 +453,7 @@ func _expedition_objective() -> String:
 
 
 func _crew_panel() -> void:
-	var box = _panel(ui, Rect2(20, 120, 288, 56))
+	var box = _panel(ui, Rect2(20, 120, CREW_PANEL_WIDTH, 56))
 	if not crew_collapsed:
 		var panel: PanelContainer = box.get_parent()
 		panel.set_anchor_and_offset(SIDE_BOTTOM, 1.0, -20.0)
@@ -462,6 +473,10 @@ func _crew_panel() -> void:
 	for id in run.joined_ids():
 		_crew_member(roster, id)
 	var cell: String = run.actor(selected_id).position
+	var codex_button = _button(box, "角色", _show_character_codex)
+	if not character_codex_state.is_empty():
+		codex_button.add_theme_stylebox_override("normal", _style(Color("34483a"), gold, 6))
+		codex_button.add_theme_color_override("font_color", gold)
 	var action = _button(box, "行动", _cell_actions)
 	action.tooltip_text = _node_title(cell)
 	_button(box, "背包", _inventory_dialog.bind(selected_id))
@@ -498,16 +513,19 @@ func _crew_member(parent: VBoxContainer, id: String) -> void:
 	if selected_id != id:
 		button.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
 
-	var content = HBoxContainer.new()
-	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	content.add_theme_constant_override("separation", 12)
-	button.add_child(content)
+	var content = _member_status(button, id, int(a.hp))
 	content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	content.offset_left = 5
 	content.offset_right = -5
 	content.offset_top = 3
 	content.offset_bottom = -3
 
+func _member_status(parent: Control, id: String, shown_hp: int, status: String = "") -> HBoxContainer:
+	var a = run.actor(id)
+	var content = HBoxContainer.new()
+	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.add_theme_constant_override("separation", 12)
+	parent.add_child(content)
 	var identity = VBoxContainer.new()
 	identity.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	identity.custom_minimum_size.x = 80
@@ -542,7 +560,7 @@ func _crew_member(parent: VBoxContainer, id: String) -> void:
 		image.offset_top = 1
 		image.offset_bottom = -1
 
-	var caption = _text(identity, a.name, 12, ink if a.hp > 0 else muted)
+	var caption = _text(identity, a.name, 12, ink if shown_hp > 0 else muted)
 	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var meters = VBoxContainer.new()
 	meters.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -550,9 +568,12 @@ func _crew_member(parent: VBoxContainer, id: String) -> void:
 	meters.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	meters.add_theme_constant_override("separation", 5)
 	content.add_child(meters)
-	_crew_meter(meters, "HP", a.hp, a.hp_max, Color("e16562"))
+	_crew_meter(meters, "HP", shown_hp, a.hp_max, Color("e16562"))
 	_crew_meter(meters, "MP", a.mp, a.mp_max, Color("65a6e6"))
 	_crew_meter(meters, "充能", a.energy, Catalog.ENERGY_MAX, Color("eea353"))
+	if not status.is_empty():
+		_text(meters, status, 11, muted)
+	return content
 
 func _crew_meter(parent: VBoxContainer, caption: String, amount: float, maximum: float, color: Color) -> void:
 	var row = HBoxContainer.new()
@@ -972,6 +993,44 @@ func _confirm(title: String, message: String, action: Callable) -> void:
 	_button(box, "确认", func(): _close_modal(); action.call())
 	_button(box, "取消，继续远征", _close_modal)
 
+func _show_character_codex() -> void:
+	if character_codex_state.is_empty():
+		character_codex_state = {"actor": selected_id, "tab": 0, "filter": 0, "pose": "", "grid": false,
+			"move_target": move_target}
+	_clear(modal_layer)
+	ui.show()
+	view.show()
+	view.set_process(true)
+	move_preview.hide()
+	var shade = ColorRect.new()
+	shade.color = Color(0.025, 0.07, 0.065, 0.18)
+	modal_layer.add_child(shade)
+	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var codex = CharacterCodex.new()
+	codex.name = "CharacterCodex"
+	modal_layer.add_child(codex)
+	codex.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var screen = get_viewport().get_visible_rect().size
+	var beside_crew = 20 + CREW_PANEL_WIDTH + 14
+	codex.offset_left = beside_crew if screen.x >= beside_crew + 920 and run.data.status == "exploring" else 20
+	codex.offset_top = 120
+	codex.offset_right = -20
+	codex.offset_bottom = -20
+	codex.setup(self, character_codex_state)
+	_refresh()
+
+func _close_character_codex() -> void:
+	move_target = character_codex_state.get("move_target", "")
+	character_codex_state = {}
+	_close_modal()
+	_refresh()
+
+func _read_character_record(id: String, record: Dictionary) -> void:
+	var read_history = {"speaker": record.title, "pages": {}}
+	_show_story(record.title, "角色图鉴", record.body, _story_scene_at(run.actor(id).position),
+		[_story_portrait(id)], [], func(_option: String): _show_character_codex(),
+		{"返回角色图鉴": _show_character_codex}, Color.WHITE, 0, read_history)
+
 func _inventory_dialog(id: String, current_tab: int = 0, selected_item: String = "", feedback: String = "") -> void:
 	var box = _modal("", 900, 550)
 	var panel: PanelContainer = box.get_parent()
@@ -981,7 +1040,10 @@ func _inventory_dialog(id: String, current_tab: int = 0, selected_item: String =
 	var header := HBoxContainer.new()
 	box.add_child(header)
 	_text(header, run.actor(id).name + " · 背包", 27, gold).vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_button(header, "关闭", _close_modal).flat = true
+	if character_codex_state.is_empty():
+		_button(header, "关闭", _close_modal).flat = true
+	else:
+		_button(header, "返回角色图鉴", _show_character_codex).flat = true
 	box.add_child(HSeparator.new())
 
 	var tabs := TabContainer.new()
@@ -1425,36 +1487,14 @@ func _battle_ui(screen: Vector2) -> void:
 	view.set_battle_target(selected_target)
 	var battle_bottom = screen.y - 20
 	var side_height = battle_bottom - 120
-	var left_outer = _panel(ui, Rect2(20, 120, 250, side_height))
+	var left_outer = _panel(ui, Rect2(20, 120, CREW_PANEL_WIDTH, side_height))
 	_text(left_outer, "出战角色", 24, gold)
 	var left = _scroll_content(left_outer)
-	left.add_theme_constant_override("separation", 4)
+	left.get_parent().horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	left.add_theme_constant_override("separation", 6)
+	var acting_id = view.presentation_actor(combat.current)
 	for id in combat.active:
-		var a = run.actor(id)
-		var shown_hp = view.display_hp(id,int(a.hp))
-		var shown_shield = view.display_shield(id,int(a.shield))
-		var label = ("▶ " if view.presentation_actor(combat.current) == id else "") + a.name
-		if shown_shield > 0:
-			label += " · 盾%d" % shown_shield
-		if combat.madness.has(id):
-			label += " · 疯狂"
-		if shown_hp > 0 and combat.haste_turns.has(id):
-			label += " · 提速"
-		var heading = HBoxContainer.new()
-		left.add_child(heading)
-		var portrait = _story_portrait(id, "grief" if shown_hp <= 0 else "anger" if combat.madness.has(id) else "battle")
-		if portrait != null:
-			var icon = TextureRect.new()
-			icon.texture = portrait
-			icon.custom_minimum_size = Vector2(32, 32)
-			icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-			icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-			heading.add_child(icon)
-		_text(heading, label, 19, ink if shown_hp > 0 else muted)
-		_text(left, "HP %d/%d · MP %d/%d" % [shown_hp, a.hp_max, a.mp, a.mp_max], 14, muted)
-		_hp_bar(left, shown_hp, a.hp_max)
-		var ultimate = _button(left, "%d%% · " % a.energy + Catalog.SKILLS[a.ultimate].name, _ultimate.bind(id), a.energy < 100 or a.hp <= 0 or combat.madness.has(id))
-		ultimate.tooltip_text = "%s\n%s\n充能达到 100%% 时可释放，不占正常行动。" % [Catalog.SKILLS[a.ultimate].name, Catalog.skill_description(a.ultimate)]
+		_battle_member(left, id, id == acting_id)
 	var enemy_panel_x = screen.x - 330
 	var right_outer = _panel(ui, Rect2(enemy_panel_x, 120, 310, side_height))
 	_text(right_outer, "敌方阵容", 24, gold)
@@ -1490,7 +1530,8 @@ func _battle_ui(screen: Vector2) -> void:
 	items.tooltip_text = "使用当前角色背包中的恢复道具。\n可给在场队友使用，不占正常行动。"
 	quick_actions.position = Vector2(enemy_panel_x - quick_actions.get_combined_minimum_size().x - 12, 120)
 
-	var center = _panel(ui, Rect2(290, battle_bottom - 155, screen.x - 640, 155))
+	var commands_x = CREW_PANEL_WIDTH + 40.0
+	var center = _panel(ui, Rect2(commands_x, battle_bottom - 155, enemy_panel_x - commands_x - 20.0, 155))
 	center.get_parent().grow_vertical = Control.GROW_DIRECTION_BEGIN
 	_text(center, view.presentation_title((combat.unit(combat.current).name + " 的行动") if combat.current != "" else "战斗结算"), 20, gold)
 	var commands = HBoxContainer.new()
@@ -1539,6 +1580,40 @@ func _battle_ui(screen: Vector2) -> void:
 	if not toast_text.is_empty():
 		_text(center, toast_text, 13, gold)
 
+func _battle_member(parent: VBoxContainer, id: String, acting: bool) -> void:
+	var a = run.actor(id)
+	var shown_hp = view.display_hp(id, int(a.hp))
+	var shown_shield = view.display_shield(id, int(a.shield))
+	var status: Array[String] = []
+	if acting:
+		status.append("行动中")
+	if shown_hp <= 0:
+		status.append("重伤")
+	if shown_shield > 0:
+		status.append("盾%d" % shown_shield)
+	if combat.madness.has(id):
+		status.append("疯狂")
+	if shown_hp > 0 and combat.haste_turns.has(id):
+		status.append("提速")
+
+	var panel = PanelContainer.new()
+	panel.name = "BattleMember_" + id
+	var style = _style(Color("29413c"), gold if acting else Color("536456"), 6)
+	style.content_margin_left = 5
+	style.content_margin_right = 5
+	style.content_margin_top = 4
+	style.content_margin_bottom = 4
+	panel.add_theme_stylebox_override("panel", style)
+	parent.add_child(panel)
+	var card = VBoxContainer.new()
+	card.add_theme_constant_override("separation", 4)
+	panel.add_child(card)
+	_member_status(card, id, shown_hp, " · ".join(status))
+	var skill_name: String = Catalog.SKILLS[a.ultimate].name
+	var ultimate = _button(card, "终结技 · " + skill_name, _ultimate.bind(id),
+		a.energy < Catalog.ENERGY_MAX or a.hp <= 0 or combat.madness.has(id))
+	ultimate.tooltip_text = "%s\n%s\n充能达到 100%% 时可释放，不占正常行动。" % [skill_name, Catalog.skill_description(a.ultimate)]
+
 func _enemy_card(parent: VBoxContainer, id: String, title: String) -> void:
 	var enemy = combat.enemies[id]
 	var selected = selected_target == id and enemy.hp > 0
@@ -1561,7 +1636,7 @@ func _enemy_card(parent: VBoxContainer, id: String, title: String) -> void:
 	if shown_hp > 0 and enemy.slow > 0:
 		status += " · 减速"
 	_text(card, "HP %d/%d · %s\n%s" % [shown_hp, enemy.hp_max, status, enemy.role], 14, muted)
-	_hp_bar(card, shown_hp, enemy.hp_max, true)
+	_enemy_hp_bar(card, shown_hp, enemy.hp_max)
 
 func _select_battle_target(id: String) -> void:
 	if combat == null or combat.outcome != "" or id == selected_target or id not in combat.alive_enemies():
@@ -1822,7 +1897,7 @@ func _story_text_pages(body: String, label: Label) -> PackedStringArray:
 
 func _show_story(title: String, speaker: String, body: String, scene: String,
 		portraits: Array, options: Array, on_choice: Callable, actions: Dictionary, tint: Color = Color.WHITE,
-		page_index: int = 0, history_entry: Dictionary = {}) -> void:
+		page_index: int = 0, history_entry: Dictionary = {}, on_last_page: Callable = Callable()) -> void:
 	day_transition.dismiss()
 	_clear_map_move()
 	move_preview.hide()
@@ -1912,6 +1987,8 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	text_label.offset_top = separator.position.y + separator.get_minimum_size().y + 8
 	var pages = _story_text_pages(body, text_label)
 	text_label.text = pages[page_index].strip_edges()
+	if page_index == pages.size() - 1 and on_last_page.is_valid():
+		on_last_page.call()
 	if history_entry.is_empty():
 		history_entry = {"speaker": speaker, "pages": {}}
 		story_history.append(history_entry)
@@ -1924,10 +2001,10 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	_button(header, "历史对话", _show_story_history.bind(overlay))
 	for label in actions:
 		var button = _button(header, label, actions[label])
-		if label == "结束交谈":
+		if label in ["结束交谈", "返回角色图鉴"]:
 			button.name = "StoryCancel"
 	var turn_page = func(index: int):
-		_show_story(title, speaker, body, scene, portraits, options, on_choice, actions, tint, index, history_entry)
+		_show_story(title, speaker, body, scene, portraits, options, on_choice, actions, tint, index, history_entry, on_last_page)
 	var navigation = HBoxContainer.new()
 	navigation.name = "StoryNavigation"
 	navigation.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -2090,7 +2167,7 @@ func _story_portrait(id: String, pose: String = "") -> Texture2D:
 	var path = directory + id + ".png"
 	return load(path) if ResourceLoader.exists(path) else null
 
-func _render_dialogue(response: String = "") -> void:
+func _render_dialogue(response: String = "", record_past: bool = false) -> void:
 	var was_met: bool = run.data.story.get(dialogue_subject, {}).get("met", false)
 	var d = narrative.dialogue(selected_id, dialogue_subject)
 	if not d.ok:
@@ -2102,12 +2179,24 @@ func _render_dialogue(response: String = "") -> void:
 	var text: String = d.text if response.is_empty() else response
 	var portraits = [_story_portrait(selected_id), _story_portrait(dialogue_subject, pose)]
 	var scene = _story_scene_at(run.actor(selected_id).position)
-	if not response.is_empty() and not run.relic_intro().is_empty():
+	if not response.is_empty() and not record_past and not run.relic_intro().is_empty():
 		_show_story(d.title, speaker, text, scene, portraits, [],
 			func(_option: String): _show_relic_intro(_render_dialogue), {"结束交谈": _show_relic_intro})
 	else:
-		_show_story(d.title, speaker, text, scene, portraits, d.options, _story_choice, {"结束交谈": _close_modal})
+		var on_read = Callable()
+		if record_past:
+			on_read = _record_character_dialogue.bind(dialogue_subject, "codex_past_read", true)
+		elif response.is_empty() and not person.joined and not run.data.story[dialogue_subject].has("codex_first_meeting"):
+			on_read = _record_character_dialogue.bind(dialogue_subject, "codex_first_meeting", text)
+		_show_story(d.title, speaker, text, scene, portraits, d.options, _story_choice,
+			{"结束交谈": _close_modal}, Color.WHITE, 0, {}, on_read)
 	if not was_met:
+		run.save_game()
+
+func _record_character_dialogue(id: String, key: String, value: Variant) -> void:
+	var record: Dictionary = run.data.story[id]
+	if not record.has(key):
+		record[key] = value
 		run.save_game()
 
 func _personal_quest() -> void:
@@ -2154,7 +2243,7 @@ func _story_choice(option_id: String) -> void:
 		_item_dialog(selected_id)
 	else:
 		_refresh()
-		_render_dialogue(response)
+		_render_dialogue(response, option_id == "past")
 
 func _show_relic_intro(after: Callable = Callable()) -> bool:
 	var intro = run.relic_intro()
@@ -2242,6 +2331,7 @@ func _summary(screen: Vector2) -> void:
 	var met_count = Catalog.COMPANIONS.keys().filter(func(id): return run.data.story[id].met).size()
 	_text(box, "结局里还记下了路上遇到的 %d 个人后来怎么样了。" % met_count, 18, muted)
 	_button(box, "查看结局剧情", _ending_story)
+	_button(box, "角色", _show_character_codex)
 	_button(box, "返回主菜单", _to_menu)
 
 func _ending_story() -> void:

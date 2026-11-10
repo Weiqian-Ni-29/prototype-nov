@@ -325,6 +325,34 @@ func _personal_speech(subject: String, chosen: String) -> String:
 			lines.append(line)
 	return "\n\n".join(lines)
 
+func hero_identity_known() -> bool:
+	return run.data.status == "won" or run.data.flags.get("hero_identity_revealed", false) == true
+
+func character_records(id: String) -> Array[Dictionary]:
+	if id == "hero":
+		var records: Array[Dictionary] = [{"title": "村庄醒来",
+			"body": "村民在村外发现了昏迷的旅人，把他带回去照顾。他醒来后记不起自己的来历，只想让战争停下来。村民给了他药和干粮，送他上路。"}]
+		if hero_identity_known():
+			records.append({"title": "记忆回来了",
+				"body": "旅人想起了自己的名字。伊文洛是负责引渡亡魂的死神。当年卡德兰袭击了他，直到决战时，他才重新记起自己是谁。"})
+		return records
+	var record: Dictionary = run.data.story.get(id, {})
+	if not record.get("met", false) and not run.actor(id).get("joined", false):
+		return []
+	var first_meeting = str(record.get("codex_first_meeting", "在这次远征途中见过这位伙伴。"))
+	var records: Array[Dictionary] = [{"title": "初次见面", "body": first_meeting}]
+	var chosen = _personal_choice(id)
+	if record.get("codex_past_read", false) and (chosen.is_empty() or chosen.begins_with("journey_")):
+		records.append({"title": "过去的事", "body": BACKGROUNDS[id]})
+	else:
+		records.append({"title": "过去的事", "hint": "和这位伙伴聊过往事后收录。"})
+	if chosen.is_empty():
+		records.append({"title": "同行以后", "hint": "一起作出决定后，这里会记下本次远征的选择。"})
+	else:
+		var outcome = _personal_outcome(id, chosen)
+		records.append({"title": "同行以后", "body": str(outcome.response)})
+	return records
+
 func _personal_context(visitor: String, subject: String) -> Dictionary:
 	var intro = encounter_intro(visitor, subject)
 	if not intro.ok:

@@ -622,6 +622,7 @@ func awaken_death_power() -> void:
 		active[0] = "hero"
 		next_time.erase(replaced)
 	unit("hero").name = "伊文洛"
+	run.data.flags["hero_identity_revealed"] = true
 	unit("hero").hp = unit("hero").hp_max
 	unit("hero").mp = unit("hero").mp_max
 	unit("hero").energy = 100
