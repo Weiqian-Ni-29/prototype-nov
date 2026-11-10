@@ -20,7 +20,7 @@ var map_height_source: RefCounted
 func configure(character: Dictionary) -> void:
 	definition = character.duplicate(true)
 	var type = str(definition.get("type",""))
-	family = "spider" if type in ["spider","hunter_elite"] else "swarm" if type=="swarm" else "quadruped" if definition.get("id","")=="grit" or type in ["boar","lurker"] else "humanoid"
+	family = "spider" if type in ["spider","hunter_elite"] else "swarm" if type=="swarm" else "quadruped" if type in ["boar","lurker"] else "humanoid"
 	is_wolf = family=="quadruped"
 	rigged = preload("res://scripts/presentation/rigged_doll.gd").new()
 	add_child(rigged)

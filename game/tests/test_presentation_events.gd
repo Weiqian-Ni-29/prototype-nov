@@ -18,8 +18,9 @@ func expect(value: bool, text: String) -> void:
 		printerr("FAIL: ",text)
 
 func fixture(profession: String, members: Array) -> RefCounted:
-	game.chosen_profession = profession
 	game._start_new()
+	game.run.actor("hero").skill = Catalog.PROFESSIONS[profession].skill
+	game.run.actor("hero").ultimate = Catalog.PROFESSIONS[profession].ultimate
 	game.set_process(false)
 	var r = game.run
 	var p = r.actor("hero").position

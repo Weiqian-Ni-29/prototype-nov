@@ -50,7 +50,6 @@ func click_at(point: Vector2) -> void:
 		root.push_input(event, true)
 
 func check_battle_targeting() -> void:
-	game.chosen_profession = "guardian"
 	game._start_new()
 	var run = game.run
 	var position = run.data.start
@@ -160,6 +159,63 @@ func check_marker_height() -> void:
 		"Changing a bone pose updates the selected marker independently of model scale")
 	game.view.end_battle()
 
+func check_victory_relic_text() -> void:
+	game._start_new()
+	var run = game.run
+	var relic_name: String = load("res://scripts/domain/relic_catalog.gd").DATA.opening_flint.name
+	for duplicate in [false, true]:
+		run.data.pending_victory = {"enemies": 1, "salve_receiver": "", "relic": "opening_flint",
+			"relic_duplicate": duplicate, "coins": 0, "members": ["hero"], "revived": []}
+		var before = run.data.duplicate(true)
+		game._victory_dialog()
+		await process_frame
+		var labels = game.modal_layer.find_children("*", "Label", true, false)
+		var expected = ("再次获得遗器 · " if duplicate else "发现遗器 · ") + relic_name
+		expect(labels.any(func(label): return label.text == expected), "Victory distinguishes new and repeated relics in plain language")
+		expect(not labels.any(func(label): return "副本" in label.text), "Victory does not describe a repeated relic as a copy")
+		expect(run.data == before, "Reading the victory reward does not grant it again")
+		game._close_modal()
+
+func check_shield_badges(battle: RefCounted) -> void:
+	await process_frame
+	var hero = battle.unit("hero")
+	var previous_hp = hero.hp
+	var status: Control = game.ui.find_child("BattleStatus_hero", true, false)
+	var original_rect = status.get_global_rect()
+	expect(game.ui.find_child("ShieldBadge_hero", true, false) == null, "An unshielded fighter has no badge")
+	battle.items.shield_gain(battle, "hero", 60)
+	game._refresh()
+	await process_frame
+	var badge: TextureRect = game.ui.find_child("ShieldBadge_hero", true, false)
+	expect(badge != null and badge.get_node("Amount").text == "60", "Gaining shield displays its remaining amount")
+	battle.items.shield_gain(battle, "hero", 190)
+	game._refresh()
+	await process_frame
+	badge = game.ui.find_child("ShieldBadge_hero", true, false)
+	if badge != null:
+		var amount: Label = badge.get_node("Amount")
+		var tide_badge: TextureRect = game.ui.find_child("ShieldBadge_tide", true, false)
+		status = game.ui.find_child("BattleStatus_hero", true, false)
+		expect(amount.text == "250" and amount.get_minimum_size().x <= badge.size.x, "Stacked three-digit shield fits inside the badge")
+		expect(tide_badge != null and tide_badge.size == badge.size
+			and is_equal_approx(badge.get_global_rect().end.x, status.get_global_rect().end.x)
+			and is_equal_approx(badge.get_global_rect().end.x, tide_badge.get_global_rect().end.x)
+			and status.get_global_rect() == original_rect,
+			"Shield badges keep a fixed size and sit at the right end of each status row")
+	else:
+		expect(false, "Stacking shield keeps the badge visible")
+	battle._hurt("hero", 7)
+	game._refresh()
+	badge = game.ui.find_child("ShieldBadge_hero", true, false)
+	expect(badge != null and badge.get_node("Amount").text == "243", "Absorbed damage updates the badge")
+	battle._hurt("hero", 243)
+	game._refresh()
+	await process_frame
+	status = game.ui.find_child("BattleStatus_hero", true, false)
+	expect(game.ui.find_child("ShieldBadge_hero", true, false) == null and hero.hp == previous_hp,
+		"Depleted shield absorbs its last damage and removes the badge")
+	expect(status.get_global_rect() == original_rect, "Hiding the badge preserves the status row position and height")
+
 func execute() -> void:
 	game = Main.instantiate()
 	root.add_child(game)
@@ -177,11 +233,37 @@ func execute() -> void:
 	expect(b.begin(run, {"position": p, "origin": p, "ambush": false, "movers": [], "npc": ""}, ["hero", "cen", "eve", "tide"]).ok, "Battle UI fixture begins")
 	game.combat = b
 	game.battle_timer = 0
+	var tide = run.actor("tide")
+	tide.hp = 71
+	tide.mp = 42
+	tide.energy = 63
+	tide.shield = 15
 	game.view.begin_battle(run, b)
 	game._refresh()
 	expect(b.current == "hero", "Fixture begins on protagonist normal action")
-	expect(game.ui.find_children("ShieldBadge_*", "TextureRect", true, false).is_empty(),
-		"An unshielded roster has no shield badges")
+	expect(not game.ui.find_children("*", "Label", true, false).any(func(label): return label.text == "旅途记录"),
+		"The battle HUD has no travel log banner")
+	var party_cards = game.ui.find_children("BattleMember_*", "PanelContainer", true, false)
+	expect(party_cards.size() == 4, "Four active fighters have status cards")
+	var tide_card = game.ui.find_child("BattleMember_tide", true, false)
+	expect(tide_card != null, "Battle sidebar contains the water companion")
+	if tide_card != null:
+		var meters = tide_card.find_children("*", "ProgressBar", true, false)
+		expect(meters.size() == 3 and meters[0].value == tide.hp and meters[0].max_value == tide.hp_max
+			and meters[1].value == tide.mp and meters[1].max_value == tide.mp_max
+			and meters[2].value == tide.energy and meters[2].max_value == Catalog.ENERGY_MAX,
+			"Battle status bars show the fighter's HP, MP and charge")
+		var colors = ["e16562", "65a6e6", "eea353"]
+		for i in mini(meters.size(), colors.size()):
+			expect(meters[i].get_theme_stylebox("fill").bg_color == Color(colors[i]), "Status bar uses the shared color")
+		var portrait = tide_card.find_child("Portrait", true, false)
+		expect(portrait != null and portrait.get_theme_stylebox("panel").bg_color == Color("24536e"),
+			"Battle portraits use the same element background as the exploration sidebar")
+		var badge = tide_card.find_child("ShieldBadge_tide", true, false)
+		expect(badge != null and badge.get_node("Amount").text == "15", "Shield amount appears inside the fighter's badge")
+	await check_shield_badges(b)
+	var uncharged = find_button(game.ui, "终结技 · 落石")
+	expect(uncharged != null and uncharged.disabled, "Ultimate button is disabled before charge is full")
 	var cards = game.ui.find_children("EnemyCard_*", "PanelContainer", true, false)
 	var card_contents_match = cards.all(func(card):
 		return (card.find_children("*", "Button", true, false).size() == 1
@@ -191,7 +273,7 @@ func execute() -> void:
 	await press("棘背兽 2号")
 	expect(game.selected_target == "enemy_2" and find_button(game.ui, "◆ 棘背兽 2号") != null
 		and find_button(game.ui, "棘背兽 1号") != null, "Same-name enemies can be distinguished and selected")
-	for command in ["普攻", "巡路连射", "防守", "道具", "换人", "自动战斗", "撤退", "0% · 归途号令"]:
+	for command in ["普攻", "重压", "防守", "道具", "换人", "自动战斗", "撤退", "终结技 · 落石"]:
 		var button = find_button(game.ui, command)
 		expect(button != null and not button.tooltip_text.is_empty(), "Command has hover help: " + command)
 	var auto = find_button(game.ui, "自动战斗")
@@ -207,54 +289,25 @@ func execute() -> void:
 		"Automatic battle and items share the upper-right row beside the enemy lineup")
 	expect(find_button(game.ui, "自动保林") == null and find_button(game.ui, "自动可点火") == null,
 		"Battle has no separate ignition policy button")
-	var skill = find_button(game.ui, "巡路连射")
+	var skill = find_button(game.ui, "重压")
 	expect(skill != null and "8 MP" in skill.tooltip_text and "敌方单体" in skill.tooltip_text
 		and "预计基础伤害" in skill.tooltip_text, "Skill hover help explains cost, target and damage preview")
+	var hero = run.actor("hero")
+	var original_mp = hero.mp
+	hero.mp = 0
+	await press("重压")
+	var action_panel = find_button(game.ui, "普攻").get_parent().get_parent()
+	expect(action_panel.find_children("*", "Label", true, false).any(func(label): return "魔力不足" in label.text),
+		"Invalid commands report the error inside the action panel")
+	hero.mp = original_mp
+	await finish_presentation()
 	# Full energy is a deliberate UI fixture. Charging itself is verified by domain checks.
 	run.actor("hero").energy = 100
 	game._refresh()
 	var next_time = b.next_time.hero
-	await press("100% · 归途号令")
+	await press("终结技 · 落石")
 	expect(run.actor("hero").energy == 0 and b.next_time.hero == next_time, "Ultimate button spends personal energy and preserves normal action")
 	await finish_presentation()
-	var shields = game.ui.find_children("ShieldBadge_*", "TextureRect", true, false)
-	expect(shields.size() == b.active.size() and shields.all(func(badge):
-		var amount = badge.get_node_or_null("Amount") as Label
-		return (amount != null and amount.text == "32"
-			and amount.get_theme_color("font_color") == Color.WHITE)),
-		"An actual party shield skill shows a white remaining amount inside each badge")
-	# Use a larger display fixture than the current skill cap.
-	var hero = run.actor("hero")
-	hero.shield = 250
-	game._refresh()
-	await process_frame
-	var badge = game.ui.find_child("ShieldBadge_hero", true, false)
-	var amount = badge.get_node_or_null("Amount") as Label if badge != null else null
-	expect(amount != null and amount.text == "250", "Shield badge shows an amount larger than max HP")
-	var heading = game.ui.find_child("BattleAllyHeading_hero", true, false) as Control
-	var heading_rect = heading.get_global_rect()
-	if badge != null and amount != null:
-		var name_label = badge.get_parent().get_child(0) as Label
-		expect(name_label.get_line_count() == 1 and name_label.get_global_rect().end.x <= badge.get_global_rect().position.x
-			and amount.get_minimum_size().x <= badge.size.x,
-			"Name and three-digit badge fit on one line without overlap")
-		var companion_badge = game.ui.find_child("ShieldBadge_cen", true, false) as Control
-		expect(companion_badge != null and badge.size == companion_badge.size
-			and is_equal_approx(badge.get_global_rect().end.x, heading_rect.end.x)
-			and is_equal_approx(badge.get_global_rect().end.x, companion_badge.get_global_rect().end.x),
-			"Two- and three-digit badges have the same size and align along the right edge")
-	b._hurt("hero", 7)
-	game._refresh()
-	badge = game.ui.find_child("ShieldBadge_hero", true, false)
-	amount = badge.get_node_or_null("Amount") as Label if badge != null else null
-	expect(amount != null and amount.text == "243", "Absorbed damage updates the displayed shield")
-	b._hurt("hero", 243)
-	game._refresh()
-	await process_frame
-	expect(game.ui.find_child("ShieldBadge_hero", true, false) == null,
-		"An exhausted shield badge is removed")
-	heading = game.ui.find_child("BattleAllyHeading_hero", true, false) as Control
-	expect(heading.get_global_rect() == heading_rect, "Hiding a depleted shield keeps the roster row stable")
 	game.battle_timer = 0
 	game._refresh()
 	var original_item_count = run.actor("hero").inventory.salve
@@ -267,9 +320,9 @@ func execute() -> void:
 	game.battle_timer = 0
 	game._refresh()
 	await press("换人")
-	var lorne_ap = run.actor("lorne").ap
+	var steps = run.remaining_steps()
 	await press("洛恩")
-	expect("lorne" in b.active and "hero" not in b.active and run.actor("lorne").ap == lorne_ap - 2, "Reserve UI swaps same-cell character and charges once")
+	expect("lorne" in b.active and "hero" not in b.active and run.remaining_steps() == steps, "Reserve UI swaps companion without spending movement")
 	expect(b.active.size() == 4, "Swap never exceeds four active fighters")
 	await press("自动战斗")
 	expect(b.auto_mode and find_button(game.ui, "自动战斗").button_pressed,
@@ -288,6 +341,7 @@ func execute() -> void:
 	expect(restored.load_game().ok and restored.data.pending_battle.is_empty(), "Retreat state is a stable checkpoint")
 	await check_battle_targeting()
 	await check_marker_height()
+	await check_victory_relic_text()
 	await create_timer(0.25).timeout
 	game.queue_free()
 	await create_timer(0.05).timeout

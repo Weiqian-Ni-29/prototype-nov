@@ -52,26 +52,17 @@ static func path(tiles: Dictionary, start: String, goal: String, avoid_enemies: 
 	if not is_land(tiles, start) or not is_land(tiles, goal):
 		return []
 	var frontier: Array[String] = [start]
-	var costs = {start: 0}
-	var previous = {}
+	var previous = {start: ""}
 	while not frontier.is_empty():
-		var current = frontier[0]
-		for candidate in frontier:
-			if costs[candidate] < costs[current]:
-				current = candidate
-		frontier.erase(current)
+		var current: String = frontier.pop_front()
 		if current == goal:
 			break
 		for next in neighbors(current, tiles):
-			if not is_land(tiles, next) or (avoid_enemies and not tiles[next].get("enemies", []).is_empty()):
+			if previous.has(next) or not is_land(tiles, next) or (avoid_enemies and not tiles[next].get("enemies", []).is_empty()):
 				continue
-			var cost = int(costs[current]) + int(Catalog.TERRAIN[tiles[next].terrain].cost)
-			if not costs.has(next) or cost < costs[next]:
-				costs[next] = cost
-				previous[next] = current
-				if next not in frontier:
-					frontier.append(next)
-	if not costs.has(goal):
+			previous[next] = current
+			frontier.append(next)
+	if not previous.has(goal):
 		return []
 	var result: Array[String] = [goal]
 	while result[0] != start:
@@ -99,42 +90,31 @@ static func generate(seed_value: int) -> Dictionary:
 				if score < best:
 					best = score
 					terrain = biomes[i]
-			tiles[key(p)] = {"terrain": terrain, "base_terrain": terrain, "burning": false, "fuel": 3, "wet_until": 0, "resource": "", "quantity": 0, "enemies": [], "hidden": false, "discovered_enemy": false, "site": "", "npc": "", "height": rng.randf_range(0.0, 0.08)}
-	var start = "-7,0"
-	# Pick the exit from far boundary cells, never relaxing geometric distance.
-	var exits: Array[String] = []
-	for k in tiles:
-		if distance(coord(start), coord(k)) >= 12 and distance(coord(k), Vector2i.ZERO) >= 7:
-			exits.append(k)
-	var exit_id = exits[rng.randi_range(0, exits.size() - 1)]
-	tiles[start].terrain = "plains"
+			tiles[key(p)] = {"terrain": terrain, "base_terrain": terrain, "resource": "", "quantity": 0, "enemies": [], "hidden": false, "discovered_enemy": false, "site": "", "npc": "", "height": rng.randf_range(0.0, 0.08)}
+	var starts: Array[String] = []
+	for cell in tiles:
+		if distance(coord(cell), Vector2i.ZERO) == 7 and tiles[cell].terrain != "ruins":
+			starts.append(cell)
+	var start = starts[rng.randi_range(0, starts.size() - 1)]
+	var distant: Array[String] = []
+	for cell in tiles:
+		if distance(coord(start), coord(cell)) >= 11:
+			distant.append(cell)
+	var boss = distant[rng.randi_range(0, distant.size() - 1)]
 	tiles[start].site = "start"
-	tiles[exit_id].terrain = "plains"
-	tiles[exit_id].site = "exit"
-	# Early companion has a safe route within two moves, not two AP.
-	var early_candidates: Array[String] = []
-	for k in tiles:
-		var d = distance(coord(start), coord(k))
-		if d > 0 and d <= 2:
-			early_candidates.append(k)
-	var early = early_candidates[rng.randi_range(0, early_candidates.size() - 1)]
-	tiles[early].terrain = "mountain"
-	tiles[early].npc = "lorne"
-	tiles[early].site = "sign"
-	var occupied = {start: true, exit_id: true, early: true}
-	var sites = {"inn": "ruins", "home": "forest", "record": "ruins"}
-	for site in sites:
-		var k = _pick_free(tiles, occupied, rng, 3)
-		tiles[k].terrain = sites[site]
-		tiles[k].site = site
-		occupied[k] = true
-	var npc_sites = {"cen": "forest", "eve": "herb", "grit": "track", "ember": "clear", "tide": "water"}
-	for id in npc_sites:
-		var k = _pick_free(tiles, occupied, rng, 2)
-		tiles[k].terrain = Catalog.COMPANIONS[id].terrain
-		tiles[k].npc = id
-		tiles[k].site = npc_sites[id]
-		occupied[k] = true
+	tiles[boss].site = "boss"
+	var occupied = {start: true, boss: true}
+	for id in Catalog.COMPANIONS:
+		var candidates: Array[String] = []
+		for cell in tiles:
+			if occupied.has(cell):
+				continue
+			var steps = distance(coord(start), coord(cell))
+			if (id == "lorne" and steps <= 2) or (id != "lorne" and steps > 2 and tiles[cell].terrain == Catalog.COMPANIONS[id].terrain):
+				candidates.append(cell)
+		var cell = _pick_free(tiles, occupied, rng, 2) if candidates.is_empty() else candidates[rng.randi_range(0, candidates.size() - 1)]
+		tiles[cell].npc = id
+		occupied[cell] = true
 	# Ensure all six base biomes exist even when Voronoi seeds happen to overlap.
 	for terrain in biomes:
 		var exists = false
@@ -145,45 +125,25 @@ static func generate(seed_value: int) -> Dictionary:
 			var k = _pick_free(tiles, occupied, rng, 2)
 			tiles[k].terrain = terrain
 			occupied[k] = true
-	# Reserve a completely safe extraction path and safe approaches to every story anchor.
+	# Keep approaches to the village, companions and final battle open.
 	_add_lake(tiles, occupied, seed_value, start)
 	var safe = {}
 	for destination in occupied:
 		for k in path(tiles, start, destination):
-			safe[k] = true
+			safe[k] = int(safe.get(k, 0)) + 1
 	for k in tiles:
 		var t = tiles[k]
 		t.base_terrain = t.terrain
 		if not is_land(tiles, k):
 			continue
-		if not occupied.has(k) and not safe.has(k) and distance(coord(k), coord(start)) > 2 and rng.randf() < 0.19:
+		var companion_in_danger = not t.npc.is_empty() and t.npc != "lorne" and safe.get(k, 0) == 1 and rng.randf() < 0.22
+		if companion_in_danger or (not occupied.has(k) and not safe.has(k) and distance(coord(k), coord(start)) > 2 and rng.randf() < 0.19):
 			t.enemies = _composition(t.terrain, rng)
 			t.hidden = t.terrain in ["forest", "swamp"]
 		elif not occupied.has(k) and rng.randf() < 0.38:
 			t.resource = "salve" if rng.randf() < 0.55 else "ether"
 			t.quantity = rng.randi_range(1, 2)
-	tiles[start].resource = "salve"
-	tiles[start].quantity = 2
-	# A separate optional boss cannot occupy story or extraction corridors.
-	var forest_encounter = false
-	for k in tiles:
-		if tiles[k].terrain == "forest" and not tiles[k].enemies.is_empty():
-			forest_encounter = true
-	if not forest_encounter:
-		for k in tiles:
-			if is_land(tiles, k) and not occupied.has(k) and not safe.has(k) and distance(coord(start), coord(k)) > 3:
-				tiles[k].terrain = "forest"
-				tiles[k].base_terrain = "forest"
-				tiles[k].enemies = ["boar", "apothecary"]
-				tiles[k].hidden = true
-				tiles[k].discovered_enemy = false
-				break
-	for k in tiles:
-		if is_land(tiles, k) and not occupied.has(k) and not safe.has(k) and tiles[k].enemies.is_empty() and distance(coord(start), coord(k)) > 8:
-			tiles[k].enemies = ["lamp_boss", "canal"]
-			tiles[k].hidden = false
-			break
-	return {"tiles": tiles, "start": start, "exit": exit_id, "rng_state": rng.state}
+	return {"tiles": tiles, "start": start, "boss": boss, "rng_state": rng.state}
 
 static func _add_lake(tiles: Dictionary, occupied: Dictionary, seed_value: int, start: String) -> void:
 	var rng = RandomNumberGenerator.new()

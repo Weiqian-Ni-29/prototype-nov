@@ -14,7 +14,6 @@ func execute() -> void:
 	game = Main.instantiate()
 	root.add_child(game)
 	await process_frame
-	game.chosen_profession = "guardian"
 	game.run.save_path = "user://native-session.json"
 	game._start_new()
 	var r = game.run
@@ -59,8 +58,9 @@ func execute() -> void:
 				break
 	expect(not game.view.battle_mode and not r.data.has("pending_victory") and r.data.rewards == checkpoint.get("rewards"),
 		"Acknowledging the settlement returns to exploration without re-awarding loot")
-	# A relic won in this fixture may have its own introduction after settlement.
-	for page in range(2):
+	# Recruitment gifts and a victory drop can each have multiple story pages.
+	var page_budget: int = maxi(2, r.data.relic_intros.size() * 8)
+	for page in page_budget:
 		if r.relic_intro().is_empty() or not game.modal_layer.has_node("StoryScreen"):
 			break
 		for pressed in [true, false]:
@@ -79,19 +79,19 @@ func execute() -> void:
 	r.actor("ember").hp = 0
 	game._refresh()
 	await create_timer(1.5).timeout
-	expect(game.view.dolls.ember.rigged.holding_down,"Down NPC stays visibly injured")
+	expect(game.view.dolls.keys() == ["hero"] and r.actor("ember").hp == 0, "Injured NPC stays in domain state without a map figure")
 	var salves = r.actor("hero").inventory.get("salve",0)
 	expect(salves>0 and r.use_item("hero","ember","salve").ok,"Same-cell actual item rescues the NPC")
 	game._refresh()
 	await create_timer(1.5).timeout
-	expect(r.actor("ember").hp>0 and not game.view.dolls.ember.rigged.holding_down,"Rescue state makes the same NPC stand up")
+	expect(r.actor("ember").hp > 0, "Rescue restores the NPC")
 	expect(r.save_game().ok,"Updated run saves")
 	var hp = r.actor("ember").hp
 	expect(r.load_game().ok and r.actor("ember").hp==hp,"Continue preserves actual rescue state")
 	game.view.reset()
 	game._refresh()
 	await process_frame
-	expect(not game.view.dolls.ember.down,"Recreated exploration actor reflects loaded HP")
+	expect(game.view.dolls.keys() == ["hero"], "Loading does not add extra map figures")
 	print("NATIVE SESSION: %d checks, %d failures" % [checks,failures])
 	game.queue_free()
 	await create_timer(1.0).timeout

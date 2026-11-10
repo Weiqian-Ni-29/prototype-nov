@@ -8,6 +8,7 @@ const Catalog = preload("res://scripts/domain/catalog.gd")
 const Board = preload("res://scripts/presentation/board_surface.gd")
 const BattleTargeting = preload("res://scripts/presentation/battle_targeting.gd")
 const OCCLUSION = preload("res://scripts/presentation/board_occlusion.gdshader")
+const GROUND_FADE = preload("res://scripts/presentation/board_ground_fade.gdshader")
 const NATURE_PALETTE = preload("res://scripts/presentation/nature_palette.gdshader")
 const MAP_PLANE = Plane(Vector3.UP, 0.05)
 const DRAG_THRESHOLD = 8.0
@@ -17,10 +18,10 @@ const MAX_MAP_ZOOM = 38.0
 const MAP_ZOOM_STEP = 1.14
 const OCCLUSION_ZOOM = 9.0
 const FOG_REVEAL_SECONDS = 0.7
+const FOG_REVEAL_PRIORITY = 2
 signal cell_clicked(id: String)
 signal enemy_clicked(id: String)
-signal squad_clicked(id: String)
-var squad_markers = preload("res://scripts/presentation/squad_markers.gd").new()
+var hero_marker = preload("res://scripts/presentation/squad_markers.gd").new()
 var camera: Camera3D
 var light: DirectionalLight3D
 var map_root: Node3D
@@ -70,7 +71,6 @@ var board_stamp: Dictionary
 var outline_cell = ""
 var map_occluders: Array[MeshInstance3D] = []
 var fading_occluders: Dictionary
-var map_actor = ""
 signal presentation_changed
 signal sound_cue(kind: String)
 
@@ -106,7 +106,7 @@ func _ready() -> void:
 	var marker_canvas = CanvasLayer.new()
 	marker_canvas.layer = 1
 	add_child(marker_canvas)
-	marker_canvas.add_child(squad_markers)
+	marker_canvas.add_child(hero_marker)
 	ocean = preload("res://scripts/presentation/ocean.gd").new()
 	add_child(ocean)
 	selection_ring = MeshInstance3D.new()
@@ -140,14 +140,12 @@ func _ready() -> void:
 	presenter.feedback_changed.connect(func(): presentation_changed.emit())
 	presenter.started.connect(func(): presentation_changed.emit())
 	visibility_changed.connect(func():
-		squad_markers.visible = is_visible_in_tree() and not battle_mode)
+		hero_marker.visible = is_visible_in_tree() and not battle_mode)
 	_update_camera()
 
 func reset() -> void:
 	_cancel_map_pointer()
-	squad_markers.groups.clear()
-	squad_markers.markers.clear()
-	squad_markers.queue_redraw()
+	hero_marker.hide()
 	_clear_battle_target()
 	map_follow_actor = null
 	zoom_size = DEFAULT_MAP_ZOOM
@@ -183,12 +181,8 @@ func reset() -> void:
 	ocean.visible = true
 	camera_impulse = 0.0
 
-func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> void:
+func refresh(run: RefCounted, _selected_id: String, selected_cell: String) -> void:
 	current_tiles = run.data.tiles
-	squad_markers.refresh(run, selected_id)
-	if selected_id != map_actor:
-		map_follow_actor = null
-	map_actor = selected_id
 	if tile_nodes.is_empty() and not current_tiles.is_empty():
 		board_surface.prepare(current_tiles, int(run.data.seed))
 		map_min = Hex.world(current_tiles.keys()[0])
@@ -243,8 +237,8 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 		var borders: Array = []
 		for next in Hex.neighbors(id, current_tiles):
 			borders.append(visible_layout.get(next, []))
-		var site: String = t.site if visited else ""
-		var signature = JSON.stringify([visible_layout[id], borders, t.wet_until > run.data.day, site, t.burning])
+		var name_on_map = run.location_name(id) if visited or (id == run.data.boss and run.boss_known()) else ""
+		var signature = JSON.stringify([visible_layout[id], borders, name_on_map])
 		if tile_signatures.get(id, "") != signature:
 			dirty_details[Board.chunk_for(id)] = true
 			if tile_nodes.has(id):
@@ -253,64 +247,32 @@ func refresh(run: RefCounted, selected_id: String, selected_cell: String) -> voi
 			var node = Node3D.new()
 			map_root.add_child(node)
 			node.position = Hex.world(id)
-			var detail = t.duplicate()
-			detail.current_day = run.data.day
-			Terrain.board_details(node, detail, id, visual_seed, board_surface)
-			if not site.is_empty():
+			Terrain.board_details(node, t, id, visual_seed, board_surface)
+			if not name_on_map.is_empty():
 				var height = board_surface.height_at(node.position)
-				_label(node, _site_name(site), Vector3(0, height + 1.03, 0), Color("eee0b8"), 0.0041)
+				_label_location(node, name_on_map, height)
 			tile_nodes[id] = node
 			tile_signatures[id] = signature
 	if not dirty_details.is_empty():
 		_batch_map_geometry(dirty_details)
-	var counts = {}
-	var visible_counts = {}
-	var visible_actor_ids: Array = []
-	var actor_ids = run.data.actors.keys()
-	actor_ids.sort_custom(func(a,b):
-		if a==b: return false
-		if a=="hero": return true
-		if b=="hero": return false
-		return str(a)<str(b))
-	for id in actor_ids:
-		var a = run.actor(id)
-		var show_npc = run.has_visited(a.position) and current_tiles[a.position].npc == id
-		if not a.joined and not show_npc:
-			if dolls.has(id):
-				dolls[id].visible = false
-			continue
-		visible_actor_ids.append(id)
-		visible_counts[a.position] = int(visible_counts.get(a.position, 0)) + 1
-	for id in visible_actor_ids:
-		var a = run.actor(id)
-		if not dolls.has(id):
-			var doll = Doll.new()
-			actor_root.add_child(doll)
-			doll.configure(a)
-			doll.map_height_source = board_surface
-			dolls[id] = doll
-		var model = dolls[id]
-		model.visible = true
-		model.selected = id == selected_id
-		model.set_down(a.hp <= 0)
-		var count = int(counts.get(a.position, 0))
-		counts[a.position] = count + 1
-		var total = int(visible_counts[a.position])
-		model.scale = Vector3.ONE * (0.19 if total > 4 else 0.22 if total > 1 else 0.24)
-		var offset = Vector3.ZERO
-		if total>1:
-			var ring_count = total-1 if total==7 else total
-			var index = count-1 if total==7 else count
-			if index>=0:
-				var angle = TAU*float(index)/ring_count
-				offset += Vector3(cos(angle),0,sin(angle))*(0.52 if total>3 else 0.34)
-		var point = Hex.world(a.position) + offset
-		point.y = board_surface.height_at(point) + 0.025
-		if model.has_meta("cell") and model.get_meta("cell") != a.position:
-			model.move_to(point)
-		elif not model.is_moving():
-			model.position = point
-		model.set_meta("cell", a.position)
+	var hero = run.actor("hero")
+	if not dolls.has("hero"):
+		var doll = Doll.new()
+		actor_root.add_child(doll)
+		doll.configure(hero)
+		doll.map_height_source = board_surface
+		dolls["hero"] = doll
+	var model = dolls["hero"]
+	model.selected = true
+	model.set_down(hero.hp <= 0)
+	model.scale = Vector3.ONE * 0.24
+	var point = Hex.world(hero.position)
+	point.y = board_surface.height_at(point) + 0.025
+	if model.has_meta("cell") and model.get_meta("cell") != hero.position:
+		model.move_to(point)
+	elif not model.is_moving():
+		model.position = point
+	model.set_meta("cell", hero.position)
 	if relief_changed or outline_cell != selected_cell:
 		outline_cell = selected_cell
 		selection_ring.mesh = board_surface.outline(selected_cell, visible_layout.has(selected_cell)) if current_tiles.has(selected_cell) else null
@@ -325,7 +287,7 @@ func _animate_fog_reveal(mesh: ArrayMesh, old_edge_mesh: ArrayMesh) -> void:
 	var material := ShaderMaterial.new()
 	material.shader = Board.REVEAL
 	material.set_shader_parameter("progress", 0.0)
-	material.render_priority = 2
+	material.render_priority = FOG_REVEAL_PRIORITY
 	var veil := MeshInstance3D.new()
 	veil.mesh = mesh
 	veil.material_override = material
@@ -471,6 +433,10 @@ func follow_map_movement(id: String) -> void:
 	map_follow_actor = actor
 	map_follow_offset = focus_point - _map_actor_ground(actor)
 
+func is_map_moving() -> bool:
+	var hero = dolls.get("hero")
+	return is_instance_valid(hero) and hero.is_moving()
+
 func _map_actor_ground(actor: Node3D) -> Vector3:
 	return Vector3(actor.position.x, 0.0, actor.position.z)
 
@@ -565,10 +531,6 @@ func _input(event: InputEvent) -> void:
 			map_follow_offset = focus_point - _map_actor_ground(map_follow_actor)
 		get_viewport().set_input_as_handled()
 		if click:
-			var squad = squad_markers.pick(map_pointer_position)
-			if not squad.is_empty():
-				squad_clicked.emit(squad)
-				return
 			var id = board_surface.pick(camera.project_ray_origin(map_pointer_position), camera.project_ray_normal(map_pointer_position))
 			if id != "":
 				cell_clicked.emit(id)
@@ -621,13 +583,13 @@ func _process(delta: float) -> void:
 		if motion != Vector3.ZERO:
 			map_follow_actor = null
 			_pan_map(motion * delta * 8.0)
-		else:
-			_update_map_follow()
 	if battle_mode:
 		_update_battle_targets()
 	else:
+		if not map_pointer_down:
+			_update_map_follow()
 		_update_occlusion(delta)
-	squad_markers.update_positions(camera, dolls, is_visible_in_tree() and not battle_mode)
+	hero_marker.update_position(camera, dolls.get("hero"), is_visible_in_tree() and not battle_mode)
 
 func _battle_enemy_at(screen_position: Vector2) -> String:
 	return battle_targeting.pick(camera, screen_position, battle_dolls, battle_combat.alive_enemies())
@@ -649,31 +611,46 @@ func _clear_battle_target() -> void:
 	battle_targeting.update_markers(camera, battle_dolls, empty)
 
 func _update_occlusion(delta: float) -> void:
-	var model = dolls.get(map_actor)
 	var blocked: Dictionary = {}
-	var target = Vector3.ZERO
 	var sight = -camera.global_basis.z
+	var mountain_targets := PackedVector3Array()
+	var model = dolls.get("hero")
 	if zoom_size <= OCCLUSION_ZOOM and is_instance_valid(model) and model.visible:
 		var feet: Vector3 = model.global_position
-		target = feet + Vector3.UP * 0.20
+		mountain_targets.append(feet)
+		var target = feet + Vector3.UP * 0.20
 		var head = feet + Vector3.UP * 0.38
 		for instance in map_occluders:
 			if instance.global_position.distance_squared_to(feet) > 9.0:
 				continue
 			var bounds: AABB = (instance.global_transform * instance.get_aabb()).grow(0.025)
 			if bounds.intersects_segment(target - sight * 3.0, target) != null or bounds.intersects_segment(head - sight * 3.0, head) != null:
-				blocked[instance] = true
-				if not fading_occluders.has(instance):
-					_begin_occlusion(instance)
+				var targets: PackedVector3Array = blocked.get(instance, PackedVector3Array())
+				targets.append(target)
+				blocked[instance] = targets
+	if board_ground_material != null:
+		var fade = 1.0 - smoothstep(7.75, OCCLUSION_ZOOM, zoom_size)
+		var ground_shader = GROUND_FADE if fade > 0.0 and not mountain_targets.is_empty() else Board.GROUND
+		if board_ground_material.shader != ground_shader:
+			board_ground_material.shader = ground_shader
+		if ground_shader == GROUND_FADE:
+			board_ground_material.set_shader_parameter("mountain_target_count", mountain_targets.size())
+			board_ground_material.set_shader_parameter("mountain_fade", fade)
+			board_ground_material.set_shader_parameter("mountain_targets", mountain_targets)
+			board_ground_material.set_shader_parameter("mountain_sight", sight)
+	for instance in blocked:
+		if not fading_occluders.has(instance):
+			_begin_occlusion(instance)
 	for instance in fading_occluders.keys():
 		var effect: Dictionary = fading_occluders[instance]
 		var obscures = blocked.has(instance)
 		effect.amount = move_toward(effect.amount, 1.0 if obscures else 0.0, delta * 8.0)
 		if obscures:
-			effect.target = target
+			effect.targets = blocked[instance]
 		for material in effect.materials:
 			material.set_shader_parameter("fade", effect.amount)
-			material.set_shader_parameter("target", effect.target)
+			material.set_shader_parameter("targets", effect.targets)
+			material.set_shader_parameter("target_count", effect.targets.size())
 			material.set_shader_parameter("sight", sight)
 		if effect.amount == 0.0 and not obscures:
 			_restore_occluder(instance, effect)
@@ -684,7 +661,7 @@ func _restore_occluder(instance: MeshInstance3D, effect: Dictionary) -> void:
 		instance.set_surface_override_material(surface, effect.originals[surface])
 
 func _begin_occlusion(instance: MeshInstance3D) -> void:
-	var effect = {"originals": [], "materials": [], "amount": 0.0, "target": Vector3.ZERO}
+	var effect = {"originals": [], "materials": [], "amount": 0.0, "targets": PackedVector3Array()}
 	for surface in range(instance.mesh.get_surface_count()):
 		effect.originals.append(instance.get_surface_override_material(surface))
 		var original = instance.get_active_material(surface)
@@ -720,21 +697,16 @@ func begin_battle(run: RefCounted, combat: RefCounted) -> void:
 	battle_stage = null
 	battle_dolls.clear()
 	battle_root.visible = true
-	_draw_battle_stage(run.data.tiles[combat.position],run.data.day,combat.position)
+	_draw_battle_stage(combat.field_view(), combat.position)
 	_update_camera()
 	refresh_battle(run, combat)
 
-func _draw_battle_stage(definition: Dictionary, day: int, position: String) -> void:
-	environment.background_color = {"plains":Color("526757"),"forest":Color("354b42"),"mountain":Color("657078"),"ruins":Color("64695b"),"desert":Color("9b8965"),"swamp":Color("405c60"),"scorched":Color("4f5652")}.get(str(definition.terrain),Color("526757"))
+func _draw_battle_stage(definition: Dictionary, position: String) -> void:
+	environment.background_color = {"plains":Color("526757"),"forest":Color("354b42"),"mountain":Color("657078"),"ruins":Color("64695b"),"desert":Color("9b8965"),"swamp":Color("405c60")}.get(str(definition.terrain),Color("526757"))
 	if is_instance_valid(battle_stage): battle_stage.free()
 	battle_stage = Node3D.new()
 	battle_root.add_child(battle_stage)
 	var tile = definition.duplicate(true)
-	tile.current_day = day
-	tile.height = 0.0
-	tile.enemies = []
-	tile.npc = ""
-	tile.quantity = 0
 	tile.ground_only = true
 	var stage = Terrain.tile(battle_stage, tile, hash(position))
 	stage.scale = Vector3(6.5, 1.0, 4.5)
@@ -744,6 +716,8 @@ func _draw_battle_stage(definition: Dictionary, day: int, position: String) -> v
 		var backdrop = Terrain.tile(battle_stage, tile, i + 31)
 		backdrop.position = Vector3(-5 + i * 2.4, -0.2, -4.0)
 		backdrop.scale = Vector3(1.4, 1.7, 1.4)
+	if tile.get("river", false):
+		_draw_river()
 	if tile.burning:
 		var fire_ring = Node3D.new()
 		battle_stage.add_child(fire_ring)
@@ -751,11 +725,29 @@ func _draw_battle_stage(definition: Dictionary, day: int, position: String) -> v
 		Terrain.fire(fire_ring)
 	battle_root.set_meta("environment_signature", _battle_signature(tile))
 
-func refresh_battle(run: RefCounted, combat: RefCounted) -> void:
-	var tile = run.data.tiles[combat.position].duplicate(true)
-	tile.current_day = run.data.day
+func _draw_river() -> void:
+	var ribbon = SurfaceTool.new()
+	ribbon.begin(Mesh.PRIMITIVE_TRIANGLE_STRIP)
+	for i in range(17):
+		var x = -5.1 + i * 0.60
+		var center = 1.25 + sin(x * 0.7) * 0.66
+		ribbon.set_color(Color("50466c"))
+		ribbon.add_vertex(Vector3(x, 0.09, center - 0.62))
+		ribbon.set_color(Color("24273e"))
+		ribbon.add_vertex(Vector3(x, 0.09, center + 0.62))
+	var surface = MeshInstance3D.new()
+	surface.mesh = ribbon.commit()
+	var material = StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	material.vertex_color_use_as_albedo = true
+	surface.material_override = material
+	battle_stage.add_child(surface)
+
+func refresh_battle(_run: RefCounted, combat: RefCounted) -> void:
+	var tile = combat.field_view()
 	if not is_animating() and battle_root.get_meta("environment_signature", "") != _battle_signature(tile):
-		_draw_battle_stage(tile,run.data.day,combat.position)
+		_draw_battle_stage(tile, combat.position)
 	var ids = combat.active.duplicate()
 	ids.append_array(combat.enemies.keys())
 	if is_animating():
@@ -819,18 +811,15 @@ func sync_battle_states() -> void:
 	refresh_battle(battle_run,battle_combat)
 	for id in battle_dolls:
 		battle_dolls[id].set_down(battle_combat.unit(id).hp<=0)
-	var tile = battle_run.data.tiles[battle_combat.position].duplicate(true)
-	tile.current_day = battle_run.data.day
-	if battle_root.get_meta("environment_signature", "") != _battle_signature(tile):
-		_draw_battle_stage(tile,battle_run.data.day,battle_combat.position)
+	_update_battle_stage(battle_combat.field_view())
 
 func sync_event_environment(event: Dictionary) -> void:
-	if not event.has("environment_after") or battle_run==null: return
-	var tile = battle_run.data.tiles[battle_combat.position].duplicate(true)
-	tile.merge(event.environment_after,true)
-	tile.current_day = battle_run.data.day
-	if battle_root.get_meta("environment_signature", "") != _battle_signature(tile):
-		_draw_battle_stage(tile,battle_run.data.day,battle_combat.position)
+	if event.has("environment_after") and battle_combat != null:
+		_update_battle_stage(event.environment_after)
+
+func _update_battle_stage(field: Dictionary) -> void:
+	if battle_root.get_meta("environment_signature", "") != _battle_signature(field):
+		_draw_battle_stage(field, battle_combat.position)
 
 func end_battle() -> void:
 	presenter.cancel()
@@ -853,22 +842,24 @@ func impact_camera(strength: float) -> void:
 	camera_impulse = maxf(camera_impulse,strength)
 
 func _battle_signature(tile: Dictionary) -> String:
-	return "%s:%s:%s" % [tile.terrain, tile.burning, int(tile.wet_until) > int(tile.current_day)]
+	return "%s:%s:%s:%s" % [tile.terrain, tile.burning, tile.wet, tile.get("river", false)]
 
-static func _site_name(site: String) -> String:
-	return {"start": "断桥废棚", "exit": "归航站", "inn": "白栎旧驿站", "home": "林边人家", "record": "旧调度柜", "sign": "山路旧牌", "forest": "林缘捕网", "herb": "药箱树荫", "track": "旧兽径营地", "clear": "清障营地", "water": "水文台"}.get(site, "路途")
-
-static func _label(parent: Node3D, text: String, point: Vector3, color: Color, pixel_size: float = 0.006) -> void:
+static func _label_location(parent: Node3D, text: String, height: float) -> void:
 	var label = Label3D.new()
+	label.name = "LocationName"
 	label.text = text
 	var font = FontVariation.new()
 	font.base_font = FontAsset
 	font.variation_opentype = {TextServerManager.get_primary_interface().name_to_tag("wght"): 600.0}
 	label.font = font
 	label.font_size = 40
-	label.pixel_size = pixel_size
+	label.pixel_size = minf(0.0032, 1.2 / font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size).x)
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	label.modulate = color
+	label.no_depth_test = true
+	# Transparent terrain and fog can cover labels drawn earlier, even without depth testing.
+	label.outline_render_priority = FOG_REVEAL_PRIORITY + 1
+	label.render_priority = FOG_REVEAL_PRIORITY + 2
+	label.modulate = Color("eee0b8")
 	label.outline_size = 7
-	label.position = point
+	label.position.y = height + 0.04
 	parent.add_child(label)

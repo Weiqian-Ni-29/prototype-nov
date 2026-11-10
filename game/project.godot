@@ -2,7 +2,7 @@
 config_version=5
 
 [application]
-config/name="归灯之野 · 白栎远征"
+config/name="维洛丹"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/description="六边形远征、伙伴与归途。单人 2.5D 探索 RPG。"

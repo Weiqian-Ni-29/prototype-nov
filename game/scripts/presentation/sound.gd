@@ -1,6 +1,7 @@
 class_name JourneySound
 extends Node
 ## Original synthesized cues; no downloaded samples or runtime network dependency.
+const DAY_CHIME = preload("res://assets/audio/dawn-bronze-bell.wav")
 var player: AudioStreamPlayer
 var cache: Dictionary = {}
 var volume = 0.65
@@ -34,7 +35,7 @@ func play(kind: String = "click") -> void:
 	if player == null or volume <= 0:
 		return
 	if not cache.has(kind):
-		cache[kind] = _synthesize(kind)
+		cache[kind] = DAY_CHIME if kind == "day" else _synthesize(kind)
 	var voice = voices[voice_index%voices.size()]
 	voice_index += 1
 	voice.stop()
@@ -48,7 +49,7 @@ func _exit_tree() -> void:
 	cache.clear()
 
 func _synthesize(kind: String) -> AudioStreamWAV:
-	var frequencies = {"click":[440.0],"day":[392.0,493.88],"attack":[196.0,246.94],"normal":[440.0,660.0],"impact":[82.4,123.5],"bow":[740.0,988.0],"heal":[523.25,783.99,1046.5],"shield":[329.63,493.88],"fire":[110.0,164.8],"water":[587.33,880.0],"howl":[196.0,294.0],"cast":[523.25,659.25],"victory":[523.25,659.25,783.99]}.get(kind,[440.0])
+	var frequencies = {"click":[440.0],"attack":[196.0,246.94],"normal":[440.0,660.0],"impact":[82.4,123.5],"bow":[740.0,988.0],"heal":[523.25,783.99,1046.5],"shield":[329.63,493.88],"fire":[110.0,164.8],"water":[587.33,880.0],"howl":[196.0,294.0],"cast":[523.25,659.25],"victory":[523.25,659.25,783.99]}.get(kind,[440.0])
 	var sample_rate = 22050
 	var duration = 0.11 if kind=="click" else 0.65 if kind=="howl" else 0.4 if kind in ["heal","water","shield"] else 0.25
 	var count = int(sample_rate * duration)

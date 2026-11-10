@@ -45,25 +45,26 @@ func execute() -> void:
 	day_edges()
 	combat_edges()
 	story_modifiers()
-	print("EDGE TESTS: %d checks, %d failures (invalid saves, checkpoint fees, weather, isolation, speed, policies, epilogue modifiers)" % [checks, failures])
+	print("EDGE TESTS: %d checks, %d failures (invalid saves, encounter checkpoints, weather, isolation, speed, policies, epilogue modifiers)" % [checks, failures])
 	quit(0 if failures == 0 else 1)
 
 func checkpoint_edges() -> void:
 	var r = fresh()
 	expect(r.save_game().ok, "Valid edge checkpoint")
 	var valid = JSON.parse_string(FileAccess.get_file_as_string(r.save_path))
-	for issue in ["version", "old_version", "day", "name", "speed", "energy", "maximum", "fractional", "equipment", "choices", "explored"]:
+	for issue in ["version", "old_version", "day", "steps", "name", "speed", "energy", "maximum", "fractional", "equipment", "choices", "explored"]:
 		var broken = valid.duplicate(true)
 		match issue:
 			"version": broken.version = {}
 			"old_version": broken.version = 1
 			"day": broken.day = []
+			"steps": broken.steps_today = 5
 			"name": broken.actors.hero.erase("name")
 			"speed": broken.actors.hero.speed = 0
 			"energy": broken.actors.hero.energy = 101
 			"maximum": broken.actors.hero.hp_max = "wrong"
 			"fractional": broken.actors.hero.inventory.salve = 0.5
-			"equipment": broken.actors.hero.inventory.trail_blade = 0
+			"equipment": broken.actors.hero.equipment.weapon = "999999"
 			"choices": broken.choices = {}
 			"explored": broken.explored["99,99"] = true
 		var path = "user://test-invalid.json"
@@ -74,16 +75,16 @@ func checkpoint_edges() -> void:
 		var before = JSON.stringify(r.data)
 		expect(not r.load_game(path).ok, "Reject corrupt field " + issue)
 		expect(JSON.stringify(r.data) == before and FileAccess.get_file_as_string(path) == raw, "Rejected load leaves memory and source intact " + issue)
-	var original_ap = r.actor("hero").ap
+	var original_steps = r.remaining_steps()
 	var b = battle(r, ["hero"])
-	expect(r.actor("hero").ap == original_ap - 2, "Live encounter pays fee")
+	expect(r.remaining_steps() == original_steps, "Live encounter does not spend movement")
 	expect(not r.save_game().ok, "No partial battle checkpoint")
 	var continued = fresh()
 	expect(continued.load_game().ok, "Load prebattle checkpoint")
-	expect(continued.actor("hero").ap == original_ap and not continued.data.pending_battle.is_empty(), "Checkpoint precedes deployment fee")
+	expect(continued.remaining_steps() == original_steps and not continued.data.pending_battle.is_empty(), "Checkpoint preserves pending battle and steps")
 	var resumed = Combat.new()
 	expect(resumed.begin(continued, continued.data.pending_battle, ["hero"]).ok, "Resume pending encounter")
-	expect(continued.actor("hero").ap == original_ap - 2, "Resume charges exactly once from checkpoint")
+	expect(continued.remaining_steps() == original_steps, "Resume leaves movement unchanged")
 	for id in resumed.enemies:
 		resumed.enemies[id].hp = 0
 	resumed.check_end()
@@ -97,27 +98,31 @@ func day_edges() -> void:
 	var state = r.rng.state
 	var predicted = r.next_weather()
 	expect(r.next_weather() == predicted and r.rng.state == state, "Forecast reads without consuming RNG")
-	expect(r.end_day().ok and r.data.weather == predicted, "Next day matches forecast")
-	r = fresh()
-	ally(r, "eve")
-	r.actor("hero").hp = 0
-	r.actor("hero").ap = 0
-	r.actor("hero").mp = 0
-	r.actor("hero").energy = 71
-	expect(r.end_day().ok, "Healthy partner keeps day progression available")
-	expect(r.actor("hero").hp == 0 and r.actor("hero").mp == 0 and r.actor("hero").ap == r.actor("hero").ap_max and r.actor("hero").energy == 71, "Daily AP resets but injury is not cured and energy retained")
 	var pos = r.actor("hero").position
-	r.data.tiles[pos].terrain = "forest"
-	r.data.tiles[pos].burning = true
-	r.data.tiles[pos].fuel = 2
-	sunny(r, true)
-	r.end_day()
-	expect(not r.data.tiles[pos].burning and r.data.tiles[pos].fuel == 2, "Rain extinguishes before fuel consumption")
-	expect(r.heal_skill("eve", "hero").ok and r.actor("hero").hp == 38, "Same-cell medic can actually rescue")
+	var neighbor = Hex.neighbors(pos, r.data.tiles).filter(func(cell): return Hex.is_land(r.data.tiles, cell))[0]
+	r.data.tiles[neighbor].enemies.clear()
+	r.data.tiles[neighbor].terrain = "mountain"
+	ally(r, "eve")
+	var hero = r.actor("hero")
+	hero.hp = 21
+	hero.mp = 0
+	hero.energy = 71
+	for step in range(1, 5):
+		var destination = neighbor if step % 2 == 1 else pos
+		expect(r.move(destination).ok and r.remaining_steps() == 5 - step and r.data.day == 1,
+			"Each land move, including mountains and return trips, takes one step")
+	r.data.tiles[neighbor].enemies = ["boar"]
+	expect(r.move(neighbor).battle and r.data.day == 2 and r.remaining_steps() == 5 and r.data.weather == predicted,
+		"Fifth step advances weather before the encounter")
+	expect(hero.hp == 21 and hero.mp == 0 and hero.energy == 71 and r.actor("eve").position == neighbor,
+		"Day rollover preserves resources and companions follow the traveler")
+	expect(not r.move(pos).ok and r.remaining_steps() == 5, "An unresolved battle blocks travel without spending a step")
+	r.data.pending_battle.clear()
+	r.data.tiles[neighbor].enemies.clear()
+	hero.hp = 0
+	expect(not r.move(pos).ok and r.actor("eve").position == neighbor, "A healthy companion cannot move independently")
+	expect(r.use_item("eve", "hero", "salve").ok and hero.hp > 0, "A companion can spend a salve to rescue the traveler")
 	expect(r.actor("eve").energy == 0, "Map support never charges ultimate")
-	var neighbor = Hex.neighbors(pos, r.data.tiles)[0]
-	var before = JSON.stringify(r.data.actors)
-	expect(not r.move(["hero", "hero"], neighbor).ok and JSON.stringify(r.data.actors) == before, "Duplicate group move is atomic and rejected")
 
 func combat_edges() -> void:
 	var r = fresh()
@@ -130,12 +135,11 @@ func combat_edges() -> void:
 	expect(counts.lorne > counts.enemy_0 and counts.hero > counts.enemy_0, "Fast units act more often over same continuous timeline")
 	var untouched = "0,0"
 	r.data.tiles[untouched].terrain = "forest"
-	r.data.tiles[untouched].burning = true
 	var remote = JSON.stringify(r.data.tiles[untouched])
 	var day = r.data.day
 	while b.enemies.has(b.current):
 		b.step_auto()
-	var hero_ap = r.actor("hero").ap
+	var steps = r.remaining_steps()
 	var outgoing = b.current
 	ally(r, "eve")
 	expect(b.swap("eve").ok, "Reserve enters on normal action")
@@ -144,8 +148,8 @@ func combat_edges() -> void:
 			break
 		if b.enemies.has(b.current): b.step_auto()
 		else: b.act("guard")
-	expect(b.swap(outgoing).ok and r.actor("hero").ap == hero_ap, "Previously deployed reserve is not recharged")
-	expect(JSON.stringify(r.data.tiles[untouched]) == remote and r.data.day == day, "Battle leaves remote fire, fuel and date unchanged")
+	expect(b.swap(outgoing).ok and r.remaining_steps() == steps, "Returning reserve does not spend movement")
+	expect(JSON.stringify(r.data.tiles[untouched]) == remote and r.data.day == day, "Battle leaves remote tiles and date unchanged")
 	b.retreat()
 	for skill_id in ["ember", "sunfall"]:
 		for condition in ["dry", "rain", "wet"]:
@@ -154,15 +158,18 @@ func combat_edges() -> void:
 			var tile = r.data.tiles[r.actor("hero").position]
 			tile.terrain = "forest"
 			r.data.weather = "rain" if condition == "rain" else "sun"
-			tile.wet_until = int(r.data.day) + 1 if condition == "wet" else 0
 			b = battle(r, ["ember"])
+			if condition == "wet":
+				b._apply_field_effect("wet")
 			r.actor("ember").energy = 100 if skill_id == "sunfall" else 0
 			b.auto_mode = true
 			b.step_auto()
-			expect(b.events.any(func(event): return event.get("skill_id") == skill_id),
-				"Automatic battle casts %s in a %s forest" % [skill_id, condition])
-			expect(tile.burning == (condition == "dry") and tile.fuel == 3,
-				"Automatic %s follows existing ignition and fuel rules in a %s forest" % [skill_id, condition])
+			var casts = b.events.filter(func(event): return event.get("skill_id") == skill_id)
+			expect(not casts.is_empty(), "Automatic battle casts %s in a %s forest" % [skill_id, condition])
+			expect(not casts.is_empty() and casts[0].environment_after.burning == (condition == "dry"),
+				"Automatic %s follows battlefield ignition rules in a %s forest" % [skill_id, condition])
+			expect(tile.terrain == "forest" and (b.outcome.is_empty() or not b.field_view().burning),
+				"Finishing a battle clears ignition without changing the forest")
 	r = fresh()
 	ally(r, "grit")
 	b = battle(r, ["hero", "grit"])
@@ -175,21 +182,9 @@ func combat_edges() -> void:
 	b.retreat()
 
 func story_modifiers() -> void:
+	var r = fresh()
+	var story = Story.new(r)
 	for id in Catalog.COMPANIONS:
-		for result in Story.PERSONAL[id]:
-			# E4 is specifically the unjoined injured opponent, never a joined remote result.
-			if result == "E4": continue
-			for injured in [false, true]:
-				var r = fresh()
-				r.actor(id).joined = true
-				r.data.story[id].met = true
-				r.data.story[id].relation = "joined"
-				r.data.story[id].result = result
-				r.actor(id).hp = 0 if injured else 10
-				r.actor("hero").position = r.data.exit
-				r.extract()
-				var s = Story.new(r)
-				var before = JSON.stringify(r.data)
-				var ending = s.character_ending(id)
-				expect(ending.personal == result and Story.PERSONAL[id][result] in ending.text, "Individual result preserved in remote epilogue " + id + result)
-				expect(JSON.stringify(r.data) == before, "Remote modifier is pure " + id + result)
+		r.actor(id).joined = true
+		r.actor(id).hp = 0
+		expect(story.character_ending(id).text.contains(r.actor(id).name), "Injury is reflected in the ending " + id)

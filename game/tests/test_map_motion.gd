@@ -1,5 +1,5 @@
 extends SceneTree
-## Real legal movement with queued presentation; fixture joins only for crowded-layout checks.
+## Real legal movement with queued presentation.
 const Main = preload("res://scenes/main.tscn")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")
@@ -31,52 +31,6 @@ func click_map_cell(game: Node, cell: String) -> void:
 	var point: Vector2 = game.view.camera.unproject_position(center)
 	pointer_button(MOUSE_BUTTON_LEFT, true, point)
 	pointer_button(MOUSE_BUTTON_LEFT, false, point)
-
-func check_map_squad_selection(game: Node) -> void:
-	game._start_new()
-	var run = game.run
-	var hero = run.actor("hero")
-	var lorne = run.actor("lorne")
-	var grit = run.actor("grit")
-	var start: String = hero.position
-	var distant: String = grit.position
-	var adjacent: String = Hex.neighbors(start, run.data.tiles).filter(func(id):
-		var tile = run.data.tiles[id]
-		return Hex.is_land(run.data.tiles, id) and tile.npc.is_empty() and tile.enemies.is_empty())[0]
-	for id in ["lorne", "grit"]:
-		run.actor(id).position = start
-		run.join_companion(id)
-	lorne.position = adjacent
-	grit.position = distant
-	run.reveal(adjacent)
-	run.reveal(distant)
-	game._refresh()
-	await process_frame
-
-	var before = JSON.stringify(run.data)
-	game.view.focus_cell(distant)
-	click_map_cell(game, distant)
-	expect(game.selected_id == "grit" and game.moving_ids == ["grit"] and not game.move_preview.visible,
-		"Clicking a distant squad selects it without previewing a move")
-	game.view.focus_cell(start)
-	click_map_cell(game, start)
-	var focus: Vector3 = game.view.focus_point
-	click_map_cell(game, adjacent)
-	expect(game.selected_id == "lorne" and game.selected_cell == adjacent and game.moving_ids == ["lorne"]
-		and game.view.focus_point == focus and not game.move_preview.visible and JSON.stringify(run.data) == before,
-		"One click switches to an adjacent squad without panning or spending effort")
-	click_map_cell(game, start)
-	click_map_cell(game, start)
-	click_map_cell(game, adjacent)
-	expect(game.selected_id == "hero" and game.move_preview.visible and JSON.stringify(run.data) == before,
-		"Clicking the current squad first previews movement onto an ally's hex")
-	var hero_ap: int = hero.ap
-	var ally_ap: int = lorne.ap
-	var cost: int = run.move_cost("hero", adjacent)
-	click_map_cell(game, adjacent)
-	expect(game.selected_id == "hero" and hero.position == adjacent and hero.ap == hero_ap - cost
-		and lorne.position == adjacent and lorne.ap == ally_ap and not game.move_preview.visible,
-		"Confirming the preview moves and charges only the current squad")
 
 func check_camera_drag(game: Node, start: String, next: String) -> void:
 	var view = game.view
@@ -155,19 +109,19 @@ func check_camera_drag(game: Node, start: String, next: String) -> void:
 	expect(is_equal_approx(view.camera.size, normal_zoom), "Continuing an expedition starts at the default view")
 	expect(view.fog_reveals.get_child_count() == 0, "Loading explored terrain does not animate fog")
 	point = view.camera.unproject_position(Hex.world(next) + Vector3.UP * 0.05)
-	var before_ap = int(game.run.actor("hero").ap)
-	var cost = game.run.move_cost("hero", next)
+	var before_steps = game.run.remaining_steps()
 	var initial_focus: Vector3 = view.focus_point
 	var far_fog = view.board_fog.get_node("Chunk_2_0")
 	var far_mesh = far_fog.mesh
 	for i in range(2):
 		pointer_button(MOUSE_BUTTON_LEFT, true, point)
 		pointer_button(MOUSE_BUTTON_LEFT, false, point)
-	expect(game.run.actor("hero").position == next and game.run.actor("hero").ap == before_ap - cost
-		and not game.move_preview.visible, "Clicking the same hex twice moves and charges once")
+	expect(game.run.actor("hero").position == next and game.run.remaining_steps() == before_steps - 1
+		and not game.move_preview.visible, "Clicking the same hex twice moves and counts one step")
 	expect(view.focus_point.is_equal_approx(initial_focus), "Confirming movement does not jump the camera")
 	expect(far_fog.mesh == far_mesh, "Movement does not rebuild distant fog")
 	expect(view.fog_reveals.get_child_count() == 1, "A move starts one veil over its newly revealed hexes")
+	expect(game.modal_layer.get_child_count() == 0 and view.visible, "Two real map clicks start walking with the map still visible")
 	var veil = view.fog_reveals.get_child(0) if view.fog_reveals.get_child_count() > 0 else null
 	var material: ShaderMaterial = veil.material_override if veil != null else null
 	expect(material != null and is_zero_approx(material.get_shader_parameter("progress")), "The reveal starts fully opaque")
@@ -176,16 +130,22 @@ func check_camera_drag(game: Node, start: String, next: String) -> void:
 	var dissolve_seen = false
 	var destination = Hex.world(next)
 	var deadline = Time.get_ticks_msec() + 3000
-	while (is_instance_valid(view.map_follow_actor) or is_instance_valid(veil)) and Time.get_ticks_msec() < deadline:
+	while (game.map_traveling or is_instance_valid(veil)) and Time.get_ticks_msec() < deadline:
 		await process_frame
 		if mover.is_moving() and view.focus_point.distance_to(initial_focus) > 0.15 and view.focus_point.distance_to(destination) > 0.15:
-			midpoint_seen = true
+			midpoint_seen = game.modal_layer.get_child_count() == 0 and view.visible
 		if not dissolve_seen and is_instance_valid(veil):
 			var progress: float = material.get_shader_parameter("progress")
 			if progress > 0.3 and progress < 0.85:
 				dissolve_seen = true
 				await RenderingServer.frame_post_draw
 				root.get_texture().get_image().save_png("user://fog-reveal-mid.png")
+	expect(game.modal_layer.has_node("StoryScreen") and not mover.is_moving(), "The first-arrival story waits for walking to finish")
+	for button in game.modal_layer.find_children("*", "Button", true, false):
+		if button.text == "返回地图":
+			button.pressed.emit()
+			break
+	await process_frame
 	expect(midpoint_seen and view.focus_point.is_equal_approx(destination), "Camera follows the walking doll and settles on arrival")
 	expect(dissolve_seen and not is_instance_valid(veil), "The reveal fades through intermediate opacity and then removes its veil")
 	await RenderingServer.frame_post_draw
@@ -201,16 +161,18 @@ func execute() -> void:
 	game.set_process(false)
 	var run = game.run
 	var start = run.actor("hero").position
-	var next = Hex.neighbors(start,run.data.tiles)[0]
+	var safe_neighbors = Hex.neighbors(start, run.data.tiles).filter(func(cell):
+		return Hex.is_land(run.data.tiles, cell) and run.data.tiles[cell].npc.is_empty() and run.data.tiles[cell].enemies.is_empty())
+	var next = safe_neighbors[0]
 	await process_frame
 	await check_camera_drag(game, start, next)
 	var doll = game.view.dolls.hero
-	expect(run.move(["hero"],next).ok,"First legal movement")
+	expect(run.move(next).ok,"First legal movement")
 	game._refresh()
 	var waypoint = doll.movement_target
 	var next2 = Hex.neighbors(next,run.data.tiles)[0]
 	if next2==start: next2 = Hex.neighbors(next,run.data.tiles)[1]
-	expect(run.move(["hero"],next2).ok,"Second legal movement while the first is animating")
+	expect(run.move(next2).ok,"Second legal movement while the first is animating")
 	game._refresh()
 	var destination = doll.movement_queue[-1]
 	var state = JSON.stringify(run.data)
@@ -228,13 +190,7 @@ func execute() -> void:
 		run.join_companion(id)
 	game._refresh()
 	await create_timer(0.2).timeout
-	var ids = run.joined_ids()
-	for i in range(ids.size()):
-		for j in range(i+1,ids.size()):
-			expect(game.view.dolls[ids[i]].position.distance_to(game.view.dolls[ids[j]].position)>0.45,"Crowded cell separates actor bases")
-	await RenderingServer.frame_post_draw
-	root.get_texture().get_image().save_png("user://map-seven-actors.png")
-	await check_map_squad_selection(game)
+	expect(game.view.dolls.keys() == ["hero"], "Recruited companions do not add extra figures to the map")
 	game.queue_free()
 	await create_timer(0.1).timeout
 	print("MAP MOTION: %d checks, %d failures" % [checks,failures])

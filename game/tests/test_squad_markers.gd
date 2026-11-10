@@ -1,148 +1,109 @@
 extends SceneTree
 const Main = preload("res://scenes/main.tscn")
 const Hex = preload("res://scripts/domain/hex_map.gd")
-const Markers = preload("res://scripts/presentation/squad_markers.gd")
-var failures = 0
 var checks = 0
-func _initialize() -> void: call_deferred("execute")
-func expect(value: bool, label: String) -> void:
+var failures = 0
+
+func _initialize() -> void:
+	call_deferred("execute")
+
+func expect(value: bool, message: String) -> void:
 	checks += 1
 	if not value:
 		failures += 1
-		printerr("FAIL: ", label)
-func capture(name: String) -> void:
-	if "--capture" in OS.get_cmdline_user_args():
-		await RenderingServer.frame_post_draw
-		var directory = ProjectSettings.globalize_path("res://../test-results")
-		DirAccess.make_dir_recursive_absolute(directory)
-		root.get_texture().get_image().save_png(directory.path_join(name + ".png"))
+		printerr("FAIL: ", message)
+
+func has_label(parent: Node, text: String) -> bool:
+	return parent.find_children("*", "Label", true, false).any(func(label): return text in label.text)
+
+func expect_stamina(game: Node, remaining: int) -> void:
+	var tracks = game.ui.find_children("CrewStamina", "HBoxContainer", true, false)
+	expect(tracks.size() == 1 and tracks[0].get_child_count() == 5, "Five segments appear once for the whole party")
+	if tracks.size() != 1:
+		return
+	for index in tracks[0].get_child_count():
+		var style: StyleBoxFlat = tracks[0].get_child(index).get_theme_stylebox("panel")
+		expect(style.bg_color == Color("91c970" if index < remaining else "47604c"),
+			"Stamina segment %d reflects %d remaining steps" % [index + 1, remaining])
+
+func wait_for_arrival(game: Node) -> void:
+	var deadline = Time.get_ticks_msec() + 5000
+	while game.map_traveling and Time.get_ticks_msec() < deadline:
+		await process_frame
+	expect(not game.map_traveling, "Travel animation completes")
+
 func execute() -> void:
 	var game = Main.instantiate()
 	root.add_child(game)
 	await process_frame
+	game.sound.set_volume(0.0, false)
+	game.run.save_path = "user://test-hero-marker.json"
 	game._start_new()
+	game.set_process(false)
 	var run = game.run
-	var start: String = run.actor("hero").position
-	for id in ["lorne", "grit", "ember"]:
-		run.actor(id).position = start
-		run.join_companion(id)
-	game._select_actor("hero")
-	await process_frame
-	var markers = game.view.squad_markers
-	expect(markers.groups.size() == 1, "recruited crew share one squad")
-	expect(game.moving_ids.size() == 4, "selecting a squad selects its members")
-	game._cell_actions()
-	var split_button: Button
-	for button in game.modal_layer.find_children("*", "Button", true, false):
-		if button.text == "拆分小队": split_button = button
-	expect(split_button != null and not split_button.disabled, "action menu offers squad split")
-	split_button.pressed.emit()
-	await process_frame
-	var confirm: Button
-	for button in game.modal_layer.find_children("*", "Button", true, false):
-		if button.text == "组成新小队": confirm = button
-	expect(confirm != null and confirm.disabled, "empty split disabled")
-	for id in ["lorne", "grit"]:
-		game.modal_layer.find_child("SplitMember_" + id, true, false).button_pressed = true
-	expect(not confirm.disabled, "multiple members may form a squad")
-	await capture("squad-split-dialog")
-	confirm.pressed.emit()
-	await process_frame
-	expect(markers.groups.size() == 2, "explicit same-cell split keeps two arrows")
-	expect(run.squad_members("lorne").size() == 2, "chosen members persist in new squad")
-	expect(game.selected_id == "lorne", "new squad becomes selected")
-	expect(game.ui.find_children("SquadFrame_*", "PanelContainer", true, false).size() == 2, "sidebar frames correspond to squads")
-	var hero_color = markers.color_for_actor("hero")
-	var split_color = markers.color_for_actor("lorne")
-	expect(hero_color != split_color, "split squads have distinct colors")
-	game._select_actor("hero")
-	await process_frame
-	expect(markers.color_for_actor("hero") == hero_color and markers.color_for_actor("lorne") == split_color, "selection preserves colors")
-	expect(markers.groups.filter(func(g): return g.selected).size() == 1, "one selected squad")
-	expect(markers.markers.size() == 2 and markers.markers[0].point.distance_to(markers.markers[1].point) >= 32, "same-cell arrows do not overlap")
-	var other_point: Vector2
-	for marker in markers.markers:
-		if marker.leader == "lorne": other_point = marker.point
-	for pressed in [true, false]:
-		var event = InputEventMouseButton.new()
-		event.button_index = MOUSE_BUTTON_LEFT
-		event.pressed = pressed
-		event.position = other_point
-		root.push_input(event, true)
-	await process_frame
-	expect(game.selected_id == "lorne", "clicking other same-cell arrow selects that squad")
-	game._select_actor("hero")
-	await process_frame
-	await capture("squad-same-cell")
-	game.view.zoom_size = 38
-	game.view._update_camera()
-	await process_frame
-	expect(markers.markers.size() == 2, "arrows survive maximum map zoom")
-	for marker in markers.markers:
-		expect(markers.pick(marker.point) == marker.leader, "each arrow is selectable")
-	await capture("squad-far-zoom")
-	run.actor("ember").hp = 0
-	game._select_actor("hero")
-	expect("ember" not in game.moving_ids, "injured members do not block default squad movement")
-	run.actor("ember").hp = run.actor("ember").hp_max
-	game._select_actor("hero")
-	game.view.zoom_size = 7.5
-	game.view._update_camera()
-	var destination: String = Hex.neighbors(start, run.data.tiles)[0]
-	run.data.tiles[destination].enemies = []
-	run.data.tiles[destination].terrain = "plains"
-	run.actor("lorne").position = destination
-	run.actor("grit").position = destination
+	var origin: String = run.actor("hero").position
+	var next: String = Hex.neighbors(origin, run.data.tiles).filter(func(cell): return Hex.is_land(run.data.tiles, cell))[0]
+	run.data.tiles[next].enemies.clear()
+	var colors = {"hero": "17161e", "ember": "773831", "tide": "24536e", "wind_runner": "376452"}
+	for id in ["ember", "tide", "wind_runner"]:
+		run.actor(id).position = origin
+		expect(run.join_companion(id).ok, "Recruit companion " + id)
+	# Treat recruitment reward stories as already read for this map-only check.
+	run.data.relic_intros.clear()
+	run.actor("hero").hp = 60
+	run.actor("hero").mp = 17
+	run.actor("hero").energy = 61
 	game._refresh()
-	await process_frame
-	var ground = Hex.world(destination)
-	ground.y = game.view.board_surface.height_at(ground) + 0.01
-	var target_point: Vector2 = game.view.camera.unproject_position(ground)
-	for pressed in [true, false]:
-		var event = InputEventMouseButton.new()
-		event.button_index = MOUSE_BUTTON_LEFT
-		event.pressed = pressed
-		event.position = target_point
-		root.push_input(event, true)
-	await process_frame
-	expect(game.move_target == destination and game.selected_id == "hero", "mouse click on occupied adjacent ground previews move instead of switching squad")
-	for pressed in [true, false]:
-		var event = InputEventMouseButton.new()
-		event.button_index = MOUSE_BUTTON_LEFT
-		event.pressed = pressed
-		event.position = target_point
-		root.push_input(event, true)
-	await process_frame
-	expect(run.actor("hero").position == destination, "second ground click confirms movement into occupied tile")
-	expect(game.moving_ids.size() == 4, "arrival merge updates next movement to entire merged squad")
+	for id in colors:
+		var member = game.ui.find_child("CrewMember_" + id, true, false)
+		expect(member is Button, "Roster row exists for " + id)
+		if member == null:
+			continue
+		var portrait: Panel = member.find_child("Portrait", true, false)
+		expect(portrait.get_theme_stylebox("panel").bg_color == Color(colors[id])
+			and portrait.get_child_count() == 1 and portrait.get_child(0).texture != null,
+			"Portrait uses the correct element color and character art for " + id)
+		expect(has_label(member, run.actor(id).name), "Character name appears in their portrait row")
+		var bars = member.find_children("*", "ProgressBar", true, false)
+		var actor = run.actor(id)
+		expect(bars.size() == 3 and bars[0].value == actor.hp and bars[0].max_value == actor.hp_max
+			and bars[1].value == actor.mp and bars[1].max_value == actor.mp_max and bars[2].value == actor.energy,
+			"Personal bars match the actor's health, magic and charge")
+	var ember_card: Button = game.ui.find_child("CrewMember_ember", true, false)
+	ember_card.pressed.emit()
+	expect(game.selected_id == "ember", "Clicking a portrait row selects its character")
+	expect(game.view.dolls.keys() == ["hero"], "Only the traveler is drawn on the map")
+	expect_stamina(game, 5)
+	game._select_cell(next)
+	expect(game.move_preview.visible and run.remaining_steps() == 5 and run.actor("hero").position == origin,
+		"Selecting a destination only previews the move")
+	game._select_cell(next)
+	expect(run.actor("hero").position == next and run.actor("ember").position == next
+		and game.selected_id == "hero" and run.remaining_steps() == 4, "The traveler leads both characters and spends one step")
+	expect_stamina(game, 4)
+	await wait_for_arrival(game)
+	expect(game.day_transition.get_child_count() == 0, "An ordinary step has no day notice")
 	game._close_modal()
-	# Restore two same-cell squads for the forest screenshot.
-	run.split_squad(["lorne", "grit"])
-	start = destination
-	game._select_actor("hero")
-	var generated: Dictionary = {}
-	for i in 100: generated[Markers.color_at(i).to_html()] = true
-	expect(generated.size() == 100, "palette extends beyond built-in crew count")
-	game.view.hide()
-	expect(not markers.visible, "markers hidden with story/menu world")
-	game.view.show()
-	game.view.battle_mode = true
-	await process_frame
-	await process_frame
-	expect(not markers.visible, "exploration markers hidden in battle")
-	game.view.battle_mode = false
-	game.view.zoom_size = 7.5
-	game.view._update_camera()
-	game._select_actor("hero")
-	await process_frame
-	# A forest fixture verifies overlay arrows are independent of tree opacity.
-	for cell in run.data.explored:
-		run.data.tiles[cell].terrain = "forest"
-	game.view.reset()
+	run.data.steps_today = run.STEPS_PER_DAY - 1
 	game._refresh()
-	game.view.focus_cell(start)
-	await process_frame
-	await capture("squad-forest")
-	print("Squad markers: %d checks, %d failures" % [checks, failures])
+	expect_stamina(game, 1)
+	game._select_cell(origin)
+	game._select_cell(origin)
+	expect(run.data.day == 2 and has_label(game.ui, "第 1 天") and game.day_transition.get_child_count() == 0,
+		"The final step commits the new day while the old date stays visible until arrival")
+	expect_stamina(game, 1)
+	await wait_for_arrival(game)
+	expect(has_label(game.ui, "第 2 天"), "Arrival updates the date")
+	expect_stamina(game, 5)
+	expect(game.day_transition.has_node("MapNotice") and has_label(game.day_transition, "精力已恢复"),
+		"Arrival shows the full map notice")
+	await create_timer(1.6).timeout
+	expect(game.day_transition.get_child_count() == 0, "The notice dismisses itself")
+	game._cell_actions()
+	for button in game.modal_layer.find_children("*", "Button", true, false):
+		expect(button.text not in ["拆分小队", "结束一天"] and not button.text.begins_with("治疗队友"), "Removed actions stay absent")
+	for suffix in ["", ".bak", ".tmp"]:
+		DirAccess.remove_absolute(run.save_path + suffix)
 	game.free()
+	print("HERO MAP UI: %d checks, %d failures" % [checks, failures])
 	quit(1 if failures else 0)

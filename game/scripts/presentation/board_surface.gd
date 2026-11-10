@@ -13,7 +13,7 @@ const CHUNK_SIZE = 3
 const BLEND_RADIUS_SQUARED = 2.19
 const LAND_LEVELS = {
 	"plains": 0.22, "forest": 0.26, "mountain": 0.48, "ruins": 0.29,
-	"desert": 0.29, "swamp": 0.072, "scorched": 0.26,
+	"desert": 0.29, "swamp": 0.072,
 }
 const UNKNOWN = ["unknown", 0.08, Color("788880")]
 const SEA = ["sea", -0.83, Color("8e9f84")]
@@ -224,7 +224,7 @@ func sample(point: Vector3) -> Array:
 	var stone = clampf(mountain + ruins * 0.65, 0.0, 1.0)
 	var tint = Color(pigment.x, pigment.y, pigment.z, lake / maxf(lake + sea, 0.0001))
 	var result = [Vector3(point.x, maxf(WATER_LEVEL, height), point.z),
-		tint, Vector2(sand, stone), Vector2(marsh, WATER_LEVEL - height)]
+		tint, Vector2(sand, stone), Vector2(marsh, WATER_LEVEL - height), mountain]
 	cached_samples[key] = result
 	if not sample_cells.has(cell):
 		sample_cells[cell] = []
@@ -265,6 +265,7 @@ func _build_cell(id: String) -> Array:
 	var colors := PackedColorArray()
 	var uv := PackedVector2Array()
 	var uv2 := PackedVector2Array()
+	var mountains := PackedFloat32Array()
 	for offset in template:
 		if fog:
 			var point = center + offset
@@ -281,6 +282,7 @@ func _build_cell(id: String) -> Array:
 			colors.append(surface[1])
 			uv.append(surface[2])
 			uv2.append(surface[3])
+			mountains.append(surface[4])
 	if not fog:
 		normals = _cell_normals(vertices)
 	if profiles.has(id):
@@ -290,7 +292,7 @@ func _build_cell(id: String) -> Array:
 		triangles[id] = faces
 	else:
 		triangles.erase(id)
-	return [fog, vertices, normals, colors, uv, uv2]
+	return [fog, vertices, normals, colors, uv, uv2, mountains]
 
 func _cell_normals(vertices: PackedVector3Array) -> PackedVector3Array:
 	var normals := PackedVector3Array()
@@ -324,6 +326,7 @@ func _build_chunk(ids: Array, layer: SurfaceLayer, fringe_masks: Dictionary = {}
 	var colors := PackedColorArray()
 	var uv := PackedVector2Array()
 	var uv2 := PackedVector2Array()
+	var mountains := PackedFloat32Array()
 	var indices := PackedInt32Array()
 	for id in ids:
 		var cell: Array = cell_surfaces[id]
@@ -354,6 +357,8 @@ func _build_chunk(ids: Array, layer: SurfaceLayer, fringe_masks: Dictionary = {}
 			colors.append_array(cell[3])
 			uv.append_array(cell[4])
 			uv2.append_array(cell[5])
+			if layer == SurfaceLayer.GROUND:
+				mountains.append_array(cell[6])
 		for index in template_indices:
 			indices.append(base + index)
 	if vertices.is_empty():
@@ -368,8 +373,10 @@ func _build_chunk(ids: Array, layer: SurfaceLayer, fringe_masks: Dictionary = {}
 	if layer == SurfaceLayer.GROUND:
 		arrays[Mesh.ARRAY_NORMAL] = normals
 		arrays[Mesh.ARRAY_COLOR] = colors
+		arrays[Mesh.ARRAY_CUSTOM0] = mountains
 	var mesh := ArrayMesh.new()
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var flags = (Mesh.ARRAY_CUSTOM_R_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT) if layer == SurfaceLayer.GROUND else 0
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {}, flags)
 	return mesh
 
 func pick(origin: Vector3, direction: Vector3) -> String:
