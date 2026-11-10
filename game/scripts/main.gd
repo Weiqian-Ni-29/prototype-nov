@@ -222,7 +222,7 @@ func _refresh() -> void:
 		_summary(screen)
 		_footer(screen)
 	else:
-		_crew_panel(screen)
+		_crew_panel()
 		if not move_target.is_empty() and modal_layer.get_child_count() == 0:
 			_show_move_preview()
 
@@ -423,8 +423,11 @@ func _expedition_objective() -> String:
 	][int(run.data.chapter)]
 
 
-func _crew_panel(screen: Vector2) -> void:
-	var box = _panel(ui, Rect2(20, 120, 244, 56 if crew_collapsed else screen.y - 275))
+func _crew_panel() -> void:
+	var box = _panel(ui, Rect2(20, 120, 288, 56))
+	if not crew_collapsed:
+		var panel: PanelContainer = box.get_parent()
+		panel.set_anchor_and_offset(SIDE_BOTTOM, 1.0, -20.0)
 	var heading = HBoxContainer.new()
 	box.add_child(heading)
 	_text(heading, "远征队", 24, gold).vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -470,7 +473,7 @@ func _crew_member(parent: VBoxContainer, id: String) -> void:
 	var a = run.actor(id)
 	var button = _button(parent, "", _select_actor.bind(id))
 	button.name = "CrewMember_" + id
-	button.custom_minimum_size.y = 82
+	button.custom_minimum_size.y = 106
 	button.accessibility_name = a.name
 	if a.hp <= 0:
 		button.tooltip_text = "%s · 重伤" % a.name
@@ -489,7 +492,7 @@ func _crew_member(parent: VBoxContainer, id: String) -> void:
 
 	var identity = VBoxContainer.new()
 	identity.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	identity.custom_minimum_size.x = 61
+	identity.custom_minimum_size.x = 80
 	identity.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	identity.add_theme_constant_override("separation", 2)
 	content.add_child(identity)
@@ -498,7 +501,7 @@ func _crew_member(parent: VBoxContainer, id: String) -> void:
 	var portrait = Panel.new()
 	portrait.name = "Portrait"
 	portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	portrait.custom_minimum_size.y = 54
+	portrait.custom_minimum_size.y = 72
 	portrait.add_theme_stylebox_override("panel", _style(background, background.lightened(0.30), 5))
 	identity.add_child(portrait)
 	var texture = _story_portrait(str(a.get("portrait", id)))
