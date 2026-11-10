@@ -312,7 +312,10 @@ func check_arrival_after_victory() -> void:
 	if cells.is_empty():
 		return
 	var cell: String = cells[0]
+	var event = Nodes.story(run.node_at(cell))
 	var from: String = Hex.neighbors(cell, run.data.tiles).filter(func(id): return Hex.is_land(run.data.tiles, id))[0]
+	run.data.tiles[cell].hidden = true
+	run.data.tiles[cell].discovered_enemy = false
 	run.actor("hero").position = from
 	run.reveal(from)
 	game._select_actor("hero")
@@ -320,9 +323,18 @@ func check_arrival_after_victory() -> void:
 	game._select_cell(cell)
 	expect(game.modal_layer.get_child_count() == 0, "The encounter does not interrupt movement")
 	await wait_for_map_arrival()
-	expect(find_button(game.modal_layer, "开始战斗") != null and run.data.get("pending_arrival", {}).get("cell") == cell,
-		"An encounter takes precedence and remembers the new tile")
+	expect(game.modal_layer.has_node("StoryScreen") and find_button(game.modal_layer, "开始战斗") == null
+		and run.data.get("pending_arrival", {}).get("cell") == cell,
+		"Arriving at an encounter opens its story before formation and remembers the new tile")
+	var pending: Dictionary = run.data.pending_battle.duplicate(true)
+	expect(pending.origin == from and pending.ambush, "The encounter records the original retreat tile and ambush")
 	game._continue_run()
+	var introduction = await read_to_choices(func(): return game.combat == null and run.data.pending_battle == pending)
+	expect(compact(introduction).contains(compact(event.intro)) and introduction.contains("抢先扑了出来"),
+		"Resuming an encounter presents its complete node introduction and ambush before formation")
+	await click("选择出战阵容")
+	expect(not game.modal_layer.has_node("StoryScreen") and run.data.pending_battle == pending,
+		"Confirming the introduction preserves the encounter and opens formation")
 	await press("开始战斗")
 	game.combat._finish("victory")
 	game._finish_battle()
@@ -331,6 +343,28 @@ func check_arrival_after_victory() -> void:
 	expect(game.modal_layer.has_node("StoryScreen") and contains_text(game.modal_layer, run.location_name(cell)),
 		"After resuming from victory, continuing opens the arrival story")
 	await click("返回地图")
+
+func check_manual_encounter_intro() -> void:
+	game._start_new()
+	var run = game.run
+	var cells = run.data.nodes.keys().filter(func(cell):
+		return run.node_at(cell).kind == "elite" and not run.data.tiles[cell].enemies.is_empty())
+	expect(not cells.is_empty(), "Manual encounter fixture has an elite node")
+	if cells.is_empty():
+		return
+	var cell: String = cells[0]
+	var event = Nodes.story(run.node_at(cell))
+	run.actor("hero").position = cell
+	run.reveal(cell)
+	run.data.tiles[cell].discovered_enemy = true
+	game._select_actor("hero")
+	await click("行动")
+	await click("查看遭遇剧情")
+	var introduction = await read_to_choices()
+	expect(compact(introduction).contains(compact(event.intro)) and find_button(game.modal_layer, "开始战斗") == null,
+		"Opening a known elite encounter from the action menu reads its story first")
+	await click("选择出战阵容")
+	expect(find_button(game.modal_layer, "开始战斗") != null, "The elite introduction opens formation")
 
 func check_haunt_dialogue() -> void:
 	game._start_new()
@@ -961,6 +995,7 @@ func execute() -> void:
 	await check_node_dialogs()
 	await check_node_arrival()
 	await check_arrival_after_victory()
+	await check_manual_encounter_intro()
 	await check_familiarity_dialogue()
 	await check_final_reveal()
 	await check_haunt_dialogue()

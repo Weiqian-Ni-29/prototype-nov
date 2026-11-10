@@ -341,7 +341,7 @@ func _continue_run() -> void:
 	view.focus_cell(selected_cell)
 	_refresh()
 	if not run.data.pending_battle.is_empty():
-		_formation_dialog()
+		_show_encounter_intro()
 	elif run.data.has("pending_victory"):
 		_victory_dialog()
 	elif run.data.status == "exploring":
@@ -458,12 +458,13 @@ func _cell_actions() -> void:
 	var t = run.data.tiles[cell]
 	var node = run.node_at(cell)
 	var title = _node_title(cell)
+	var has_encounter = run.knows_encounter(cell)
 	var dialog = _modal(title, 570, 580)
 	var box = _scroll_content(dialog)
 	_text(box, "%s · 坐标 %s" % [Catalog.terrain_name(t.terrain), cell], 14, muted)
-	if (t.site.is_empty() or (t.site == "boss" and not run.boss_known())) and not Nodes.story(node).is_empty():
+	if not has_encounter and (t.site.is_empty() or (t.site == "boss" and not run.boss_known())) and not Nodes.story(node).is_empty():
 		_button(box, "查看节点剧情", _node_dialog)
-	if run.knows_encounter(cell):
+	if has_encounter:
 		_text(box, "决战 · 已平息 %d 处纷争" % run.data.peace.size() if t.enemies.has("war_god") else "驻守敌人", 18, Color("e4ab87"))
 		_text(box, "每场最多四名队员同时出战。", 14, muted)
 		for enemy in t.enemies:
@@ -474,7 +475,7 @@ func _cell_actions() -> void:
 		var requires_hero = t.enemies.has("war_god") and "hero" not in run.same_cell(cell, true)
 		if requires_hero:
 			_text(box, "旅人必须亲自迎战。", 15, muted)
-		_button(box, "选择阵容并交战", _open_current_encounter, run.same_cell(cell, true).is_empty() or requires_hero)
+		_button(box, "查看遭遇剧情", _open_current_encounter, run.same_cell(cell, true).is_empty() or requires_hero)
 	if t.npc != "" and t.npc != selected_id and run.actor(t.npc).position == cell and t.enemies.is_empty():
 		var npc = run.actor(t.npc)
 		_text(box, npc.name + " · " + npc.title, 18)
@@ -594,7 +595,7 @@ func _node_choice(option: String) -> void:
 		"talk":
 			_talk(run.data.tiles[run.actor(selected_id).position].npc)
 		"fight":
-			_open_current_encounter()
+			_open_current_encounter(false)
 		_:
 			var result = run.use_node(selected_id, option)
 			_run_action(result)
@@ -741,7 +742,7 @@ func _move_selected() -> void:
 	map_traveling = false
 	_update_world_input()
 	if result.get("battle", false):
-		_formation_dialog()
+		_show_encounter_intro()
 	else:
 		_show_arrival()
 
@@ -1199,27 +1200,46 @@ func _item_dialog(user_id: String, item_id: String = "") -> void:
 	else:
 		_button(box, "用完了，返回", _close_modal)
 
-func _open_current_encounter() -> void:
+func _open_current_encounter(show_intro: bool = true) -> void:
 	var cell: String = run.actor(selected_id).position
 	run.data.pending_battle = {"position": cell, "ambush": false, "origin": cell, "npc": ""}
 	run.save_game()
-	_formation_dialog()
+	if show_intro:
+		_show_encounter_intro()
+	else:
+		_formation_dialog()
+
+func _show_encounter_intro() -> void:
+	var encounter: Dictionary = run.data.pending_battle
+	if not encounter.npc.is_empty():
+		_formation_dialog()
+		return
+	var cell: String = encounter.position
+	var tile: Dictionary = run.data.tiles[cell]
+	var node = run.node_at(cell)
+	var title = _node_title(cell)
+	var body: String
+	var portraits: Array = [_story_portrait(selected_id, "serious")]
+	if tile.enemies.has("war_god"):
+		title += " · 战鼓"
+		body = "鼓声从营里传来。你在路上听过同样的鼓点，每响一下，那些想逃走的士兵就握紧了手里的武器。现在鼓就在眼前。卡德兰挡在通往鼓台的路上，伸手取下了自己的兵器。"
+		portraits.append(_story_portrait("war_god", "serious"))
+	else:
+		var event = Nodes.story(node)
+		if node.get("kind") in ["battle", "elite"] and not event.is_empty():
+			title += " · " + str(event.title)
+			body = str(event.intro)
+		else:
+			var enemies = "、".join(tile.enemies.map(func(id): return Catalog.ENEMIES[id].name))
+			body = "%s挡住了去路。你停下脚步，握紧了武器。" % enemies
+		if encounter.ambush:
+			body += "\n\n敌人从遮蔽物后抢先扑了出来。"
+	_show_story(title, "旁白", body, _story_scene_at(cell), portraits,
+		[_node_option("formation", "选择出战阵容")], func(_option: String): _formation_dialog(), {}, _node_tint())
 
 func _formation_dialog() -> void:
 	var encounter = run.data.pending_battle
 	var box = _modal("选择出战阵容 · 最多四人", 700, 620)
-	var node = run.node_at(encounter.position)
-	if encounter.npc.is_empty() and node.get("kind") in ["battle", "elite"]:
-		var event = Nodes.story(node)
-		var tile = run.data.tiles[encounter.position]
-		var scene = TextureRect.new()
-		scene.texture = load("res://assets/story/" + STORY_TERRAIN[tile.terrain] + ".png")
-		scene.custom_minimum_size.y = 86
-		scene.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		scene.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-		scene.modulate = _node_tint()
-		box.add_child(scene)
-		_text(box, "%s · %s\n%s" % [_node_title(encounter.position), event.title, _node_description(node, tile, event)], 15, gold)
 	_text(box, "最多四名队员同时出战，其他能行动的队员可以做候补。", 17, muted)
 	var chosen: Array = []
 	var lineup = _scroll_content(box)
