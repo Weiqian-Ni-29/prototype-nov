@@ -473,16 +473,19 @@ func capture_branch_examples() -> void:
 	if not await await_story_choices():
 		return
 	await click_story_button(event.investigation_label)
-	await capture_story_body("node-haunt-investigation", event.investigation + "\n已把这里的线索记进手记。")
+	await capture_story_body("node-haunt-investigation", event.investigation)
 	expect(run.node_at(cell).get("investigated", false) and run.node_at(cell).result == ""
-		and not run.data.peace.has(cell) and not game.modal_layer.has_node("StoryScreen/StoryChoices"),
-		"Investigation is rendered before offering settlement")
+		and not run.data.peace.has(cell) and game.modal_layer.has_node("StoryScreen/StoryChoices"),
+		"Reading the full investigation exposes settlement once without resolving it")
 	if not await await_story_choices():
 		return
 	await click_story_button(event.alternative)
 	await capture_story_body("node-haunt-alternative-conclusion",
-		"旅人顺着灵魂牵动的方向伸手，周围的碎石微微浮起。一条肉眼看不见的归路，在亡者面前展开。\n\n"
-		+ event.alternative_resolved + "\n已把这里的线索记进手记。\n亡者的告别与留下的安排已记入手记。")
+		"送别时，旅人掌心传来轻微的牵引，引着亡魂离开。\n\n" + event.alternative_resolved)
+	expect(not game.modal_layer.has_node("StoryScreen/StoryChoices"), "The narrative is separate from the action result")
+	await advance_story()
+	await capture_story_body("node-haunt-action-result", "这次送别已记入手记。")
+	expect(game.modal_layer.has_node("StoryScreen/StoryChoices"), "The action result offers the return after the full conclusion")
 	expect(run.node_at(cell).result == "settle_alternative", "Haunting screenshot follows the actual second settlement click")
 	game._close_modal()
 	run.data.status = "won"
@@ -568,7 +571,7 @@ func capture_finale() -> void:
 	expect(game.modal_layer.has_node("StoryScreen") and battle.reveal_pending and not battle.river,
 		"The old strike triggers the flashback before the river")
 	await capture("story-final-memory")
-	await advance_until_text("你把冥河引到战场")
+	await advance_until_text("冥河在卡德兰脚下涌出")
 	await capture("story-final-river")
 	await finish_linear_story()
 	await process_frame

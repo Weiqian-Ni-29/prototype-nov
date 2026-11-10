@@ -4,6 +4,7 @@ const Catalog = preload("res://scripts/domain/catalog.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
+const Combat = preload("res://scripts/domain/battle.gd")
 var game: Node
 var checks = 0
 var failures: Array[String] = []
@@ -397,6 +398,14 @@ func check_personal_dialogue() -> void:
 	expect(person.joined and "lorne" in game.moving_ids, "Actual recruitment checks the companion into the squad")
 	var acceptance = await read_to_choices()
 	expect(story_speaker() == "洛恩" and acceptance.contains(Story.CHARACTER_BEHAVIOR.lorne[1]), "Recruitment receives an answer from the companion")
+	var before_past = run.data.duplicate(true)
+	await click(option_label(game.narrative.dialogue("hero", "lorne"), "past"))
+	expect(story_speaker() == "旅人", "The player asks about the past before receiving it")
+	await click_story_blank()
+	var past = await read_to_choices()
+	expect(compact(past).contains(compact(Story.BACKGROUNDS.lorne)) and story_speaker() == "洛恩",
+		"The background is readable in its own paginated response")
+	expect(run.data == before_past, "Reading the background spends nothing and chooses no personal branch")
 	var quest = game.narrative.personal_quest("hero", "lorne")
 	var second = option_label(quest, "personal_b")
 	var first = option_label(quest, "personal_a")
@@ -446,10 +455,14 @@ func check_personal_dialogue() -> void:
 	await read_to_choices()
 	await click("和洛恩交谈")
 	var recalled = await read_to_choices()
-	expect(recalled.contains(response), "Normal conversation recalls the decision after reopening")
+	expect(not recalled.contains(response), "Normal conversation does not replay the completed decision")
+	await click(option_label(game.narrative.dialogue("hero", "lorne"), "quest"))
+	await click_story_blank()
+	var review = await read_to_choices()
+	expect(review.contains(response), "The separate review keeps the decision after reopening")
 	expect(find_button(game.modal_layer, first) == null and find_button(game.modal_layer, second) == null,
 		"Reopened conversation cannot select either branch again")
-	var farewell = option_label(game.narrative.dialogue("hero", "lorne"), "leave")
+	var farewell = option_label(game.narrative.personal_quest("hero", "lorne"), "leave")
 	await click(farewell)
 	expect(story_speaker() == "旅人" and dialogue_contains(farewell), "Farewell is the player's line")
 	await click_story_blank()
@@ -782,6 +795,79 @@ func check_story_pagination() -> void:
 	game._close_modal()
 	await check_pagination_helpers()
 
+func check_familiarity_dialogue() -> void:
+	game._start_new()
+	var run = game.run
+	var person = run.actor("ember")
+	run.actor("hero").position = person.position
+	run.data.tiles[person.position].enemies.clear()
+	run.reveal(person.position)
+	game._select_actor("hero")
+	game._begin_dialogue("ember")
+	await read_to_choices()
+	await click(option_label(game.narrative.dialogue("hero", "ember"), "join"))
+	var idle = await read_to_choices()
+	expect(person.joined and run.relic_intro().is_empty(), "Recruitment finishes its relic introduction before optional conversation")
+	expect(not idle.contains(Story.HERO_LINES.ember), "Idle conversation does not volunteer the protagonist hint")
+	var before = run.data.duplicate(true)
+	await click(option_label(game.narrative.dialogue("hero", "ember"), "echo"))
+	expect(story_speaker() == "旅人", "Only the present hero asks about their lost identity")
+	await click_story_blank()
+	var answer = await read_to_choices()
+	expect(answer.contains(Story.HERO_LINES.ember) and not answer.contains("伊文洛") and story_speaker() == "弥烬",
+		"The explicit identity question shows the complete hint without the final reveal")
+	expect(run.data == before, "Reading familiarity changes no resources or personal choice")
+	await click("结束交谈")
+	run.actor("lorne").position = person.position
+	expect(game.narrative.choose("hero", "lorne", "join").ok, "Recruit a local ordinary visitor")
+	game._select_actor("lorne")
+	game._begin_dialogue("ember")
+	var ordinary = await read_to_choices()
+	expect(not ordinary.contains(Story.HERO_LINES.ember)
+		and find_button(game.modal_layer, "你认得我吗？我想不起以前的事了。") == null,
+		"A teammate cannot ask the hero-only identity question")
+	await click("结束交谈")
+
+func check_final_reveal() -> void:
+	game._start_new()
+	var run = game.run
+	for cell in run.data.tiles:
+		run.data.explored[cell] = true
+	for stage in range(1, 5):
+		run.finish_chapter(stage)
+	run.actor("hero").position = run.data.boss
+	var battle = Combat.new()
+	var encounter = {"position": run.data.boss, "origin": run.data.boss, "movers": [], "npc": "", "ambush": false}
+	expect(battle.begin(run, encounter, ["hero"]).ok, "Final revelation fixture begins at the actual boss")
+	game.combat = battle
+	battle.unit("enemy_0").hp = 1
+	battle.check_end()
+	expect(battle.reveal_pending and not battle.river, "The old strike opens the memory before awakening")
+	game._final_battle_page(0)
+	var complete = ""
+	for index in range(128):
+		if not game.modal_layer.has_node("StoryScreen"):
+			break
+		await process_frame
+		check_story_layout()
+		expect(battle.reveal_pending and not battle.river and run.actor("hero").name == "旅人",
+			"Reading and reviewing the final memory cannot awaken the hero early")
+		var body = story_text().text
+		complete += body
+		if story_page().x > 1:
+			await click("上一页")
+			expect(not battle.river, "Previous page does not apply the final power")
+			await click_story_blank()
+			expect(story_text().text == body, "Final memory returns to exactly the same text")
+		await click_story_blank()
+	expect(not game.modal_layer.has_node("StoryScreen") and battle.river and not battle.reveal_pending
+		and run.actor("hero").name == "伊文洛", "Only the completed revelation awakens Ivenlo and returns to battle")
+	for phrase in ["是你杀了我", "没有一个亡魂被接走", "我是伊文洛", "不会分辨敌友"]:
+		expect(complete.contains(phrase), "The full final confrontation is readable: " + phrase)
+	expect(not complete.contains("路上那些恶魔认出的"), "A run without a demon encounter does not invent one")
+	game.combat = null
+	game._close_modal()
+
 func execute() -> void:
 	game = Main.instantiate()
 	root.add_child(game)
@@ -793,7 +879,7 @@ func execute() -> void:
 	game._refresh()
 	expect(find_button(game.ui, "继续上次远征") == null, "A main menu with no save does not show a resume button")
 	await press("开始新远征")
-	expect(dialogue_contains("维洛丹") and not dialogue_contains("伊文洛"), "Opening introduces only the public gods")
+	expect(dialogue_contains("维洛丹") and not dialogue_contains("伊文洛"), "Opening presents the war without revealing the protagonist")
 	expect(story_owns_focus(), "Opening retains the story interface and focus")
 	await story_key(KEY_ESCAPE)
 	expect(dialogue_contains("维洛丹"), "Escape leaves an opening scene without an End Conversation action in place")
@@ -822,6 +908,8 @@ func execute() -> void:
 	await check_node_dialogs()
 	await check_node_arrival()
 	await check_arrival_after_victory()
+	await check_familiarity_dialogue()
+	await check_final_reveal()
 	await check_haunt_dialogue()
 	expect(game._expedition_objective() == "踏出旅程的第一步", "HUD shows the departure objective")
 	var chapter_run = game.run
