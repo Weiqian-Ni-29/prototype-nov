@@ -213,6 +213,10 @@ func execute() -> void:
 			and meters[1].value == tide.mp and meters[1].max_value == tide.mp_max
 			and meters[2].value == tide.energy and meters[2].max_value == Catalog.ENERGY_MAX,
 			"Battle status bars show the fighter's HP, MP and charge")
+		expect(meters.map(func(bar): return bar.get_parent().get_child(1).text) == [
+			"%d/%d" % [tide.hp, tide.hp_max], "%d/%d" % [tide.mp, tide.mp_max],
+			"%d/%d" % [tide.energy, Catalog.ENERGY_MAX],
+		], "Battle bars show exact current and maximum values")
 		var colors = ["e16562", "65a6e6", "eea353"]
 		for i in mini(meters.size(), colors.size()):
 			expect(meters[i].get_theme_stylebox("fill").bg_color == Color(colors[i]), "Status bar uses the shared color")

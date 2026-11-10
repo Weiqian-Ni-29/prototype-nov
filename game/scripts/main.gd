@@ -596,14 +596,17 @@ func _crew_meter(parent: VBoxContainer, caption: String, amount: float, maximum:
 	bar.add_theme_stylebox_override("background", _bar_style(Color("3b524b")))
 	bar.add_theme_stylebox_override("fill", _bar_style(color))
 	row.add_child(bar)
-	_crew_meter_label(row, caption)
+	var value_label = _crew_meter_label(row, "%d/%d" % [int(amount), int(maximum)])
+	value_label.custom_minimum_size.x = 58
+	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 
-func _crew_meter_label(parent: HBoxContainer, caption: String) -> void:
+func _crew_meter_label(parent: HBoxContainer, caption: String) -> Label:
 	var label = _text(parent, caption, 12)
 	label.autowrap_mode = TextServer.AUTOWRAP_OFF
 	label.custom_minimum_size.x = 32
 	label.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return label
 
 func _cell_actions() -> void:
 	var actor = run.actor(selected_id)
