@@ -20,7 +20,7 @@ func new_run(seed_value: int, profession: String) -> void:
 	assert(Catalog.PROFESSIONS.has(profession))
 	var generated = Hex.generate(seed_value)
 	rng.seed = seed_value ^ 0x5eed123
-	data = {"version": SAVE_VERSION, "seed": seed_value, "profession": profession, "day": 1, "steps_today": 0, "weather": "sun", "tiles": generated.tiles, "start": generated.start, "boss": generated.boss, "leads": {}, "peace": {}, "chapter": 0, "actors": {}, "explored": {}, "visited": {}, "flags": {}, "knowledge": {}, "story": {}, "rewards": {}, "choices": [], "status": "exploring", "log": [], "battles": 0, "transaction": 0, "pending_battle": {}}
+	data = {"version": SAVE_VERSION, "seed": seed_value, "profession": profession, "day": 1, "steps_today": 0, "weather": "sun", "tiles": generated.tiles, "start": generated.start, "boss": generated.boss, "peace": {}, "chapter": 0, "actors": {}, "explored": {}, "visited": {}, "flags": {}, "knowledge": {}, "story": {}, "rewards": {}, "choices": [], "status": "exploring", "log": [], "battles": 0, "transaction": 0, "pending_battle": {}}
 	var hero_def = Catalog.PROFESSIONS[profession].duplicate(true)
 	hero_def["title"] = "旅人"
 	hero_def["name"] = "旅人"
@@ -356,9 +356,8 @@ func use_node(id: String, option: String) -> Dictionary:
 		return fail("这里没有这种处理方式。")
 	if node.kind == "haunt" and option == "inspect":
 		if node.get("investigated", false):
-			return fail("这里已经问过了，经过记在手记里。")
+			return fail("这里已经问清经过。")
 		node["investigated"] = true
-		record_story_progress(cell, false)
 		note("问清经过：" + str(event.title))
 		changed.emit()
 		return {"ok": true, "message": event.investigation}
@@ -391,22 +390,20 @@ func use_node(id: String, option: String) -> Dictionary:
 			data.lamp_coins += coins
 			roll_relic("commission:" + cell, Relics.DATA.keys(), 0.25, id, cell)
 			message = "%s 完成委托，得到 %d 灯铢。" % [visitor.name, coins]
-		["clue", "record"], ["haunt", "settle"], ["haunt", "settle_alternative"]:
-			message = "这段见闻已记入手记。" if option == "record" else "这次送别已记入手记。"
-			record_story_progress(cell, node.kind == "haunt")
-			if node.kind == "haunt":
-				roll_relic("spirit_farewell:" + cell, Relics.DATA.keys(), 0.50, id, cell)
-				var key = "farewell_receipt:day:%d" % data.day
-				if has_relic("farewell_receipt") and not data.item_effect_counts.has(key) and _restore_map(id, "mp", 6):
-					data.item_effect_counts[key] = 1
+		["haunt", "settle"], ["haunt", "settle_alternative"]:
+			message = "你送别了这里的亡者。"
+			roll_relic("spirit_farewell:" + cell, Relics.DATA.keys(), 0.50, id, cell)
+			var key = "farewell_receipt:day:%d" % data.day
+			if has_relic("farewell_receipt") and not data.item_effect_counts.has(key) and _restore_map(id, "mp", 6):
+				data.item_effect_counts[key] = 1
 		_:
 			return fail("这里现在做不了这件事。")
 	if option == "search":
 		_after_cache(id, gear_reward)
 	node.result = option
 	data.item_revision += 1
-	if option in ["work", "work_alternative"]:
-		record_story_progress(cell, true)
+	if cell != data.boss and option in ["work", "work_alternative", "settle", "settle_alternative"]:
+		data.peace[cell] = true
 	note(message)
 	changed.emit()
 	return {"ok": true, "message": message}
@@ -896,13 +893,6 @@ func finish_chapter(chapter: int) -> void:
 		data.explored[data.boss] = true
 		note("战神的位置已标在地图上。")
 
-func record_story_progress(cell: String, peaceful: bool) -> void:
-	if cell == data.boss:
-		return
-	data.leads[cell] = true
-	if peaceful:
-		data.peace[cell] = true
-
 func _map_action(id: String) -> Dictionary:
 	if data.is_empty() or data.status != "exploring" or not data.pending_battle.is_empty():
 		return fail("当前不能执行探索行动。")
@@ -958,6 +948,8 @@ func load_game(path: String = "") -> Dictionary:
 		_migrate_travel(loaded)
 	if not Items.validate(loaded):
 		return fail("存档中的装备或遗器记录无效。")
+	Nodes.replace_legacy_clues(loaded.nodes, loaded.tiles, int(loaded.seed))
+	loaded.erase("leads")
 	data = loaded
 	_remove_legacy_map_effects()
 	for id in data.actors:
@@ -1036,9 +1028,9 @@ func _restore_legacy_visits() -> void:
 		data.explored[position] = true
 
 func _validate_save(loaded: Dictionary) -> String:
-	if not loaded.has_all(["flags", "story", "knowledge", "rewards", "log", "pending_battle", "start", "boss", "leads", "peace", "chapter", "profession", "explored", "transaction", "battles", "weather"]):
+	if not loaded.has_all(["flags", "story", "knowledge", "rewards", "log", "pending_battle", "start", "boss", "peace", "chapter", "profession", "explored", "transaction", "battles", "weather"]):
 		return "进度记录不完整"
-	for key in ["actors", "tiles", "flags", "story", "knowledge", "rewards", "pending_battle", "explored", "leads", "peace"]:
+	for key in ["actors", "tiles", "flags", "story", "knowledge", "rewards", "pending_battle", "explored", "peace"]:
 		if not loaded[key] is Dictionary:
 			return "进度记录格式有误"
 	if loaded.tiles.size() != 217 or not loaded.tiles.has(loaded.start) or not loaded.tiles.has(loaded.boss):
@@ -1171,7 +1163,14 @@ func _valid_nodes(loaded: Dictionary) -> bool:
 		var node = loaded.nodes[cell]
 		if not loaded.tiles.has(cell) or not node is Dictionary or not node.has_all(["kind", "event", "result"]):
 			return false
-		if not Nodes.LABELS.has(node.kind) or not node.event is String or not node.result is String:
+		if not node.kind is String or not node.event is String or not node.result is String:
+			return false
+		if node.kind == "clue":
+			var biome: String = loaded.tiles[cell].base_terrain
+			if node.event not in [biome + "_clue_1", biome + "_clue_2"] or node.result not in ["", "record"] or node.has("investigated"):
+				return false
+			continue
+		if not Nodes.LABELS.has(node.kind):
 			return false
 		if node.kind != "story" and Nodes.story(node).is_empty():
 			return false

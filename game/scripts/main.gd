@@ -397,8 +397,13 @@ func _header(screen: Vector2) -> void:
 	marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	objective.add_child(marker)
 	_text(objective, _expedition_objective(), 16, gold).vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	if combat == null and run.data.status == "exploring" and run.boss_known():
+		_button(row, "定位战神", func():
+			_clear_map_move()
+			selected_cell = run.data.boss
+			view.focus_cell(selected_cell)
+			_refresh())
 	_button(row, "设置/帮助", _settings_dialog)
-	_button(row, "旅途手记", _journal)
 	_button(row, "主菜单", _to_menu)
 
 func _expedition_objective() -> String:
@@ -461,6 +466,16 @@ func _cell_actions() -> void:
 	var dialog = _modal(title, 570, 580)
 	var box = _scroll_content(dialog)
 	_text(box, "%s · 坐标 %s" % [Catalog.terrain_name(t.terrain), cell], 14, muted)
+	var route: Dictionary = run.data.route_records.get(selected_id, {})
+	if not route.is_empty():
+		_text(box, "引路绳路线 · %d 步 · %s" % [route.path.size() - 1, " → ".join(route.path)], 15, muted)
+	for key in run.data.map_intel:
+		if str(key).begins_with("cache:"):
+			_text(box, "藏物点标记 · " + str(key).trim_prefix("cache:"), 15, muted)
+		elif str(key).begins_with("encounter:"):
+			var info = run.data.map_intel[key]
+			var elements: Array = info.elements.map(func(element): return Catalog.ELEMENT_NAMES.get(element, element))
+			_text(box, "遭遇拓片 · %s · %d 个敌人 · %s" % [str(key).trim_prefix("encounter:"), info.count, "、".join(elements)], 15, muted)
 	if (t.site.is_empty() or (t.site == "boss" and not run.boss_known())) and not Nodes.story(node).is_empty():
 		_button(box, "查看节点剧情", _node_dialog)
 	if run.knows_encounter(cell):
@@ -558,8 +573,6 @@ func _node_dialog(feedback: String = "") -> void:
 			"choice":
 				options.append(_node_option("work", "%s · 得 %d 灯铢" % [event.work, node.coins]))
 				options.append(_node_option("work_alternative", "%s · 得 %d 灯铢" % [event.alternative, node.coins]))
-			"clue":
-				options.append(_node_option("record", "记入旅途手记"))
 			"haunt":
 				if not node.get("investigated", false):
 					options.append(_node_option("inspect", event.investigation_label))
@@ -2017,54 +2030,6 @@ func _show_relic_intro(after: Callable = Callable()) -> bool:
 				after.call(), {})
 	return true
 
-func _journal() -> void:
-	var box = _modal("旅途手记 · 线索与同行", 920, 720)
-	var content = _scroll_content(box)
-	_text(content, _expedition_objective(), 23, gold)
-	_text(content, "地图种子 %s" % run.data.seed, 15, muted)
-	for key in run.data.map_intel:
-		if str(key).begins_with("cache:"):
-			_text(content, "藏物点标记 · " + str(key).trim_prefix("cache:"), 15, muted)
-		elif str(key).begins_with("encounter:"):
-			var info = run.data.map_intel[key]
-			var elements: Array = info.elements.map(func(element): return Catalog.ELEMENT_NAMES.get(element, element))
-			_text(content, "遭遇拓片 · %s · %d 个敌人 · %s" % [str(key).trim_prefix("encounter:"), info.count, "、".join(elements)], 15, muted)
-	var route = run.data.route_records.get(selected_id, {})
-	if not route.is_empty():
-		_text(content, "引路绳路线 · %d 步 · %s" % [route.path.size() - 1, " → ".join(route.path)], 15, muted)
-
-	if run.boss_known():
-		_button(content, "在地图上定位战神", func(): _close_modal(); selected_cell = run.data.boss; view.focus_cell(selected_cell); _refresh())
-	for chapter in range(int(run.data.chapter)):
-		var page = _chapter_pages()[chapter]
-		_text(content, page[0], 20, gold)
-		_text(content, page[1], 16, muted)
-	for id in Catalog.COMPANIONS:
-		if run.data.story[id].met:
-			var relation = "已同行" if run.actor(id).joined else "已见过"
-			if run.actor(id).joined:
-				relation += " · 已作出个人抉择" if not str(run.data.story[id].get("personal_choice", "")).is_empty() else " · 见面可以谈谈心事"
-			_text(content, "%s · %s" % [run.actor(id).name, relation], 18, muted)
-	var clues: Array[String] = []
-	for cell in run.data.nodes:
-		var node = run.node_at(cell)
-		if not run.data.leads.has(cell):
-			continue
-		var event = Nodes.story(node)
-		if event.is_empty():
-			continue
-		var entry = str(event.title)
-		if node.result == "record" or node.get("investigated", false):
-			entry += "\n" + str(event.evidence)
-		if not node.result.is_empty() and node.result != "record":
-			entry += "\n" + Nodes.resolution(node)
-		clues.append(entry)
-	if not clues.is_empty():
-		_text(content, "路上记录的线索", 20, gold)
-		_text(content, "\n".join(clues), 16, muted)
-	_text(content, "同行队员可以交换物品和见闻。", 16, muted)
-	_button(box, "合上手记", _close_modal)
-
 func _summary(screen: Vector2) -> void:
 	var box = _panel(ui, Rect2(300, 135, screen.x - 600, screen.y - 300))
 	_text(box, "战争结束" if run.data.status == "won" else "远征终止", 36, gold)
@@ -2121,6 +2086,8 @@ func _guide() -> void:
 
 func _settings_dialog() -> void:
 	var box = _modal("设置与操作", 650, 430)
+	if screen_state == Screen.EXPEDITION:
+		_text(box, "地图种子 %s" % run.data.seed, 15, muted)
 	_text(box, "音效音量（0 为静音）", 20, gold)
 	var slider = HSlider.new()
 	slider.min_value = 0
