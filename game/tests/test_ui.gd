@@ -451,18 +451,21 @@ func check_personal_dialogue() -> void:
 	var acceptance = await read_to_choices()
 	expect(story_speaker() == "洛恩" and acceptance.contains(Story.CHARACTER_BEHAVIOR.lorne[1]), "Recruitment receives an answer from the companion")
 	var before_past = run.data.duplicate(true)
-	var save_before_past = saved_run()
 	await click(option_label(game.narrative.dialogue("hero", "lorne"), "past"))
 	expect(story_speaker() == "旅人", "The player asks about the past before receiving it")
 	await click_story_blank()
 	var past = await read_to_choices()
 	expect(compact(past).contains(compact(Story.BACKGROUNDS.lorne)) and story_speaker() == "洛恩",
 		"The background is readable in its own paginated response")
-	expect(run.data == before_past, "Reading the background spends nothing and chooses no personal branch")
+	before_past.story.lorne.codex_past_read = true
+	before_past.transaction = run.data.transaction
+	expect(run.data == before_past and saved_run().story.lorne.codex_past_read,
+		"Reading the background records it without spending resources or choosing a branch")
+	var save_after_past = saved_run()
 	await click(option_label(game.narrative.dialogue("hero", "lorne"), "leave"))
 	await click_story_blank()
 	expect(game.modal_layer.get_child_count() == 0, "The spoken farewell closes the background conversation")
-	expect(run.data == before_past and saved_run() == save_before_past, "The entire background conversation, including its farewell, is read-only")
+	expect(run.data == before_past and saved_run() == save_after_past, "Leaving the completed background dialogue changes nothing further")
 	game._begin_dialogue("lorne")
 	await read_to_choices()
 	var quest = game.narrative.personal_quest("hero", "lorne")
@@ -528,6 +531,86 @@ func check_personal_dialogue() -> void:
 	await click_story_blank()
 	expect(game.modal_layer.get_child_count() == 0, "Finishing a farewell returns to the map")
 	expect(game.run.data.transaction == review_transaction, "Finishing a review of a saved personal decision does not save again")
+	var saved_story = saved_run()
+	await click("角色")
+	await click("洛恩")
+	await click("故事")
+	expect(find_button(game.modal_layer, "阅读 · 过去的事") != null, "The read background is available after reloading")
+	await click("阅读 · 同行以后")
+	var archive_pages = await read_current_body(true)
+	expect(compact("".join(archive_pages)) == compact(response), "The codex records only the selected branch")
+	await click("返回角色图鉴")
+	expect(game.character_codex_state.actor == "lorne" and game.character_codex_state.tab == 3,
+		"Closing the reader returns to the same character and tab")
+	await story_key(KEY_ESCAPE)
+	expect(game.modal_layer.get_child_count() == 0 and saved_run() == saved_story, "Reading a codex entry does not modify the save")
+
+func check_character_codex() -> void:
+	game._start_new()
+	var run = game.run
+	var source: String = run.actor("hero").position
+	var neighbor: String = Hex.neighbors(source, run.data.tiles).filter(func(cell): return Hex.is_land(run.data.tiles, cell))[0]
+	game._select_cell(neighbor)
+	var map_selection: String = game.selected_cell
+	var original_plan: String = game.move_target
+	var old_transaction: int = run.data.transaction
+	await click("角色")
+	var codex = game.modal_layer.get_node_or_null("CharacterCodex")
+	expect(codex != null and codex.find_child("CodexActor_hero", true, false) != null
+		and codex.find_children("CodexUnknown*", "Button", true, false).size() == 25,
+		"At the start the codex displays the traveler and 25 anonymous slots")
+	expect(not contains_text(codex, "死神") and not contains_text(codex, "伊文洛"), "The traveler profile hides the final revelation")
+	await click("见过未加入")
+	expect(contains_text(codex, "暂无角色"), "An empty filter displays its own empty state")
+	await click("全部")
+	await click("？？？")
+	expect(not contains_text(codex, "洛恩") and codex.find_child("CodexPortrait", true, false).disabled,
+		"An unknown entry never exposes an identity or opens a real portrait")
+	await click("旅人")
+	await click("技能")
+	expect(contains_text(codex, "重力魔法"), "The traveler profile uses the current skills")
+	await click("战斗")
+	expect(game.character_codex_state.pose == "battle", "Battle pose changes the displayed art")
+	var portrait = codex.find_child("CodexPortrait", true, false) as TextureButton
+	portrait.pressed.emit()
+	expect(game.modal_layer.has_node("CodexPortraitZoom"), "Known portraits can be enlarged")
+	await story_key(KEY_ESCAPE)
+	expect(not game.modal_layer.has_node("CodexPortraitZoom") and game.modal_layer.has_node("CharacterCodex"),
+		"Escape closes the enlargement before the codex")
+	await click("装备")
+	expect(contains_text(codex, "巡路短刃") and contains_text(codex, "旧灯护符"), "Equipment comes from the equipped slots")
+	expect(run.data.transaction == old_transaction, "Inspecting the codex does not save or change the expedition")
+	await click("管理装备")
+	await press("巡路短刃")
+	await press("强化至 +1")
+	await press("返回装备")
+	await press("返回角色图鉴")
+	codex = game.modal_layer.get_node("CharacterCodex")
+	expect(game.character_codex_state.tab == 1 and contains_text(codex, "普通 +1"), "Returning from equipment management refreshes the same tab")
+	await click("×")
+	expect(game.selected_id == "hero" and game.selected_cell == map_selection and game.move_target == original_plan
+		and game.move_preview.visible, "Closing the codex restores the original map selection and route preview")
+
+	run.actor("lorne").position = source
+	game._begin_dialogue("lorne")
+	await read_to_choices()
+	await click("结束交谈")
+	await click("角色")
+	await click("见过未加入")
+	expect(game.character_codex_state.actor == "lorne", "Meeting a companion makes that character appear in the filter")
+	await click("装备")
+	expect(contains_text(game.modal_layer, "尚未加入远征队。"), "A known but unjoined character has no player equipment")
+	await click("×")
+	expect(run.join_companion("lorne", "hero").ok, "Fixture recruits the known companion")
+	await click("角色")
+	await click("洛恩")
+	await click("技能")
+	expect(contains_text(game.modal_layer, "巡路连射") and game.selected_id == "hero", "Recruitment exposes the skills without switching the map actor")
+	await click("×")
+	run.data.flags.hero_identity_revealed = true
+	await click("角色")
+	expect(contains_text(game.modal_layer, "伊文洛"), "The traveler profile shows the true name after the revelation")
+	await click("×")
 
 func check_node_dialogs() -> void:
 	game._start_new()
@@ -1003,6 +1086,7 @@ func execute() -> void:
 	await check_story_history()
 	await check_story_pagination()
 	await check_personal_dialogue()
+	await check_character_codex()
 	await check_backpack_use()
 	await check_node_dialogs()
 	await check_node_arrival()

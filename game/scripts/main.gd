@@ -6,6 +6,7 @@ const Combat = preload("res://scripts/domain/battle.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
+const CharacterCodex = preload("res://scripts/presentation/character_codex.gd")
 var item_operation_serial = 0
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const OpeningStory = preload("res://scripts/domain/opening_story.gd")
@@ -40,6 +41,7 @@ var battle_timer = 0.0
 var toast_text = ""
 var narrative: RefCounted
 var dialogue_subject = ""
+var character_codex_state: Dictionary = {}
 var story_history: Array[Dictionary] = []
 var sound: Node
 var gold = Color("dec38e")
@@ -136,6 +138,12 @@ func _button(parent: Node, text: String, callback: Callable, disabled: bool = fa
 
 func _shortcut_input(event: InputEvent) -> void:
 	if not event.is_action_pressed("ui_cancel"):
+		return
+	var codex = modal_layer.get_node_or_null("CharacterCodex")
+	if codex != null:
+		get_viewport().set_input_as_handled()
+		if not codex.close_zoom():
+			_close_character_codex()
 		return
 	var layer = modal_layer.get_node_or_null("StoryHistory")
 	if layer == null:
@@ -245,6 +253,7 @@ func _opening_image(texture: Texture2D) -> TextureRect:
 	return illustration
 
 func _show_opening(state: Screen) -> void:
+	character_codex_state = {}
 	screen_state = state
 	_refresh()
 
@@ -305,6 +314,7 @@ func _seed_value() -> int:
 	return int(chosen_seed) if chosen_seed.is_valid_int() else hash(chosen_seed)
 
 func _start_new() -> void:
+	character_codex_state = {}
 	_close_modal()
 	if screen_state != Screen.OPENING_STORY:
 		story_history.clear()
@@ -328,6 +338,7 @@ func _continue_run() -> void:
 	if not result.ok:
 		_notice(result.message)
 		return
+	character_codex_state = {}
 	story_history.clear()
 	map_traveling = false
 	combat = null
@@ -447,6 +458,10 @@ func _crew_panel(screen: Vector2) -> void:
 		bar.custom_minimum_size.y = 5
 		member_box.add_child(bar)
 	var cell: String = run.actor(selected_id).position
+	var codex_button = _button(box, "角色", _show_character_codex)
+	if not character_codex_state.is_empty():
+		codex_button.add_theme_stylebox_override("normal", _style(Color("34483a"), gold, 6))
+		codex_button.add_theme_color_override("font_color", gold)
 	var action = _button(box, "行动", _cell_actions)
 	action.tooltip_text = _node_title(cell)
 	_button(box, "背包", _inventory_dialog.bind(selected_id))
@@ -812,6 +827,43 @@ func _confirm(title: String, message: String, action: Callable) -> void:
 	_button(box, "确认", func(): _close_modal(); action.call())
 	_button(box, "取消，继续远征", _close_modal)
 
+func _show_character_codex() -> void:
+	if character_codex_state.is_empty():
+		character_codex_state = {"actor": selected_id, "tab": 0, "filter": 0, "pose": "",
+			"move_target": move_target}
+	_clear(modal_layer)
+	ui.show()
+	view.show()
+	view.set_process(true)
+	move_preview.hide()
+	var shade = ColorRect.new()
+	shade.color = Color(0.025, 0.07, 0.065, 0.18)
+	modal_layer.add_child(shade)
+	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var codex = CharacterCodex.new()
+	codex.name = "CharacterCodex"
+	modal_layer.add_child(codex)
+	codex.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var screen = get_viewport().get_visible_rect().size
+	codex.offset_left = 278 if screen.x >= 1160.0 and run.data.status == "exploring" else 20
+	codex.offset_top = 120
+	codex.offset_right = -20
+	codex.offset_bottom = -20
+	codex.setup(self, character_codex_state)
+	_refresh()
+
+func _close_character_codex() -> void:
+	move_target = character_codex_state.get("move_target", "")
+	character_codex_state = {}
+	_close_modal()
+	_refresh()
+
+func _read_character_record(id: String, record: Dictionary) -> void:
+	var read_history = {"speaker": record.title, "pages": {}}
+	_show_story(record.title, "角色图鉴", record.body, _story_scene_at(run.actor(id).position),
+		[_story_portrait(id)], [], func(_option: String): _show_character_codex(),
+		{"返回角色图鉴": _show_character_codex}, Color.WHITE, 0, read_history)
+
 func _inventory_dialog(id: String, current_tab: int = 0, selected_consumable: String = "") -> void:
 	var a = run.actor(id)
 	var box = _modal(a.name + " · 背包与装备", 850, 670)
@@ -908,7 +960,10 @@ func _inventory_dialog(id: String, current_tab: int = 0, selected_consumable: St
 	elif cards.has(selected_consumable):
 		select_consumable.call(selected_consumable)
 	_relic_list(lists[2], id)
-	_button(box, "关闭", _close_modal)
+	if character_codex_state.is_empty():
+		_button(box, "关闭", _close_modal)
+	else:
+		_button(box, "返回角色图鉴", _show_character_codex)
 
 func _gear_list(list: VBoxContainer, id: String) -> void:
 	var filter = OptionButton.new()
@@ -1676,7 +1731,7 @@ func _story_text_pages(body: String, label: Label) -> PackedStringArray:
 
 func _show_story(title: String, speaker: String, body: String, scene: String,
 		portraits: Array, options: Array, on_choice: Callable, actions: Dictionary, tint: Color = Color.WHITE,
-		page_index: int = 0, history_entry: Dictionary = {}) -> void:
+		page_index: int = 0, history_entry: Dictionary = {}, on_last_page: Callable = Callable()) -> void:
 	_clear_map_move()
 	move_preview.hide()
 	_clear(modal_layer)
@@ -1765,6 +1820,8 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	text_label.offset_top = separator.position.y + separator.get_minimum_size().y + 8
 	var pages = _story_text_pages(body, text_label)
 	text_label.text = pages[page_index].strip_edges()
+	if page_index == pages.size() - 1 and on_last_page.is_valid():
+		on_last_page.call()
 	if history_entry.is_empty():
 		history_entry = {"speaker": speaker, "pages": {}}
 		story_history.append(history_entry)
@@ -1777,10 +1834,10 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	_button(header, "历史对话", _show_story_history.bind(overlay))
 	for label in actions:
 		var button = _button(header, label, actions[label])
-		if label == "结束交谈":
+		if label in ["结束交谈", "返回角色图鉴"]:
 			button.name = "StoryCancel"
 	var turn_page = func(index: int):
-		_show_story(title, speaker, body, scene, portraits, options, on_choice, actions, tint, index, history_entry)
+		_show_story(title, speaker, body, scene, portraits, options, on_choice, actions, tint, index, history_entry, on_last_page)
 	var navigation = HBoxContainer.new()
 	navigation.name = "StoryNavigation"
 	navigation.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -1943,7 +2000,7 @@ func _story_portrait(id: String, pose: String = "") -> Texture2D:
 	var path = directory + id + ".png"
 	return load(path) if ResourceLoader.exists(path) else null
 
-func _render_dialogue(response: String = "") -> void:
+func _render_dialogue(response: String = "", record_past: bool = false) -> void:
 	var was_met: bool = run.data.story.get(dialogue_subject, {}).get("met", false)
 	var d = narrative.dialogue(selected_id, dialogue_subject)
 	if not d.ok:
@@ -1955,12 +2012,24 @@ func _render_dialogue(response: String = "") -> void:
 	var text: String = d.text if response.is_empty() else response
 	var portraits = [_story_portrait(selected_id), _story_portrait(dialogue_subject, pose)]
 	var scene = _story_scene_at(run.actor(selected_id).position)
-	if not response.is_empty() and not run.relic_intro().is_empty():
+	if not response.is_empty() and not record_past and not run.relic_intro().is_empty():
 		_show_story(d.title, speaker, text, scene, portraits, [],
 			func(_option: String): _show_relic_intro(_render_dialogue), {"结束交谈": _show_relic_intro})
 	else:
-		_show_story(d.title, speaker, text, scene, portraits, d.options, _story_choice, {"结束交谈": _close_modal})
+		var on_read = Callable()
+		if record_past:
+			on_read = _record_character_dialogue.bind(dialogue_subject, "codex_past_read", true)
+		elif response.is_empty() and not person.joined and not run.data.story[dialogue_subject].has("codex_first_meeting"):
+			on_read = _record_character_dialogue.bind(dialogue_subject, "codex_first_meeting", text)
+		_show_story(d.title, speaker, text, scene, portraits, d.options, _story_choice,
+			{"结束交谈": _close_modal}, Color.WHITE, 0, {}, on_read)
 	if not was_met:
+		run.save_game()
+
+func _record_character_dialogue(id: String, key: String, value: Variant) -> void:
+	var record: Dictionary = run.data.story[id]
+	if not record.has(key):
+		record[key] = value
 		run.save_game()
 
 func _personal_quest() -> void:
@@ -2007,7 +2076,7 @@ func _story_choice(option_id: String) -> void:
 		_item_dialog(selected_id)
 	else:
 		_refresh()
-		_render_dialogue(response)
+		_render_dialogue(response, option_id == "past")
 
 func _show_relic_intro(after: Callable = Callable()) -> bool:
 	var intro = run.relic_intro()
@@ -2095,6 +2164,7 @@ func _summary(screen: Vector2) -> void:
 	var met_count = Catalog.COMPANIONS.keys().filter(func(id): return run.data.story[id].met).size()
 	_text(box, "结局里还记下了路上遇到的 %d 个人后来怎么样了。" % met_count, 18, muted)
 	_button(box, "查看结局剧情", _ending_story)
+	_button(box, "角色", _show_character_codex)
 	_button(box, "返回主菜单", _to_menu)
 
 func _ending_story() -> void:
