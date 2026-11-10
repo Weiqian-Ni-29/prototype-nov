@@ -30,6 +30,7 @@ var selected_id = "hero"
 var selected_cell = ""
 var move_target = ""
 var move_from_current_cell = false
+var map_traveling = false
 var move_preview = MapMovePreview.new()
 var moving_ids: Array = ["hero"]
 var crew_collapsed = false
@@ -312,6 +313,7 @@ func _start_new() -> void:
 		story_history.clear()
 	var value = opening_seed if screen_state == Screen.OPENING_STORY else _seed_value()
 	run.new_run(value, "wayfarer")
+	map_traveling = false
 	combat = null
 	_clear_map_move()
 	view.reset()
@@ -331,6 +333,7 @@ func _continue_run() -> void:
 		_notice(result.message)
 		return
 	story_history.clear()
+	map_traveling = false
 	combat = null
 	_clear_map_move()
 	toast_text = ""
@@ -767,6 +770,8 @@ func _squad_movers(id: String) -> Array:
 	return healthy if not healthy.is_empty() else [id]
 
 func _select_actor(id: String, center_camera: bool = true) -> void:
+	if map_traveling:
+		return
 	_clear_map_move()
 	selected_id = id
 	selected_cell = run.actor(id).position
@@ -776,7 +781,7 @@ func _select_actor(id: String, center_camera: bool = true) -> void:
 	_refresh()
 
 func _select_cell(id: String) -> void:
-	if screen_state != Screen.EXPEDITION or combat != null or run.data.status != "exploring" or modal_layer.get_child_count() > 0:
+	if map_traveling or screen_state != Screen.EXPEDITION or combat != null or run.data.status != "exploring" or modal_layer.get_child_count() > 0:
 		return
 	if id == move_target and not id.is_empty():
 		_move_selected()
@@ -806,12 +811,17 @@ func _show_move_preview() -> void:
 	move_preview.show_path(view.dolls[origin], endpoint, costs)
 
 func _move_selected() -> void:
+	if map_traveling:
+		return
 	var destination = move_target
 	var mover: String = selected_id if selected_id in moving_ids else moving_ids[0]
+	# Arrival may merge the moving squad with characters already on the tile.
+	var travelers = moving_ids.duplicate()
 	var first_visit = not run.has_visited(destination)
 	_clear_map_move()
-	var result = run.move(moving_ids, destination)
+	var result = run.move(travelers, destination)
 	if result.ok:
+		map_traveling = true
 		selected_id = mover
 		selected_cell = run.actor(mover).position
 		moving_ids = _squad_movers(mover)
@@ -820,8 +830,14 @@ func _move_selected() -> void:
 	_run_action(result)
 	if not result.ok:
 		return
-	if selected_id in moving_ids:
-		view.follow_map_movement(selected_id)
+	view.follow_map_movement(mover)
+	var expedition: Dictionary = run.data
+	while view.is_map_moving(travelers):
+		await get_tree().process_frame
+		if not is_same(run.data, expedition):
+			return
+	map_traveling = false
+	_update_world_input()
 	if result.get("battle", false):
 		_formation_dialog()
 	else:
@@ -877,9 +893,10 @@ func _close_modal() -> void:
 	_update_world_input()
 
 func _update_world_input() -> void:
+	ui.process_mode = Node.PROCESS_MODE_DISABLED if map_traveling else Node.PROCESS_MODE_INHERIT
 	var can_target = combat != null and combat.outcome.is_empty()
 	var can_explore = not view.battle_mode and run.data.status == "exploring"
-	view.set_world_input_enabled(screen_state == Screen.EXPEDITION and view.visible
+	view.set_world_input_enabled(not map_traveling and screen_state == Screen.EXPEDITION and view.visible
 		and modal_layer.get_child_count() == 0 and (can_target or can_explore))
 
 func _notice(message: String, dismiss: Callable = Callable()) -> void:

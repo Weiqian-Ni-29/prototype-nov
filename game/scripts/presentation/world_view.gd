@@ -466,6 +466,13 @@ func follow_map_movement(id: String) -> void:
 	map_follow_actor = actor
 	map_follow_offset = focus_point - _map_actor_ground(actor)
 
+func is_map_moving(ids: Array) -> bool:
+	for id in ids:
+		var actor = dolls.get(id)
+		if is_instance_valid(actor) and actor.is_moving():
+			return true
+	return false
+
 func _map_actor_ground(actor: Node3D) -> Vector3:
 	return Vector3(actor.position.x, 0.0, actor.position.z)
 
@@ -616,11 +623,11 @@ func _process(delta: float) -> void:
 		if motion != Vector3.ZERO:
 			map_follow_actor = null
 			_pan_map(motion * delta * 8.0)
-		else:
-			_update_map_follow()
 	if battle_mode:
 		_update_battle_targets()
 	else:
+		if not map_pointer_down:
+			_update_map_follow()
 		_update_occlusion(delta)
 	squad_markers.update_positions(camera, dolls, is_visible_in_tree() and not battle_mode)
 

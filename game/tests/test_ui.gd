@@ -245,6 +245,12 @@ func finish_linear_story() -> void:
 		await advance_story()
 	expect(false, "Linear story closes within the bounded page count")
 
+func wait_for_map_arrival() -> void:
+	var deadline = Time.get_ticks_msec() + 5000
+	while game.map_traveling and Time.get_ticks_msec() < deadline:
+		await process_frame
+	expect(not game.map_traveling, "Map travel finishes")
+
 func check_node_arrival() -> void:
 	game._start_new()
 	var run = game.run
@@ -268,8 +274,13 @@ func check_node_arrival() -> void:
 	game._select_cell(cell)
 	expect(game.modal_layer.get_child_count() == 0, "Previewing movement cannot open a story")
 	game._select_cell(cell)
-	expect(game.modal_layer.has_node("StoryScreen") and contains_text(game.modal_layer, title),
-		"Confirmed first arrival opens this tile's story immediately")
+	expect(game.view.dolls.hero.is_moving() and game.view.visible and game.modal_layer.get_child_count() == 0,
+		"Confirming the move leaves the map visible while the hero is walking")
+	game._select_cell(start)
+	expect(game.selected_cell == cell and game.move_target.is_empty(), "A click during travel cannot replace the arrival")
+	await wait_for_map_arrival()
+	expect(not game.view.dolls.hero.is_moving() and game.modal_layer.has_node("StoryScreen") and contains_text(game.modal_layer, title),
+		"The first-arrival story opens once the hero has finished moving")
 	var marker: Label3D = game.view.tile_nodes[cell].get_node("LocationName")
 	expect(marker.text == title and marker.position.x == 0 and marker.position.z == 0,
 		"The same name appears at the visited tile's center")
@@ -280,9 +291,11 @@ func check_node_arrival() -> void:
 	run.actor("hero").ap = run.actor("hero").ap_max
 	game._select_cell(start)
 	game._select_cell(start)
+	await wait_for_map_arrival()
 	run.actor("hero").ap = run.actor("hero").ap_max
 	game._select_cell(cell)
 	game._select_cell(cell)
+	await wait_for_map_arrival()
 	expect(run.actor("hero").position == cell and not game.modal_layer.has_node("StoryScreen"),
 		"Returning to an already visited tile does not reopen its story")
 
@@ -301,6 +314,8 @@ func check_arrival_after_victory() -> void:
 	game._select_actor("hero")
 	game._select_cell(cell)
 	game._select_cell(cell)
+	expect(game.modal_layer.get_child_count() == 0, "The encounter does not interrupt movement")
+	await wait_for_map_arrival()
 	expect(find_button(game.modal_layer, "开始战斗") != null and run.data.get("pending_arrival", {}).get("cell") == cell,
 		"An encounter takes precedence and remembers the new tile")
 	game._continue_run()
