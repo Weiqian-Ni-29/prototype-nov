@@ -459,15 +459,15 @@ func use_node(id: String, option: String) -> Dictionary:
 		if "hero" not in same_cell(cell, true):
 			return fail("等旅人到场，再一起处理这里的事。")
 		if not node.get("investigated", false):
-			return fail("先核实眼前的证据，不能把未经确认的消息告诉亡者。")
+			return fail("先问清亡者为什么留在这里，别急着劝他离开。")
 	if option in ["work_alternative", "settle_alternative"] and not event.has("alternative"):
 		return fail("这里没有这种处理方式。")
 	if node.kind == "haunt" and option == "inspect":
 		if node.get("investigated", false):
-			return fail("此处证据已经核实，可在手记中回看。")
+			return fail("这里已经问过了，经过记在手记里。")
 		node["investigated"] = true
 		record_story_progress(cell, false)
-		note("核实见闻：" + str(event.title))
+		note("问清经过：" + str(event.title))
 		changed.emit()
 		return {"ok": true, "message": event.investigation}
 	var message = ""
@@ -515,7 +515,7 @@ func use_node(id: String, option: String) -> Dictionary:
 			roll_relic("commission:" + cell, Relics.DATA.keys(), 0.25, id, cell)
 			message = "%s 完成委托，得到 %d 灯铢。" % [visitor.name, coins]
 		["clue", "record"], ["haunt", "settle"], ["haunt", "settle_alternative"]:
-			message = "已将核实的见闻写进旅途手记。" if option == "record" else "亡者的告别与留下的安排已记入手记。"
+			message = "这段见闻已记入手记。" if option == "record" else "这次送别已记入手记。"
 			record_story_progress(cell, node.kind == "haunt")
 			if node.kind == "haunt":
 				roll_relic("spirit_farewell:" + cell, Relics.DATA.keys(), 0.50, id, cell)
@@ -555,7 +555,7 @@ func investigate_relic(id: String) -> Dictionary:
 		return fail("这里没有新的遗器线索。")
 	var relic = roll_relic(source, [relic_sites[position]], 0.25, id, position)
 	data.last_move_windows.clear()
-	return {"ok": true, "relic": relic, "message": "你检查了旧物，把看得出来的线索记进了旅途手记。"}
+	return {"ok": true, "relic": relic, "message": "从旧物中找到了「%s」。" % Relics.DATA[relic].name if not relic.is_empty() else "检查过了，这里没有还能带走的遗器。"}
 
 func relic_offer(source: String, candidates: Array, chance: float) -> String:
 	var pool = candidates.filter(func(id): return not data.relic_seen.has(id))
@@ -1404,7 +1404,7 @@ func _validate_save(loaded: Dictionary) -> String:
 			if loaded.story[id].has("personal_choice"):
 				var choice = loaded.story[id].personal_choice
 				var god_choice = Catalog.COMPANIONS[id].race == "神" and choice in ["god_a", "god_b"]
-				if choice not in ["personal_a", "personal_b", "war_a", "war_b", "war2_a", "war2_b"] and not god_choice:
+				if choice not in ["personal_a", "personal_b", "war_a", "war_b", "war2_a", "war2_b", "journey_a", "journey_b"] and not god_choice:
 					return "个人抉择记录无效"
 	if loaded.has("squad_colors") or loaded.has("next_squad_id"):
 		if not loaded.get("squad_colors") is Dictionary or not _whole_number(loaded.get("next_squad_id")) or loaded.next_squad_id < 0:

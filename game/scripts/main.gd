@@ -551,7 +551,7 @@ func _node_description(node: Dictionary, tile: Dictionary, event: Dictionary) ->
 	if _node_resolved(node, tile):
 		var conclusion = Nodes.resolution(node)
 		if node.kind == "haunt":
-			return "旅人顺着灵魂牵动的方向伸手，周围的碎石微微浮起。一条肉眼看不见的归路，在亡者面前展开。\n\n" + conclusion
+			return "送别时，%s掌心传来轻微的牵引，引着亡魂离开。\n\n%s" % [run.actor("hero").name, conclusion]
 		return conclusion
 	if node.get("investigated", false):
 		return str(event.investigation)
@@ -560,7 +560,7 @@ func _node_description(node: Dictionary, tile: Dictionary, event: Dictionary) ->
 func _node_option(id: String, label: String, spoken: bool = false) -> Dictionary:
 	return {"id": id, "text": label, "spoken": spoken}
 
-func _node_dialog(feedback: String = "", ready: bool = false) -> void:
+func _node_dialog(feedback: String = "") -> void:
 	var cell: String = run.actor(selected_id).position
 	var tile = run.data.tiles[cell]
 	var node = run.node_at(cell)
@@ -575,22 +575,14 @@ func _node_dialog(feedback: String = "", ready: bool = false) -> void:
 	var speaker: String = event.get("reaction_actor", "")
 	if speaker in run.same_cell(cell, true) and event.has("reaction"):
 		text += "\n%s说「%s」" % [run.actor(speaker).name, event.reaction]
-	if run.data.leads.has(cell):
-		text += "\n已把这里的线索记进手记。"
-	if not feedback.is_empty():
-		text += "\n" + feedback
 	var title = "%s · %s" % [_node_title(cell), event.title]
-	if node.kind in ["choice", "haunt"] and not _node_resolved(node, tile) and not ready and feedback.is_empty():
-		_show_story(title, Catalog.terrain_name(tile.terrain), text, STORY_TERRAIN[tile.terrain], [], [],
-			func(_option: String): _node_dialog("", true), {"返回地图": _close_modal}, _node_tint())
-		return
 	var options: Array = []
 	if not _node_resolved(node, tile):
 		match node.kind:
 			"trade":
 				options.append(_node_option("trade", "查看货物 · 持有 %d 灯铢" % run.data.lamp_coins))
 			"supply":
-				options.append(_node_option("collect", "采集%s ×%d · 1 精力" % [Catalog.item_name(tile.resource), tile.quantity]))
+				options.append(_node_option("collect", "取用%s ×%d · 1 精力" % [Catalog.item_name(tile.resource), tile.quantity]))
 			"rest":
 				options.append(_node_option("hp", "在此休整 · 在场能行动的队员恢复 %d%% 生命" % run.recovery_percent(cell, "hp")))
 				options.append(_node_option("mp", "在此调息 · 在场能行动的队员恢复 %d%% 魔力" % run.recovery_percent(cell, "mp")))
@@ -607,7 +599,7 @@ func _node_dialog(feedback: String = "", ready: bool = false) -> void:
 					options.append(_node_option("settle", event.work))
 					options.append(_node_option("settle_alternative", event.alternative))
 				else:
-					text += "\n证据已经核实，等旅人到场再陪亡者告别。"
+					text += "\n已经问清了亡者牵挂的事，等旅人来了，再陪亡者告别。"
 			"cache":
 				options.append(_node_option("search", "搜寻旧物 · 1 精力"))
 			"battle", "elite":
@@ -616,8 +608,13 @@ func _node_dialog(feedback: String = "", ready: bool = false) -> void:
 	if not tile.npc.is_empty() and tile.npc != selected_id and run.actor(tile.npc).position == cell and tile.enemies.is_empty():
 		options.append(_node_option("talk", "和%s交谈" % run.actor(tile.npc).name))
 	options.append(_node_option("leave", "返回地图"))
-	_show_story(title, Catalog.terrain_name(tile.terrain) + " · " + Nodes.label(node.kind),
-		text, STORY_TERRAIN[tile.terrain], [], options, _node_choice, {}, _node_tint())
+	if not feedback.is_empty():
+		_show_story(title, "旁白", text, STORY_TERRAIN[tile.terrain], [], [],
+			func(_option: String):
+				_show_story(title, "行动结果", feedback, STORY_TERRAIN[tile.terrain], [], options, _node_choice, {}, _node_tint()),
+			{}, _node_tint())
+	else:
+		_show_story(title, "旁白", text, STORY_TERRAIN[tile.terrain], [], options, _node_choice, {}, _node_tint())
 
 func _node_choice(option: String) -> void:
 	match option:
@@ -1601,7 +1598,7 @@ func _victory_dialog() -> void:
 	if not result.salve_receiver.is_empty():
 		_text(content, "疗伤药 ×1 · %s 收入背包" % run.actor(result.salve_receiver).name, 17)
 	if not result.relic.is_empty():
-		_text(content, ("新增副本 · " if result.get("relic_duplicate", false) else "发现遗器 · ") + Relics.DATA[result.relic].name, 17, gold)
+		_text(content, ("再次获得遗器 · " if result.get("relic_duplicate", false) else "发现遗器 · ") + Relics.DATA[result.relic].name, 17, gold)
 	if result.get("coins", 0) > 0:
 		_text(content, "获得 %d 灯铢" % result.coins, 17, gold)
 	if result.salve_receiver.is_empty() and result.relic.is_empty() and result.get("coins", 0) <= 0:
@@ -1658,10 +1655,10 @@ func _process(delta: float) -> void:
 
 func _chapter_pages() -> Array:
 	return [
-		["留下的人", "路边有人招手叫你过去，指给你看一位亡者。他一遍遍往路断掉的地方走，到了那里就折回来。家里早给他办过葬礼，也去四座神殿求过，可每天还是听得见他的脚步。那人问你：“都下葬了，他怎么还在这儿？我们还能找谁帮忙？”\n\n你伸手想扶他，脚边的碎石跟着浮了起来。你想起曾有人握着你的手，也想起自己答应过，要帮这些找不到路的亡者回去。"],
-		["失去的制衡", "两名逃难的人为了一口水拔了刀。你把刀压进泥里，让他们把话说清楚。一边的井被亡魂守着，没人敢靠近。另一边打仗毁了运粮的路。有个村庄求卡德兰给守粮仓的人一点勇气。结果敌人都撤了，村里连受伤的人也发了疯，追上去杀人。\n\n他们带着一份旧约的抄本。照上面写的，过去还有另一位神能拦住各方。那股力量一消失，仗越打越多，卡德兰也越来越强。你想起来，刚才按住那把刀的力气，也能用在不止一个人身上。"],
-		["未完成的停战会", "有人拿来一张从旧碑上拓下来的纸，问你认不认得那几个残字。碑上说，卡德兰曾约另一位神谈停战。侍从放下酒杯就被打发走了，没人知道后面发生了什么。等有人再进去，地方已经毁了。旁边还有一份祭祀记录，从那天起，再也没有亡者被接走。那位神的名字刻在碑角，已经掉了。\n\n你记得自己也走进过那间屋子。当时你问过那些神：“你们给人赏赐也好，降罚也好，最后吃亏的是谁？”你连桌上那杯没人喝过的酒都还记得。"],
-		["找到战神", "有个刚从卡德兰营地出来的信使拦住你。他带着一份盖了战神印记的征调书，还画了张自己走过的路。他没见着卡德兰，只听见帐后一直在打鼓。你和他对了对山口、河岸的位置，找到了营地。\n\n书上让两边继续抢运粮的路，连围城的人和守城的人，念的都是同一段求胜的祷词。仗多打一天，卡德兰就多一分力气。你把营地标上地图。这仗再打下去，活着的人没法过日子，死了的人也没地方去。"],
+		["留下的人", "傍晚歇脚时，一位赶车人提起了死去的父亲。老人每夜都走到断路旁，来回寻一个早已不在的路口。家人找过祭司，也换过安葬的地方，还是留不住他。\n\n赶车人说起父亲走路的样子，你忽然记得，曾有许多人这样走向自己。你向他们伸出过手，告诉他们不用再赶路。回过神时，脚边的碎石已经浮到了膝边。你收回手，石头轻轻落下。"],
+		["停不下来的战鼓", "你遇见一个逃离军营的士兵。他的伤口还在渗血，手却不停地往刀柄上摸。敌军退走以后，营里的战鼓仍响个不停，受过伤的人又站起来追了出去。\n\n“将军说是卡德兰赐的勇气。我只想把刀放下，手却不听使唤。”他话没说完便拔出了刀。你抬手把刀压进土里。士兵跪着喘气，远处的鼓声渐渐听不见了。\n\n你望着自己的手，记起该怎样让这股力量向四周散开。那面战鼓响起时，你也曾这样拦住过一群人。"],
+		["没有喝完的酒", "夜里，你又梦见那张长桌。有人把酒推到你面前，杯沿映着红光。你没有喝，先问他为什么又让两边的人打了起来。\n\n“坐下再说。”桌子对面的人挥手叫侍从出去。你记得自己站在门边，还想让对方收回赐给军队的疯狂。再往后，梦里只剩一声碎响。\n\n你醒来时，手还停在挡住那道红光的位置。那不是听来的故事。你去过那里，也认识坐在桌子对面的人。"],
+		["鼓声从哪里来", "一个从前线逃出来的鼓手认出了你问的那段鼓点。他的手腕被绳子勒破了：军官把他绑在鼓边，不准停，哪怕对面的兵已经丢下了武器。\n\n你请他画出回营的路。他用树枝从河湾画到山口，最后指向一处大营。“那里的鼓不用人敲。红光一亮，我们这边和敌营的鼓都会跟着响。”\n\n你拿出远征队沿途记下的路线，与他指的方向一一对上。卡德兰就在那里。只要他还在催动两边的军队，路上的人就没法安心回家。"],
 	]
 
 func _show_chapter() -> bool:
@@ -1680,18 +1677,20 @@ func _show_chapter() -> bool:
 
 func _final_battle_page(index: int) -> void:
 	var pages = [
-		["旅人", "这道红光……卡德兰，那天你也是这样举起武器的。侍从已经出去了，桌上的酒还没人喝。是你杀了我。"],
-		["旅人", "我是伊文洛，死亡之神。我记得那些临走时握过我手的人。有士兵，有平民，也有人向别的神求过平安。最后是我带他们去了冥界。你看见那些浮起来的碎石了吗？我就是用这股力量给亡魂引路的。\n\n你毁了我的身体。我自己都不知道，死亡还能让我重新有一副身体。后来有些逃难的人召唤恶魔求帮忙，竟把昏迷的我一起带到了这边。是村里的人救了我。"],
-		["卡德兰", "我亲手毁掉了你的身体。人们照旧办葬礼，可死者一个都走不了。活着的人为了水、为了粮，也为了报仇，又打了起来。城里求我给他们勇气，城外也来求。我两边都给了。他们打得越久，我就越强。\n\n我没想到你还能回来。你当年也没跟我说过，你还有这一手。"],
-		["旁白", "你伸出手，用重力给亡魂指了条去冥界的路。一个还在挥断剑的士兵慢慢放下了手。有人回头看了岸上的人一眼，也有人终于停下了脚步。\n\n亡魂找到了路，活着的人还有伤要治。你得先拦住卡德兰，让他没法再逼两边打下去。"],
-		["旁白", "你把冥河引到战场，把河水拦在卡德兰脚下，给活着的人留了一块能站稳的岸。冥河不会分辨敌友。谁掉下去，力量都会被河水一点点夺走。掉进去的东西，也可能被河水吞掉。\n\n卡德兰已经开始站不稳了。现在轮到你结束这场仗。"],
+		["旅人", "这道红光……侍从已经出去了，桌上的酒还没人喝。卡德兰，是你杀了我。"],
+		["旁白", "记忆停在武器落下的那一刻。你重新感到冥界的牵引，才知道那场死亡之后还发生了什么。\n\n身体曾在冥界重新长成，意识却一直没有醒来。后来，逃难者召唤恶魔求援，打开的通道把昏迷的你也带到了现世。村民在路边发现了你。你从不知道，自己死后还能这样回来。"],
+		["卡德兰", "我把你的身体毁得一块都不剩。葬礼办了一场又一场，没有一个亡魂被接走。你怎么还能站在这里？"],
+		["旅人", "我也不知道自己还能回来。这一路，我连名字都想不起。\n\n我是伊文洛。那些死去的人还在等我。把你的鼓停下。"],
+		["卡德兰", "停下？城里求我守住粮仓，城外求我打破城门。你叫我答应哪边？\n\n我两边都答应。他们打得越久，我就越强。你回来得太晚了。"],
+		["旅人", "他们已经丢下武器了，你还让他们追着打。\n\n你想打，就冲我来。别再逼他们拿刀。"],
+		["旁白", "你伸出手，重力托起了战场上四处游荡的亡魂。那个还在挥舞断剑的士兵松开了手，跟着你指出的方向走向冥界。\n\n卡德兰举起武器，你挡在还活着的人身前。"],
+		["伊文洛", "都留在我身后，别碰河水。"],
+		["旁白", "冥河在卡德兰脚下涌出。你用重力拦住河界，给同行的人留出站稳的岸地。一截落进河里的断枪迅速锈烂，沉下去，连碎屑都没有浮起。\n\n河水属于冥界，能洗刷、剥夺、吞噬碰到的一切，不会分辨敌友。你必须守住这条界线。卡德兰踉跄了一步，握着武器的手开始颤抖。"],
 	]
 	var page = pages[index]
-	var met_demon = Catalog.COMPANIONS.keys().any(func(id): return Catalog.COMPANIONS[id].race == "恶魔" and run.data.story[id].met)
-	if index == 3 and met_demon:
-		page[1] += "\n\n你也明白了，为什么那些恶魔总觉得你有点眼熟。他们认出了冥界的气息。"
-	var scene = "final_memory" if index < 2 else _story_scene_at(run.data.boss) if index == 2 else "finale"
-	var portraits = [] if index < 2 else [_story_portrait("hero", "battle"), _story_portrait("war_god", "anger" if index == 2 else "surprise")]
+	var river_revealed = index == pages.size() - 1
+	var scene = "final_memory" if index < 2 else "finale" if river_revealed else _story_scene_at(run.data.boss)
+	var portraits = [] if index < 2 else [_story_portrait("hero", "battle"), _story_portrait("war_god", "surprise" if river_revealed else "anger")]
 	_show_story("记忆回来了", page[0], page[1], scene, portraits, [],
 		func(_option: String):
 			if index + 1 < pages.size():
@@ -2040,6 +2039,7 @@ func _story_portrait(id: String, pose: String = "") -> Texture2D:
 	return load(path) if ResourceLoader.exists(path) else null
 
 func _render_dialogue(response: String = "") -> void:
+	var was_met: bool = run.data.story.get(dialogue_subject, {}).get("met", false)
 	var d = narrative.dialogue(selected_id, dialogue_subject)
 	if not d.ok:
 		_notice(d.message)
@@ -2055,7 +2055,8 @@ func _render_dialogue(response: String = "") -> void:
 			func(_option: String): _show_relic_intro(_render_dialogue), {"结束交谈": _show_relic_intro})
 	else:
 		_show_story(d.title, speaker, text, scene, portraits, d.options, _story_choice, {"结束交谈": _close_modal})
-	run.save_game()
+	if not was_met:
+		run.save_game()
 
 func _personal_quest() -> void:
 	var quest = narrative.personal_quest(selected_id, dialogue_subject)
@@ -2087,7 +2088,8 @@ func _story_choice(option_id: String) -> void:
 		return
 	if option_id == "join":
 		moving_ids.append(dialogue_subject)
-	run.save_game()
+	if option_id in ["join", "start_duel", "personal_a", "personal_b"]:
+		run.save_game()
 	var response: String = result.get("response", "")
 	if response.is_empty() and _show_relic_intro(_render_dialogue):
 		return

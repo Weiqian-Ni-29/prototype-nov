@@ -159,6 +159,23 @@ func check_marker_height() -> void:
 		"Changing a bone pose updates the selected marker independently of model scale")
 	game.view.end_battle()
 
+func check_victory_relic_text() -> void:
+	game._start_new()
+	var run = game.run
+	var relic_name: String = load("res://scripts/domain/relic_catalog.gd").DATA.opening_flint.name
+	for duplicate in [false, true]:
+		run.data.pending_victory = {"enemies": 1, "salve_receiver": "", "relic": "opening_flint",
+			"relic_duplicate": duplicate, "coins": 0, "members": ["hero"], "revived": []}
+		var before = run.data.duplicate(true)
+		game._victory_dialog()
+		await process_frame
+		var labels = game.modal_layer.find_children("*", "Label", true, false)
+		var expected = ("再次获得遗器 · " if duplicate else "发现遗器 · ") + relic_name
+		expect(labels.any(func(label): return label.text == expected), "Victory distinguishes new and repeated relics in plain language")
+		expect(not labels.any(func(label): return "副本" in label.text), "Victory does not describe a repeated relic as a copy")
+		expect(run.data == before, "Reading the victory reward does not grant it again")
+		game._close_modal()
+
 func execute() -> void:
 	game = Main.instantiate()
 	root.add_child(game)
@@ -258,6 +275,7 @@ func execute() -> void:
 	expect(restored.load_game().ok and restored.data.pending_battle.is_empty(), "Retreat state is a stable checkpoint")
 	await check_battle_targeting()
 	await check_marker_height()
+	await check_victory_relic_text()
 	await create_timer(0.25).timeout
 	game.queue_free()
 	await create_timer(0.05).timeout

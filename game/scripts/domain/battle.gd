@@ -95,7 +95,7 @@ func begin(expedition: RefCounted, encounter: Dictionary, formation: Array) -> D
 		if type.begins_with("npc:"):
 			e = run.actor(npc).duplicate(true)
 			e["hp_max"] = e.hp_max
-			e["role"] = "因误会交手 · 重伤后需要救治"
+			e["role"] = "交战中 · 重伤后需要救治"
 			e["skill"] = "ignite" if npc == "ember" else "attack"
 		else:
 			e = run.war_god_stats() if type == "war_god" else Catalog.ENEMIES[type].duplicate(true)

@@ -36,6 +36,38 @@ func check_personal_blocked(story: RefCounted, run: RefCounted, visitor: String,
 	expect(unrelated_state(run) == before and run.data.story[subject].get("personal_choice", "") == original,
 		subject + " rejected personal interaction preserves state: " + reason)
 
+func check_past(story: RefCounted, run: RefCounted, visitor: String, subject: String, reason: String) -> void:
+	var before = run.data.duplicate(true)
+	var dialogue = story.dialogue(visitor, subject)
+	expect(dialogue.ok and has_option(dialogue, "past") and not str(dialogue.text).contains(Story.BACKGROUNDS[subject]),
+		subject + " offers background separately: " + reason)
+	for attempt in range(2):
+		var past = story.choose(visitor, subject, "past")
+		expect(past.ok and past.get("response", "") == Story.BACKGROUNDS[subject], subject + " recalls the complete background: " + reason)
+	if visitor != "hero" or not Story.HERO_LINES.has(subject):
+		expect(not has_option(dialogue, "echo") and not story.choose(visitor, subject, "echo").ok,
+			subject + " cannot lend protagonist familiarity to this visitor: " + reason)
+	expect(run.data == before, subject + " repeated background reading changes no resources, decisions or other state: " + reason)
+
+func check_player_advice(subject: String, quest: Dictionary) -> void:
+	var labels = {}
+	for option in quest.get("options", []):
+		labels[option.id] = str(option.text)
+	for branch in ["personal_a", "personal_b"]:
+		expect(labels.get(branch, "") == Story.PERSONAL_QUESTS[subject][branch].label, subject + " presents the player's advice for " + branch)
+	var a: String = labels.get("personal_a", "")
+	var b: String = labels.get("personal_b", "")
+	if subject == "stone_guard":
+		expect("陪你" in a and "主路" in a and "爆破料" in a and "一起拦军官" in a,
+			"Stone guard advice offers help with evacuation and explosives, not the guard's own specialist role")
+		expect("帮你" in b and "借梁" in b and "旧出口" in b and not "我下第一段" in b,
+			"Stone guard advice helps gather beams without claiming to take the guard's first support shift")
+	elif subject == "granite":
+		expect("旧门卫" in a and "士族优先" in a and "不会替你" in a and not "还给我" in a,
+			"Granite advice acknowledges his old guards and privilege without claiming his command")
+		expect("陪你" in b and "城南军官" in b and "谁守门" in b and not "钥匙不交" in b,
+			"Granite advice accompanies negotiations without speaking as the keeper of the gate")
+
 func check_personal_choices() -> void:
 	var responses = {}
 	var endings = {}
@@ -92,8 +124,9 @@ func check_personal_choices() -> void:
 			expect(quest.ok and quest.has_all(["title", "text", "options", "pose"])
 				and quest.get("title") == definition.title and quest.get("text") == definition.text
 				and has_option(quest, "personal_a") and has_option(quest, "personal_b"), id + " both choices follow the complete personal story")
-			expect(quest.options.all(func(option): return option.spoken and "我" in option.text),
-				id + " every personal choice is a spoken first-person line")
+			expect(quest.options.all(func(option): return option.spoken and not str(option.text).strip_edges().is_empty()),
+				id + " every personal choice is a nonempty spoken reply")
+			check_player_advice(id, quest)
 			expect(unrelated_state(run) == before and str(run.data.story[id].get("personal_choice", "")).is_empty(), id + " reading personal quest does not spend or select")
 			var story_before = run.data.story.duplicate(true)
 			var result = story.choose(visitor, id, branch)
@@ -101,12 +134,14 @@ func check_personal_choices() -> void:
 			expect(result.ok and not response.is_empty() and response == definition[branch].response, id + " personalized response for " + branch)
 			expect(unrelated_state(run) == before, id + " choice changes no AP, inventory, coins, position, map or battle state")
 			var stored = run.data.story[id].get("personal_choice", "")
-			expect(not str(stored).is_empty(), id + " records personal decision")
+			expect(stored == "journey_" + branch.right(1), id + " records the current journey decision version")
 			story_before[id]["personal_choice"] = stored
 			expect(run.data.story == story_before, id + " choice modifies only this companion's personal decision")
 			stored_choices.append(stored)
 			var recall = story.dialogue(visitor, id)
-			expect(recall.ok and str(recall.text).contains(response) and not has_option(recall, "quest"), id + " normal dialogue recalls chosen response")
+			expect(recall.ok and not str(recall.text).contains(response) and has_option(recall, "quest"), id + " normal dialogue offers a separate review without repeating the response")
+			expect(story.personal_quest(visitor, id).get("text", "") == response, id + " deliberate review recalls the chosen response")
+			check_past(story, run, visitor, id, "after journey choice")
 			for repeated in ["personal_a", "personal_b"]:
 				expect(not story.choose(visitor, id, repeated).ok and run.data.story[id].get("personal_choice", "") == stored
 					and unrelated_state(run) == before, id + " personal choice cannot be repeated or overwritten")
@@ -118,7 +153,9 @@ func check_personal_choices() -> void:
 			var loaded = Run.new()
 			expect(loaded.load_game(run.save_path).ok and loaded.data.story[id].get("personal_choice", "") == stored, id + " reload preserves opaque choice value")
 			var continued = Story.new(loaded)
-			expect(str(continued.dialogue(visitor, id).get("text", "")).contains(response), id + " reload keeps normal dialogue recall")
+			expect(not str(continued.dialogue(visitor, id).get("text", "")).contains(response)
+				and continued.personal_quest(visitor, id).get("text", "") == response, id + " reload keeps the response in its own review")
+			check_past(continued, loaded, visitor, id, "after journey reload")
 			var resumed_state = unrelated_state(loaded)
 			for repeated in ["personal_a", "personal_b"]:
 				expect(not continued.choose(visitor, id, repeated).ok and loaded.data.story[id].get("personal_choice", "") == stored
@@ -157,7 +194,7 @@ func check_personal_boundaries() -> void:
 	expect(loaded.load_game(run.save_path).ok, "Load valid personal choice")
 	var valid = run.data.duplicate(true)
 	before = loaded.data.duplicate(true)
-	for invalid in [0, true, "", "a", "personal_unknown", "god_a", [], {}, null]:
+	for invalid in [0, true, "", "a", "personal_unknown", "journey_x", "god_a", [], {}, null]:
 		var corrupt = valid.duplicate(true)
 		corrupt.story.lorne.personal_choice = invalid
 		var file = FileAccess.open(run.save_path, FileAccess.WRITE)
@@ -198,7 +235,106 @@ func check_personal_boundaries() -> void:
 			"The new god story preserves an earlier title, response and ending for " + id)
 
 func spoken_from(record: String, dialogue: String) -> bool:
-	return not dialogue.is_empty() and Array(dialogue.split("\n\n")).all(func(line): return ("「" + line + "」") in record)
+	if dialogue.is_empty():
+		return false
+	if not record.contains("「"):
+		return dialogue == record
+	var expected = PackedStringArray()
+	for passage in record.split("「").slice(1):
+		var line = passage.get_slice("」", 0)
+		if line.ends_with("。") or line.ends_with("？") or line.ends_with("！"):
+			expected.append(line)
+	return dialogue == "\n\n".join(expected)
+
+func check_spoken_from() -> void:
+	expect(spoken_from("我会回来。", "我会回来。"), "Plain legacy responses must match exactly")
+	expect(not spoken_from("我会回来。", "") and not spoken_from("", "")
+		and not spoken_from("我会回来。", "别人会回来。") and not spoken_from("我会回来。", "我会回来。另有新话。"),
+		"Plain response matching rejects empty, substituted or appended text")
+	var record = "他点头。「先等一等。」他指向写着「北门」的路牌。「我会回来！」"
+	expect(spoken_from(record, "先等一等。\n\n我会回来！"), "Quoted legacy responses retain all spoken sentences, not stage directions or names")
+	expect(not spoken_from(record, "先等一等。") and not spoken_from(record, "我会回来！\n\n先等一等。")
+		and not spoken_from(record, record) and not spoken_from(record, "别的新故事。"),
+		"Quoted response matching rejects omissions, reordered lines, stage directions and new content")
+
+func check_legacy_choice_matrix() -> void:
+	expect(LegacyOutcomes.TRAVEL_OUTCOMES.size() == 25 and LegacyOutcomes.TRAVEL_OUTCOMES.has_all(Catalog.COMPANIONS.keys()),
+		"Travel outcomes freeze the complete original 25-companion roster")
+	var cases = 0
+	var travel_cases = 0
+	var preview_fallbacks = 0
+	for id in Catalog.COMPANIONS:
+		var run = Run.new()
+		run.save_path = "user://test-legacy-story-matrix.json"
+		run.new_run(41, "wayfarer")
+		var story = Story.new(run)
+		var person = run.actor(id)
+		run.actor("hero").position = person.position
+		run.data.tiles[person.position].enemies.clear()
+		expect(story.choose("hero", id, "join").ok, "Recruit legacy matrix companion " + id)
+		var routes = [
+			{"prefix": "personal_", "table": LegacyOutcomes.OUTCOMES},
+			{"prefix": "war_", "table": LegacyOutcomes.PREVIEW_OUTCOMES},
+			{"prefix": "war2_", "table": LegacyOutcomes.WAR_OUTCOMES},
+		]
+		if Catalog.COMPANIONS[id].race == "神":
+			routes.append({"prefix": "god_", "table": LegacyOutcomes.TRAVEL_OUTCOMES})
+		for route in routes:
+			var prior: Dictionary = route.table.get(id, LegacyOutcomes.TRAVEL_OUTCOMES[id])
+			for branch in ["personal_a", "personal_b"]:
+				var choice: String = route.prefix + branch.right(1)
+				var label = id + " " + choice
+				var outcome: Dictionary = prior[branch]
+				run.data.story[id].personal_choice = choice
+				expect(run.save_game().ok, label + " saves the historical decision")
+				var loaded = Run.new()
+				var load_result = loaded.load_game(run.save_path)
+				expect(load_result.ok, label + " survives the save whitelist")
+				if not load_result.ok:
+					continue
+				expect(loaded.data.story[id].get("personal_choice", "") == choice, label + " is not migrated to journey")
+				var continued = Story.new(loaded)
+				var before = loaded.data.duplicate(true)
+				var dialogue = continued.dialogue("hero", id)
+				expect(dialogue.ok and dialogue.text == Story.CHARACTER_BEHAVIOR[id][2] and has_option(dialogue, "quest")
+					and not has_option(dialogue, "past"), label + " keeps chat separate and hides the rewritten past")
+				expect(not continued.choose("hero", id, "past").ok, label + " cannot request the rewritten background directly")
+				var open = continued.choose("hero", id, "quest")
+				expect(open.ok and open.get("quest", false), label + " explicitly opens its historical review")
+				var recall = continued.personal_quest("hero", id)
+				expect(recall.ok and recall.get("title", "") == prior.title and spoken_from(outcome.response, recall.get("text", "")),
+					label + " recalls the original table's title and complete response")
+				expect(has_option(recall, "leave") and not has_option(recall, "personal_a") and not has_option(recall, "personal_b"),
+					label + " review offers no replacement decision")
+				expect(not spoken_from(Story.PERSONAL_QUESTS[id][branch].response, recall.get("text", "")),
+					label + " review is not the new journey response")
+				for repeated in ["personal_a", "personal_b", "journey_a", "journey_b"]:
+					expect(not continued.choose("hero", id, repeated).ok, label + " cannot be overwritten by " + repeated)
+				expect(loaded.data == before, label + " reading and rejected choices preserve the entire loaded state")
+				for status in ["won", "failed"]:
+					loaded.data.status = status
+					var ending_before = loaded.data.duplicate(true)
+					var ending = continued.character_ending(id).text
+					expect(outcome.ending in ending and not Story.PERSONAL_QUESTS[id][branch].ending in ending,
+						label + " retains its historical ending, not journey content, after " + status)
+					expect(loaded.data == ending_before, label + " ending is read-only after " + status)
+				cases += 1
+				if route.prefix == "god_" or (route.prefix == "war2_" and Catalog.COMPANIONS[id].race != "神"):
+					travel_cases += 1
+				if route.prefix == "war_" and not route.table.has(id):
+					preview_fallbacks += 1
+	expect(cases == 156, "All personal, preview and war routes cover 25 companions twice, plus both god routes for three avatars")
+	expect(travel_cases == 50, "Travel snapshot covers 22 ordinary war2 decisions and three god decisions on both branches")
+	expect(preview_fallbacks == 16, "Both war branches fall back to travel for all eight companions absent from the preview table")
+
+func check_topics_blocked(story: RefCounted, run: RefCounted, visitor: String, subject: String, reason: String) -> void:
+	var before = run.data.duplicate(true)
+	var dialogue = story.dialogue(visitor, subject)
+	for option in ["past", "echo", "quest"]:
+		expect(not has_option(dialogue, option) and not story.choose(visitor, subject, option).ok,
+			subject + " hides and rejects " + option + " for " + visitor + ": " + reason)
+	check_personal_blocked(story, run, visitor, subject, reason)
+	expect(run.data == before, subject + " blocked topics preserve all resources, choices and state: " + reason)
 
 func check_hero_only_mystery() -> void:
 	for id in Catalog.COMPANIONS:
@@ -211,26 +347,87 @@ func check_hero_only_mystery() -> void:
 		var person = run.actor(id)
 		var hero = run.actor("hero")
 		var companion = run.actor("lorne")
+		var stranger = run.actor("cen")
 		hero.position = person.position
 		companion.position = person.position
+		stranger.position = person.position
 		run.data.tiles[person.position].enemies.clear()
 		expect(run.join_companion("lorne").ok, "Recruit ordinary visitor")
+		var first_state = run.data.duplicate(true)
+		first_state.story[id].met = true
 		var ordinary = story.dialogue("lorne", id)
 		var familiar = story.dialogue("hero", id)
-		expect(ordinary.ok and str(ordinary.text).contains(Story.COMPANION_LINES[id])
-			and not str(ordinary.text).contains(Story.HERO_LINES[id]), id + " ordinary visitor receives no protagonist familiarity")
-		expect(familiar.ok and str(familiar.text).contains(Story.HERO_LINES[id])
-			and not str(familiar.text).contains("伊文洛"), id + " hero receives the hint without identity reveal")
+		for introduction in [ordinary, familiar]:
+			expect(introduction.ok and introduction.text == Story.COMPANION_LINES[id] and not str(introduction.text).contains("伊文洛")
+				and not str(introduction.text).contains(Story.HERO_LINES[id]) and not str(introduction.text).contains(Story.BACKGROUNDS[id]),
+				id + " first meeting reveals neither familiarity nor the full past to either visitor")
+		expect(run.data == first_state, id + " first meeting only records met, without spending or choosing")
+		expect(not str(Story.HERO_LINES[id]).contains("伊文洛"), id + " hint never reveals the protagonist's name")
 		if Catalog.COMPANIONS[id].race == "神":
 			expect("化身" in ordinary.title and "化身" in familiar.title, id + " appears to both visitors as an avatar")
+		for visitor in ["hero", "lorne"]:
+			check_topics_blocked(story, run, visitor, id, "subject not recruited")
+		expect(story.choose("hero", id, "join").ok, id + " joins before any past or echo")
+		hero.ap = 0
+		companion.ap = 0
+		var ready = run.data.duplicate(true)
+		for visitor in ["hero", "lorne"]:
+			var chat = story.dialogue(visitor, id)
+			expect(chat.ok and chat.text == Story.CHARACTER_BEHAVIOR[id][2] and not str(chat.text).contains(Story.HERO_LINES[id])
+				and has_option(chat, "echo") == (visitor == "hero"), id + " joined chat requires a deliberate hero-only echo request")
+			check_past(story, run, visitor, id, "joined with zero AP")
+		for attempt in range(2):
+			var echo = story.choose("hero", id, "echo")
+			expect(echo.ok and echo.get("response", "") == Story.HERO_LINES[id] and not str(echo.get("response", "")).contains("伊文洛"),
+				id + " hero may actively revisit the exact hint without an identity reveal")
+		expect(run.data == ready and str(run.data.story[id].get("personal_choice", "")).is_empty(),
+			id + " repeated past and echo consume no resources and make no decision")
+		check_topics_blocked(story, run, "cen", id, "visitor not recruited")
+		check_topics_blocked(story, run, id, id, "cannot talk to oneself")
 		hero.position = run.data.start
 		expect(not story.dialogue("hero", id).ok, id + " distant hero cannot hear the hint")
+		check_topics_blocked(story, run, "hero", id, "different tiles")
 		ordinary = story.dialogue("lorne", id)
 		expect(ordinary.ok and not str(ordinary.text).contains(Story.HERO_LINES[id]), id + " local companion cannot borrow absent hero familiarity")
+		check_past(story, run, "lorne", id, "hero absent")
+		hero.position = person.position
+		companion.position = run.data.start
+		check_topics_blocked(story, run, "lorne", id, "ordinary visitor on a different tile")
+		companion.position = person.position
+		for visitor in ["hero", "lorne"]:
+			var member = run.actor(visitor)
+			var hp = member.hp
+			member.hp = 0
+			check_topics_blocked(story, run, visitor, id, "visitor wounded")
+			member.hp = hp
+		var person_hp = person.hp
+		person.hp = 0
+		for visitor in ["hero", "lorne"]:
+			check_topics_blocked(story, run, visitor, id, "subject wounded")
+		person.hp = person_hp
+		run.data.tiles[person.position].enemies = ["bandit"]
+		for visitor in ["hero", "lorne"]:
+			check_topics_blocked(story, run, visitor, id, "enemies appeared after opening dialogue")
+		run.data.tiles[person.position].enemies.clear()
+		run.data.pending_battle = {"position": person.position}
+		for visitor in ["hero", "lorne"]:
+			check_topics_blocked(story, run, visitor, id, "encounter pending after opening dialogue")
+		run.data.pending_battle.clear()
+		for status in ["battle", "won", "failed"]:
+			run.data.status = status
+			for visitor in ["hero", "lorne"]:
+				check_topics_blocked(story, run, visitor, id, status)
+		run.data.status = "exploring"
+		check_past(story, run, "hero", id, "safe context restored")
+		var restored_echo = story.choose("hero", id, "echo")
+		expect(restored_echo.ok and restored_echo.get("response", "") == Story.HERO_LINES[id] and run.data == ready,
+			id + " safe context restores voluntary topics without hidden state changes")
 
 func execute() -> void:
+	check_spoken_from()
 	check_personal_choices()
 	check_personal_boundaries()
+	check_legacy_choice_matrix()
 	check_hero_only_mystery()
 	var r = Run.new()
 	r.save_path = "user://test-veylodan-story.json"
@@ -253,10 +450,13 @@ func execute() -> void:
 			expect(not story.dialogue("hero", id).ok, "The encounter has to be cleared first")
 			r.data.tiles[person.position].enemies.clear()
 		var dialogue = story.dialogue("hero", id)
-		expect(dialogue.ok and dialogue.text.contains(Story.BACKGROUNDS[id]) and dialogue.text.contains(Story.COMPANION_LINES[id]), "Personal story and dialogue " + id)
+		expect(dialogue.ok and not dialogue.text.contains(Story.BACKGROUNDS[id]) and dialogue.text == Story.COMPANION_LINES[id], "First meeting gives the immediate introduction without the full background " + id)
 		expect(dialogue.speaker == person.name and dialogue.options.all(func(option): return option.spoken),
 			"First encounter uses the companion's voice and player replies " + id)
+		check_topics_blocked(story, r, "hero", id, "first meeting before recruitment")
 		expect(story.choose("hero", id, "join").ok and person.squad_id == r.actor("hero").squad_id, "Actual recruitment " + id)
+		check_past(story, r, "hero", id, "immediately after first meeting and recruitment")
+		expect(str(r.data.story[id].get("personal_choice", "")).is_empty(), id + " learning the background never selects a personal branch")
 
 	var haunt: String = r.data.nodes.keys().filter(func(cell): return r.node_at(cell).kind == "haunt")[0]
 	r.actor("lorne").position = haunt
