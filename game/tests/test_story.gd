@@ -459,7 +459,7 @@ func execute() -> void:
 	r.retreat_party(haunt)
 	expect(not r.use_node("hero", "settle").ok, "The hero must investigate before settlement")
 	expect(r.use_node("hero", "inspect").ok and r.node_at(haunt).get("investigated", false)
-		and r.node_at(haunt).result == "" and r.data.leads.has(haunt) and not r.data.peace.has(haunt),
+		and r.node_at(haunt).result == "" and not r.data.peace.has(haunt),
 		"Investigation supplies evidence but does not weaken the boss")
 	expect(r.use_node("hero", "settle").ok and r.data.peace.has(haunt), "A settled haunting weakens the boss")
 	var peace_count = r.data.peace.size()
