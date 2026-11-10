@@ -16,6 +16,16 @@ func expect(value: bool, message: String) -> void:
 func has_label(parent: Node, text: String) -> bool:
 	return parent.find_children("*", "Label", true, false).any(func(label): return text in label.text)
 
+func expect_stamina(game: Node, remaining: int) -> void:
+	var tracks = game.ui.find_children("CrewStamina", "HBoxContainer", true, false)
+	expect(tracks.size() == 1 and tracks[0].get_child_count() == 5, "Five segments appear once for the whole party")
+	if tracks.size() != 1:
+		return
+	for index in tracks[0].get_child_count():
+		var style: StyleBoxFlat = tracks[0].get_child(index).get_theme_stylebox("panel")
+		expect(style.bg_color == Color("91c970" if index < remaining else "47604c"),
+			"Stamina segment %d reflects %d remaining steps" % [index + 1, remaining])
+
 func wait_for_arrival(game: Node) -> void:
 	var deadline = Time.get_ticks_msec() + 5000
 	while game.map_traveling and Time.get_ticks_msec() < deadline:
@@ -26,6 +36,7 @@ func execute() -> void:
 	var game = Main.instantiate()
 	root.add_child(game)
 	await process_frame
+	game.sound.set_volume(0.0, false)
 	game.run.save_path = "user://test-hero-marker.json"
 	game._start_new()
 	game.set_process(false)
@@ -33,26 +44,50 @@ func execute() -> void:
 	var origin: String = run.actor("hero").position
 	var next: String = Hex.neighbors(origin, run.data.tiles).filter(func(cell): return Hex.is_land(run.data.tiles, cell))[0]
 	run.data.tiles[next].enemies.clear()
-	run.actor("lorne").position = origin
-	expect(run.join_companion("lorne").ok, "Recruit companion")
-	game._select_actor("lorne")
+	var colors = {"hero": "17161e", "ember": "773831", "tide": "24536e", "wind_runner": "376452"}
+	for id in ["ember", "tide", "wind_runner"]:
+		run.actor(id).position = origin
+		expect(run.join_companion(id).ok, "Recruit companion " + id)
+	run.actor("hero").hp = 60
+	run.actor("hero").mp = 17
+	run.actor("hero").energy = 61
+	game._refresh()
+	for id in colors:
+		var member = game.ui.find_child("CrewMember_" + id, true, false)
+		expect(member is Button, "Roster row exists for " + id)
+		if member == null:
+			continue
+		var portrait: Panel = member.find_child("Portrait", true, false)
+		expect(portrait.get_theme_stylebox("panel").bg_color == Color(colors[id])
+			and portrait.get_child_count() == 1 and portrait.get_child(0).texture != null,
+			"Portrait uses the correct element color and character art for " + id)
+		expect(has_label(member, run.actor(id).name), "Character name appears in their portrait row")
+		var bars = member.find_children("*", "ProgressBar", true, false)
+		var actor = run.actor(id)
+		expect(bars.size() == 3 and bars[0].value == actor.hp and bars[0].max_value == actor.hp_max
+			and bars[1].value == actor.mp and bars[1].max_value == actor.mp_max and bars[2].value == actor.energy,
+			"Personal bars match the actor's health, magic and charge")
+	var ember_card: Button = game.ui.find_child("CrewMember_ember", true, false)
+	ember_card.pressed.emit()
+	expect(game.selected_id == "ember", "Clicking a portrait row selects its character")
 	expect(game.view.dolls.keys() == ["hero"], "Only the traveler is drawn on the map")
-	expect(has_label(game.ui, "今日剩余移动步数 5"), "Sidebar shows five remaining steps")
+	expect_stamina(game, 5)
 	game._select_cell(next)
 	expect(game.move_preview.visible and run.remaining_steps() == 5 and run.actor("hero").position == origin,
 		"Selecting a destination only previews the move")
 	game._select_cell(next)
-	expect(run.actor("hero").position == next and run.actor("lorne").position == next
+	expect(run.actor("hero").position == next and run.actor("ember").position == next
 		and game.selected_id == "hero" and run.remaining_steps() == 4, "The traveler leads both characters and spends one step")
+	expect_stamina(game, 4)
 	await wait_for_arrival(game)
 	game._close_modal()
 	run.data.steps_today = 4
 	game._refresh()
-	expect(has_label(game.ui, "今日剩余移动步数 1"), "Sidebar shows the final step")
+	expect_stamina(game, 1)
 	game._select_cell(origin)
 	game._select_cell(origin)
-	expect(has_label(game.ui, "第 2 天") and has_label(game.ui, "今日剩余移动步数 5"),
-		"Final step updates the date and resets the sidebar")
+	expect(has_label(game.ui, "第 2 天"), "Final step updates the date")
+	expect_stamina(game, 5)
 	await wait_for_arrival(game)
 	game._cell_actions()
 	for button in game.modal_layer.find_children("*", "Button", true, false):
