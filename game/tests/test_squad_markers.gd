@@ -48,6 +48,8 @@ func execute() -> void:
 	for id in ["ember", "tide", "wind_runner"]:
 		run.actor(id).position = origin
 		expect(run.join_companion(id).ok, "Recruit companion " + id)
+	# Treat recruitment reward stories as already read for this map-only check.
+	run.data.relic_intros.clear()
 	run.actor("hero").hp = 60
 	run.actor("hero").mp = 17
 	run.actor("hero").energy = 61
@@ -80,15 +82,23 @@ func execute() -> void:
 		and game.selected_id == "hero" and run.remaining_steps() == 4, "The traveler leads both characters and spends one step")
 	expect_stamina(game, 4)
 	await wait_for_arrival(game)
+	expect(game.day_transition.get_child_count() == 0, "An ordinary step has no day notice")
 	game._close_modal()
-	run.data.steps_today = 4
+	run.data.steps_today = run.STEPS_PER_DAY - 1
 	game._refresh()
 	expect_stamina(game, 1)
 	game._select_cell(origin)
 	game._select_cell(origin)
-	expect(has_label(game.ui, "第 2 天"), "Final step updates the date")
-	expect_stamina(game, 5)
+	expect(run.data.day == 2 and has_label(game.ui, "第 1 天") and game.day_transition.get_child_count() == 0,
+		"The final step commits the new day while the old date stays visible until arrival")
+	expect_stamina(game, 1)
 	await wait_for_arrival(game)
+	expect(has_label(game.ui, "第 2 天"), "Arrival updates the date")
+	expect_stamina(game, 5)
+	expect(game.day_transition.has_node("MapNotice") and has_label(game.day_transition, "精力已恢复"),
+		"Arrival shows the full map notice")
+	await create_timer(1.6).timeout
+	expect(game.day_transition.get_child_count() == 0, "The notice dismisses itself")
 	game._cell_actions()
 	for button in game.modal_layer.find_children("*", "Button", true, false):
 		expect(button.text not in ["拆分小队", "结束一天"] and not button.text.begins_with("治疗队友"), "Removed actions stay absent")
