@@ -587,6 +587,12 @@ func execute() -> void:
 	await capture("01-menu")
 	game._begin_opening_story()
 	await capture("story-world-intro")
+	await advance_until_text("趴着睡的大兽")
+	await capture("story-prologue-landscape-first")
+	if story_page().y > 1:
+		expect(story_text().text.ends_with("。"), "The landscape narration's first page ends a sentence")
+		await advance_story()
+		await capture("story-prologue-landscape-next")
 	var prologue_scenes = {
 		"最老的，是龙": "dragon", "是恶魔": "demon", "精灵住在林子里": "elves",
 		"矮人把家安进山": "dwarves", "人类生在平原上": "humans", "赶上开集": "market",
