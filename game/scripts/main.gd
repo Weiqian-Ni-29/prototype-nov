@@ -20,6 +20,8 @@ const Sound = preload("res://scripts/presentation/sound.gd")
 enum Screen { MENU, OPENING_STORY, EXPEDITION }
 const OBJECTIVE_ICON = preload("res://assets/ui/expedition-objective.svg")
 const LAMP_COIN_ICON = preload("res://assets/ui/lamp-coin.svg")
+const SHIELD_ICON = preload("res://assets/ui/shield-badge.svg")
+const SHIELD_BADGE_SIZE = Vector2(29, 31)
 const CREW_PANEL_WIDTH = 288
 const STORY_TERRAIN = {
 	"plains": "road", "forest": "woodland", "mountain": "highland", "ruins": "ruins",
@@ -518,19 +520,19 @@ func _crew_member(parent: VBoxContainer, id: String) -> void:
 	if selected_id != id:
 		button.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
 
-	var content = _member_status(button, id, int(a.hp))
+	var content = HBoxContainer.new()
+	button.add_child(content)
+	_member_status(content, id, int(a.hp))
 	content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	content.offset_left = 5
 	content.offset_right = -5
 	content.offset_top = 3
 	content.offset_bottom = -3
 
-func _member_status(parent: Control, id: String, shown_hp: int, status: String = "") -> HBoxContainer:
+func _member_status(content: HBoxContainer, id: String, shown_hp: int) -> VBoxContainer:
 	var a = run.actor(id)
-	var content = HBoxContainer.new()
 	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content.add_theme_constant_override("separation", 12)
-	parent.add_child(content)
 	var identity = VBoxContainer.new()
 	identity.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	identity.custom_minimum_size.x = 80
@@ -576,9 +578,7 @@ func _member_status(parent: Control, id: String, shown_hp: int, status: String =
 	_crew_meter(meters, "HP", shown_hp, a.hp_max, Color("e16562"))
 	_crew_meter(meters, "MP", a.mp, a.mp_max, Color("65a6e6"))
 	_crew_meter(meters, "充能", a.energy, Catalog.ENERGY_MAX, Color("eea353"))
-	if not status.is_empty():
-		_text(meters, status, 11, muted)
-	return content
+	return meters
 
 func _crew_meter(parent: VBoxContainer, caption: String, amount: float, maximum: float, color: Color) -> void:
 	var row = HBoxContainer.new()
@@ -1602,8 +1602,6 @@ func _battle_member(parent: VBoxContainer, id: String, acting: bool) -> void:
 		status.append("行动中")
 	if shown_hp <= 0:
 		status.append("重伤")
-	if shown_shield > 0:
-		status.append("盾%d" % shown_shield)
 	if combat.madness.has(id):
 		status.append("疯狂")
 	if shown_hp > 0 and combat.haste_turns.has(id):
@@ -1621,11 +1619,57 @@ func _battle_member(parent: VBoxContainer, id: String, acting: bool) -> void:
 	var card = VBoxContainer.new()
 	card.add_theme_constant_override("separation", 4)
 	panel.add_child(card)
-	_member_status(card, id, shown_hp, " · ".join(status))
+	var content = HBoxContainer.new()
+	card.add_child(content)
+	var meters = _member_status(content, id, shown_hp)
+	meters.add_theme_constant_override("separation", 3)
+	_battle_status_row(meters, id, " · ".join(status), shown_shield)
 	var skill_name: String = Catalog.SKILLS[a.ultimate].name
 	var ultimate = _button(card, "终结技 · " + skill_name, _ultimate.bind(id),
 		a.energy < Catalog.ENERGY_MAX or a.hp <= 0 or combat.madness.has(id))
 	ultimate.tooltip_text = "%s\n%s\n充能达到 100%% 时可释放，不占正常行动。" % [skill_name, Catalog.skill_description(a.ultimate)]
+
+func _battle_status_row(parent: VBoxContainer, id: String, status: String, shield: int) -> void:
+	var row = HBoxContainer.new()
+	row.name = "BattleStatus_" + id
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(row)
+	var label = _text(row, status, 11, muted)
+	label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+
+	# Keep the same amount of space when the shield is depleted.
+	var slot = Control.new()
+	slot.custom_minimum_size = SHIELD_BADGE_SIZE
+	slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(slot)
+	if shield <= 0:
+		return
+	var badge = TextureRect.new()
+	badge.name = "ShieldBadge_" + id
+	badge.accessibility_name = "护盾 %d" % shield
+	badge.texture = SHIELD_ICON
+	badge.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	badge.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	slot.add_child(badge)
+	badge.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var amount = _text(badge, str(shield), 12, Color.WHITE)
+	amount.name = "Amount"
+	amount.add_theme_color_override("font_outline_color", Color("231f1b"))
+	amount.add_theme_constant_override("outline_size", 2)
+	amount.autowrap_mode = TextServer.AUTOWRAP_OFF
+	amount.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	amount.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	amount.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	amount.offset_bottom = -3
+	var font = amount.get_theme_font("font")
+	var font_size = amount.get_theme_font_size("font_size")
+	while font_size > 1 and font.get_string_size(amount.text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > SHIELD_BADGE_SIZE.x - 7.0:
+		font_size -= 1
+	amount.add_theme_font_size_override("font_size", font_size)
 
 func _enemy_card(parent: VBoxContainer, id: String, title: String) -> void:
 	var enemy = combat.enemies[id]

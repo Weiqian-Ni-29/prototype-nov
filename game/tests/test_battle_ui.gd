@@ -176,6 +176,46 @@ func check_victory_relic_text() -> void:
 		expect(run.data == before, "Reading the victory reward does not grant it again")
 		game._close_modal()
 
+func check_shield_badges(battle: RefCounted) -> void:
+	await process_frame
+	var hero = battle.unit("hero")
+	var previous_hp = hero.hp
+	var status: Control = game.ui.find_child("BattleStatus_hero", true, false)
+	var original_rect = status.get_global_rect()
+	expect(game.ui.find_child("ShieldBadge_hero", true, false) == null, "An unshielded fighter has no badge")
+	battle.items.shield_gain(battle, "hero", 60)
+	game._refresh()
+	await process_frame
+	var badge: TextureRect = game.ui.find_child("ShieldBadge_hero", true, false)
+	expect(badge != null and badge.get_node("Amount").text == "60", "Gaining shield displays its remaining amount")
+	battle.items.shield_gain(battle, "hero", 190)
+	game._refresh()
+	await process_frame
+	badge = game.ui.find_child("ShieldBadge_hero", true, false)
+	if badge != null:
+		var amount: Label = badge.get_node("Amount")
+		var tide_badge: TextureRect = game.ui.find_child("ShieldBadge_tide", true, false)
+		status = game.ui.find_child("BattleStatus_hero", true, false)
+		expect(amount.text == "250" and amount.get_minimum_size().x <= badge.size.x, "Stacked three-digit shield fits inside the badge")
+		expect(tide_badge != null and tide_badge.size == badge.size
+			and is_equal_approx(badge.get_global_rect().end.x, status.get_global_rect().end.x)
+			and is_equal_approx(badge.get_global_rect().end.x, tide_badge.get_global_rect().end.x)
+			and status.get_global_rect() == original_rect,
+			"Shield badges keep a fixed size and sit at the right end of each status row")
+	else:
+		expect(false, "Stacking shield keeps the badge visible")
+	battle._hurt("hero", 7)
+	game._refresh()
+	badge = game.ui.find_child("ShieldBadge_hero", true, false)
+	expect(badge != null and badge.get_node("Amount").text == "243", "Absorbed damage updates the badge")
+	battle._hurt("hero", 243)
+	game._refresh()
+	await process_frame
+	status = game.ui.find_child("BattleStatus_hero", true, false)
+	expect(game.ui.find_child("ShieldBadge_hero", true, false) == null and hero.hp == previous_hp,
+		"Depleted shield absorbs its last damage and removes the badge")
+	expect(status.get_global_rect() == original_rect, "Hiding the badge preserves the status row position and height")
+
 func execute() -> void:
 	game = Main.instantiate()
 	root.add_child(game)
@@ -219,8 +259,9 @@ func execute() -> void:
 		var portrait = tide_card.find_child("Portrait", true, false)
 		expect(portrait != null and portrait.get_theme_stylebox("panel").bg_color == Color("24536e"),
 			"Battle portraits use the same element background as the exploration sidebar")
-		expect(tide_card.find_children("*", "Label", true, false).any(func(label): return label.text == "盾15"),
-			"Shield amount appears in the fighter's card")
+		var badge = tide_card.find_child("ShieldBadge_tide", true, false)
+		expect(badge != null and badge.get_node("Amount").text == "15", "Shield amount appears inside the fighter's badge")
+	await check_shield_badges(b)
 	var uncharged = find_button(game.ui, "终结技 · 落石")
 	expect(uncharged != null and uncharged.disabled, "Ultimate button is disabled before charge is full")
 	var cards = game.ui.find_children("EnemyCard_*", "PanelContainer", true, false)
