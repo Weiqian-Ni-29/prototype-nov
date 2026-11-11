@@ -59,6 +59,11 @@ func inspect_story_layout() -> void:
 	if stage == null or label == null:
 		expect(false, "Story screen and named body Label are visible")
 		return
+	var background = stage.get_child(0) as TextureRect
+	expect(background != null and background.texture != null
+		and background.stretch_mode == TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		and background.get_global_rect().is_equal_approx(root.get_visible_rect()),
+		"Story art covers the viewport at its original aspect ratio")
 	var dialogue = stage.get_node("Dialogue") as Control
 	expect(not dialogue is Container, "Dialogue is fixed rather than sized by its text")
 	expect(dialogue.find_children("*", "ScrollContainer", true, false).is_empty(), "Rendered body never needs scrolling")

@@ -1972,17 +1972,14 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	modal_layer.add_child(overlay)
 	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-	var prologue_art = scene.begins_with("prologue/")
 	var background = TextureRect.new()
 	background.texture = _story_texture(scene)
 	background.modulate = tint
 	background.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	background.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED if prologue_art else TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	background.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	background.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.add_child(background)
 	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	if prologue_art:
-		background.anchor_bottom = 0.74
 
 	var has_pair = portraits.size() - portraits.count(null) > 1
 	var portrait_width = 0.39 if has_pair else 0.43
@@ -2007,10 +2004,10 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 		slot.add_child(actor_image)
 
 	var gradient = Gradient.new()
-	gradient.offsets = PackedFloat32Array([0.0, 0.14, 0.68, 0.74, 1.0] if prologue_art else [0.0, 0.14, 0.53, 0.78, 1.0])
+	gradient.offsets = PackedFloat32Array([0.0, 0.14, 0.53, 0.74, 1.0])
 	gradient.colors = PackedColorArray([
 		Color(0.02, 0.03, 0.04, 0.74), Color(0.02, 0.03, 0.04, 0.0),
-		Color(0.02, 0.03, 0.04, 0.06), Color(0.02, 0.03, 0.04, 0.91), Color(0.02, 0.03, 0.04, 0.98),
+		Color(0.02, 0.03, 0.04, 0.06), Color(0.02, 0.03, 0.04, 0.73), Color(0.02, 0.03, 0.04, 0.82),
 	])
 	var shade_texture = GradientTexture2D.new()
 	shade_texture.gradient = gradient
@@ -2044,10 +2041,17 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	dialogue.add_child(separator)
 	separator.position.y = speaker_label.get_minimum_size().y + 8
 	separator.size.x = dialogue.size.x
+	var heading_height = separator.position.y + separator.get_minimum_size().y + 8
 	var text_label = _text(dialogue, "", 20, ink)
 	text_label.name = "StoryText"
 	text_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	text_label.offset_top = separator.position.y + separator.get_minimum_size().y + 8
+	if speaker == "旁白":
+		speaker_label.hide()
+		separator.hide()
+		# Move the body up while keeping the same space for each page of text.
+		text_label.offset_bottom = -heading_height
+	else:
+		text_label.offset_top = heading_height
 	var pages = _story_text_pages(body, text_label)
 	text_label.text = pages[page_index].strip_edges()
 	if page_index == pages.size() - 1 and on_last_page.is_valid():
