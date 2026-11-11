@@ -2029,7 +2029,7 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 		slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		overlay.add_child(slot)
 		var center = 0.23 + 0.30 * i
-		# Keep the head in the scene and the cut edge beneath the dialogue shade.
+		# Keep the portrait's lower edge within the dialogue shade.
 		_story_region(slot, center - portrait_width * 0.5, portrait_top, center + portrait_width * 0.5, 0.88)
 		var actor_image = TextureRect.new()
 		actor_image.name = "StoryActor%d" % i
@@ -2037,6 +2037,11 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 		actor_image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		actor_image.stretch_mode = TextureRect.STRETCH_SCALE
 		actor_image.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var portrait_material := ShaderMaterial.new()
+		portrait_material.shader = StoryPortrait
+		actor_image.material = portrait_material
+		actor_image.resized.connect(func():
+			portrait_material.set_shader_parameter("portrait_height", actor_image.size.y))
 		slot.add_child(actor_image)
 
 	var gradient = Gradient.new()

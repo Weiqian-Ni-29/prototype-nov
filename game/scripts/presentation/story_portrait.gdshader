@@ -1,9 +1,14 @@
 shader_type canvas_item;
-uniform sampler2D silhouette : filter_linear, repeat_disable;
+
+uniform float portrait_height = 1.0;
+varying float local_y;
+
+void vertex() {
+	local_y = VERTEX.y;
+}
 
 void fragment() {
-	vec4 portrait = texture(TEXTURE, UV);
-	float matte = texture(silhouette, UV).r;
-	float hem = 1.0 - smoothstep(0.84, 1.0, UV.y);
-	COLOR = vec4(portrait.rgb, portrait.a * matte * hem);
+	float progress = local_y / max(portrait_height, 1.0);
+	// Some poses are cropped slightly above the bottom of their atlas cell.
+	COLOR.a *= 1.0 - smoothstep(0.78, 0.92, progress);
 }
