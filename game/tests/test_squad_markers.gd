@@ -1,6 +1,7 @@
 extends SceneTree
 const Main = preload("res://scenes/main.tscn")
 const Hex = preload("res://scripts/domain/hex_map.gd")
+const Catalog = preload("res://scripts/domain/catalog.gd")
 var checks = 0
 var failures = 0
 
@@ -69,6 +70,10 @@ func execute() -> void:
 		expect(bars.size() == 3 and bars[0].value == actor.hp and bars[0].max_value == actor.hp_max
 			and bars[1].value == actor.mp and bars[1].max_value == actor.mp_max and bars[2].value == actor.energy,
 			"Personal bars match the actor's health, magic and charge")
+		expect(bars.map(func(bar): return bar.get_parent().get_child(1).text) == [
+			"%d/%d" % [actor.hp, actor.hp_max], "%d/%d" % [actor.mp, actor.mp_max],
+			"%d/%d" % [actor.energy, Catalog.ENERGY_MAX],
+		], "Map bars show exact current and maximum values")
 	var ember_card: Button = game.ui.find_child("CrewMember_ember", true, false)
 	ember_card.pressed.emit()
 	expect(game.selected_id == "ember", "Clicking a portrait row selects its character")
