@@ -296,14 +296,14 @@ func _begin_opening_story() -> void:
 	opening_seed = randi() if chosen_seed.is_empty() else _seed_value()
 	var generated = Hex.generate(opening_seed)
 	var terrain: String = generated.tiles[generated.start].terrain
-	_opening_world_page(terrain, 0)
+	_opening_world_page(terrain, OpeningStory.world_pages(), 0)
 
-func _opening_world_page(terrain: String, index: int) -> void:
-	var pages = OpeningStory.WORLD.split("\n\n")
-	_show_story("维洛丹", "旁白", pages[index], "world_intro", [], [],
+func _opening_world_page(terrain: String, pages: Array[Dictionary], index: int) -> void:
+	var page = pages[index]
+	_show_story("维洛丹", "旁白", page.text, page.scene, [], [],
 		func(_option: String):
 			if index + 1 < pages.size():
-				_opening_world_page(terrain, index + 1)
+				_opening_world_page(terrain, pages, index + 1)
 			else:
 				_village_page(terrain, 0),
 		{"返回主菜单": _cancel_opening})
@@ -1972,14 +1972,17 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	modal_layer.add_child(overlay)
 	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
+	var prologue_art = scene.begins_with("prologue/")
 	var background = TextureRect.new()
 	background.texture = _story_texture(scene)
 	background.modulate = tint
 	background.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	background.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	background.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED if prologue_art else TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	background.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.add_child(background)
 	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	if prologue_art:
+		background.anchor_bottom = 0.74
 
 	var has_pair = portraits.size() - portraits.count(null) > 1
 	var portrait_width = 0.39 if has_pair else 0.43
@@ -2004,7 +2007,7 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 		slot.add_child(actor_image)
 
 	var gradient = Gradient.new()
-	gradient.offsets = PackedFloat32Array([0.0, 0.14, 0.53, 0.78, 1.0])
+	gradient.offsets = PackedFloat32Array([0.0, 0.14, 0.68, 0.74, 1.0] if prologue_art else [0.0, 0.14, 0.53, 0.78, 1.0])
 	gradient.colors = PackedColorArray([
 		Color(0.02, 0.03, 0.04, 0.74), Color(0.02, 0.03, 0.04, 0.0),
 		Color(0.02, 0.03, 0.04, 0.06), Color(0.02, 0.03, 0.04, 0.91), Color(0.02, 0.03, 0.04, 0.98),
@@ -2205,7 +2208,9 @@ func _show_story_history(story: Control) -> void:
 	close.grab_focus()
 
 func _story_texture(scene: String) -> Texture2D:
-	var path = "res://assets/story/" + scene + ".png"
+	var path = "res://assets/story/" + scene
+	if scene.get_extension().is_empty():
+		path += ".png"
 	return load(path) if ResourceLoader.exists(path) else load("res://assets/story/" + STORY_TERRAIN.get(scene.trim_prefix("village_"), "road") + ".png")
 
 func _story_scene_at(position: String) -> String:

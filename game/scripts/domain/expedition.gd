@@ -45,7 +45,7 @@ func new_run(seed_value: int, profession: String) -> void:
 	_initialize_nodes()
 	Items.stock(data, false)
 	reveal(generated.start)
-	note("村民送来了疗伤药、澄露和干粮。你想找到结束战争的办法。")
+	note("村民送来了疗伤药、澄露和干粮。你想到附近走走，看有没有人认得你，能不能想起自己的名字。")
 
 func _actor(id: String, definition: Dictionary, position: String, joined: bool) -> Dictionary:
 	var result = definition.duplicate(true)
