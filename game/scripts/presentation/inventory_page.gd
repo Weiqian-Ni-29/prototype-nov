@@ -3,14 +3,15 @@ extends HBoxContainer
 signal item_selected(item_id: String)
 
 const ITEMS = preload("res://assets/ui/inventory-items.png")
+const COIN = preload("res://assets/ui/lamp-coin.svg")
+const EQUIPMENT_FINISH = preload("res://scripts/presentation/equipment_finish.gdshader")
 const ICON_REGIONS = {
 	"salve": Vector2i(64, 55),
 	"ether": Vector2i(484, 53),
 	"trail_food": Vector2i(930, 73),
-	"weapon": Vector2i(1388, 52),
-	"armor": Vector2i(57, 492),
-	"accessory": Vector2i(501, 492),
-	"relic": Vector2i(929, 492),
+	"trail_blade": Vector2i(1388, 52),
+	"padded_coat": Vector2i(57, 492),
+	"lamp_charm": Vector2i(501, 492),
 }
 const GAP = 10
 const SLOT_SIZE = 92
@@ -71,13 +72,35 @@ func setup(width: float, accent: Color) -> void:
 	empty = _slot_style(Color("172923"), Color("3e5046"))
 
 static func icon(key: String) -> Texture2D:
+	if key == "lamp_coin":
+		return COIN
 	if not ICON_REGIONS.has(key):
-		return null
+		var path := "res://assets/ui/item-icons/%s.png" % key
+		return load(path) as Texture2D if ResourceLoader.exists(path, "Texture2D") else null
 	var texture := AtlasTexture.new()
 	texture.atlas = ITEMS
 	texture.region = Rect2(Vector2(ICON_REGIONS[key]), Vector2(352, 352))
 	texture.filter_clip = true
 	return texture
+
+static func item_image(texture: Texture2D, level: int = 0) -> TextureRect:
+	var art := TextureRect.new()
+	art.texture = texture
+	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if level > 0 and texture != null:
+		var material := ShaderMaterial.new()
+		material.shader = EQUIPMENT_FINISH
+		material.set_shader_parameter("level", float(level))
+		if texture is AtlasTexture:
+			var atlas := texture as AtlasTexture
+			var atlas_size := atlas.atlas.get_size()
+			material.set_shader_parameter("region", Vector4(
+				atlas.region.position.x / atlas_size.x, atlas.region.position.y / atlas_size.y,
+				atlas.region.size.x / atlas_size.x, atlas.region.size.y / atlas_size.y))
+		art.material = material
+	return art
 
 func set_items(entries: Array[Dictionary], selection: String = "") -> void:
 	_clear(grid)
@@ -90,7 +113,7 @@ func set_items(entries: Array[Dictionary], selection: String = "") -> void:
 		slot.accessibility_name = entry.title
 		slot.toggle_mode = true
 		slot.button_group = group
-		slot.icon = icon(entry.icon)
+		var texture := icon(entry.icon)
 		slot.expand_icon = true
 		slot.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		var caption: String = entry.get("caption", "")
@@ -101,6 +124,17 @@ func set_items(entries: Array[Dictionary], selection: String = "") -> void:
 		slot.add_theme_stylebox_override("hover_pressed", selected)
 		slot.add_theme_stylebox_override("focus", _slot_style(Color.TRANSPARENT, Color("e8e4d1"), 2))
 		grid.add_child(slot)
+		var level: int = entry.get("level", 0)
+		if level > 0:
+			var art := item_image(texture, level)
+			slot.add_child(art)
+			art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			art.offset_left = 7
+			art.offset_right = -7
+			art.offset_top = 5
+			art.offset_bottom = -23
+		else:
+			slot.icon = texture
 		var count: int = entry.get("count", 0)
 		var badge: String = entry.get("badge", "")
 		var count_width := 0.0

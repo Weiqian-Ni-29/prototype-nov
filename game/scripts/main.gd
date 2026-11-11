@@ -14,6 +14,7 @@ const StoryPortrait = preload("res://scripts/presentation/story_portrait.gdshade
 const World = preload("res://scripts/presentation/world_view.gd")
 const MapMovePreview = preload("res://scripts/presentation/map_move_preview.gd")
 const InventoryPage = preload("res://scripts/presentation/inventory_page.gd")
+const RewardItems = preload("res://scripts/presentation/reward_items.gd")
 const DayTransition = preload("res://scripts/presentation/day_transition.gd")
 const FontAsset = preload("res://assets/fonts/NotoSansSC.ttf")
 const Sound = preload("res://scripts/presentation/sound.gd")
@@ -341,9 +342,10 @@ func _start_new() -> void:
 	day_transition.dismiss()
 	character_codex_state = {}
 	_close_modal()
-	if screen_state != Screen.OPENING_STORY:
+	var from_story: bool = screen_state == Screen.OPENING_STORY
+	if not from_story:
 		story_history.clear()
-	var value = opening_seed if screen_state == Screen.OPENING_STORY else _seed_value()
+	var value = opening_seed if from_story else _seed_value()
 	run.new_run(value, "wayfarer")
 	map_traveling = false
 	travel_clock.clear()
@@ -356,8 +358,17 @@ func _start_new() -> void:
 	view.refresh(run, selected_id, selected_cell)
 	view.focus_cell(selected_cell)
 	toast_text = ""
+	if from_story:
+		var hero = run.actor("hero")
+		var supplies: Array[Dictionary] = []
+		for id in hero.inventory:
+			supplies.append({"kind": "item", "id": id, "count": hero.inventory[id]})
+		supplies.append({"kind": "gear", "id": hero.equipment.weapon, "count": 1})
+		_queue_story_rewards(_node_title(selected_cell), supplies)
 	run.save_game()
 	_refresh()
+	if from_story:
+		_show_pending_story_rewards()
 
 func _continue_run() -> void:
 	var result = run.load_game()
@@ -384,6 +395,8 @@ func _continue_run() -> void:
 		_show_encounter_intro()
 	elif run.data.has("pending_victory"):
 		_victory_dialog()
+	elif run.data.has("pending_story_rewards"):
+		_show_pending_story_rewards()
 	elif run.data.status == "exploring":
 		_show_arrival()
 
@@ -659,8 +672,13 @@ func _cell_actions() -> void:
 		_button(box, "调查" + Relics.SITES[relic][0], func():
 			_close_modal()
 			var result = run.investigate_relic(selected_id)
+			var found: String = result.get("relic", "")
+			if not found.is_empty():
+				_queue_story_rewards(_node_title(cell), [{"kind": "relic", "id": found, "count": 1}])
 			_run_action(result)
-			if result.ok and not _show_relic_intro():
+			if not found.is_empty():
+				_show_pending_story_rewards()
+			elif result.ok:
 				_notice(result.message))
 	_button(box, "使用道具", _item_dialog.bind(selected_id))
 	_button(dialog, "关闭", _close_modal)
@@ -697,7 +715,7 @@ func _node_description(node: Dictionary, tile: Dictionary, event: Dictionary) ->
 func _node_option(id: String, label: String, spoken: bool = false) -> Dictionary:
 	return {"id": id, "text": label, "spoken": spoken}
 
-func _node_dialog(feedback: String = "") -> void:
+func _node_dialog(feedback: String = "", completion: Callable = Callable()) -> void:
 	var cell: String = run.actor(selected_id).position
 	var tile = run.data.tiles[cell]
 	var node = run.node_at(cell)
@@ -713,6 +731,10 @@ func _node_dialog(feedback: String = "") -> void:
 	if speaker in run.same_cell(cell, true) and event.has("reaction"):
 		text += "\n%s说「%s」" % [run.actor(speaker).name, event.reaction]
 	var title = "%s · %s" % [_node_title(cell), event.title]
+	if completion.is_valid():
+		_show_story(title, "旁白", text, STORY_TERRAIN[tile.terrain], [], [],
+			func(_option: String): completion.call(), {}, _node_tint())
+		return
 	var options: Array = []
 	if not _node_resolved(node, tile):
 		match node.kind:
@@ -762,10 +784,91 @@ func _node_choice(option: String) -> void:
 			_open_current_encounter(false)
 		_:
 			var result = run.use_node(selected_id, option)
+			var cell: String = run.actor(selected_id).position
+			var has_items: bool = result.ok and _queue_story_rewards(_node_title(cell), result.get("items", []))
 			_run_action(result)
-			if result.ok and option == "search" and _show_relic_intro(func(): _node_dialog(str(result.get("message", "")))):
-				return
-			_node_dialog("" if result.ok and option == "inspect" else str(result.get("message", "")))
+			if has_items:
+				_node_dialog("", _show_pending_story_rewards)
+			else:
+				_node_dialog("" if result.ok and option == "inspect" else str(result.get("message", "")))
+
+func _queue_story_rewards(source: String, items: Array) -> bool:
+	if items.is_empty():
+		return false
+	run.data.pending_story_rewards = {"source": source, "items": items}
+	return true
+
+func _show_pending_story_rewards() -> void:
+	var receipt: Dictionary = run.data.pending_story_rewards
+	var box = _modal("", 780, 590)
+	box.get_parent().name = "StoryRewards"
+	_text(box, "获得物品", 29, gold).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_text(box, "来自「%s」" % receipt.source, 16, muted).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(HSeparator.new())
+	var rewards := RewardItems.new()
+	box.add_child(rewards)
+	rewards.setup(_reward_entries(receipt.items))
+	var footer := HBoxContainer.new()
+	footer.alignment = BoxContainer.ALIGNMENT_END
+	box.add_child(footer)
+	var save_error := _text(box, "", 15, gold)
+	save_error.hide()
+	var confirm := _button(footer, "返回地图  →", func():
+		var introductions: Array = run.data.relic_intros
+		_remove_reward_intros(receipt.items)
+		run.data.erase("pending_story_rewards")
+		var saved = run.save_game()
+		if not saved.ok:
+			run.data.pending_story_rewards = receipt
+			run.data.relic_intros = introductions
+			save_error.text = saved.message
+			save_error.show()
+			return
+		_close_modal()
+		_refresh()
+		_show_day_transition())
+	confirm.custom_minimum_size = Vector2(144, 44)
+	confirm.add_theme_stylebox_override("normal", _style(Color("dbc18a"), gold, 6))
+	confirm.add_theme_stylebox_override("hover", _style(Color("f0d69d"), gold, 6))
+	confirm.add_theme_color_override("font_color", Color("1a302a"))
+	confirm.add_theme_color_override("font_hover_color", Color("1a302a"))
+	confirm.add_theme_color_override("font_focus_color", Color("1a302a"))
+	confirm.grab_focus()
+
+func _remove_reward_intros(items: Array) -> void:
+	var relic_ids := items.filter(func(item): return item.kind == "relic").map(func(item): return item.id)
+	run.data.relic_intros = run.data.relic_intros.filter(func(intro): return intro.id not in relic_ids)
+
+func _reward_entries(items: Array) -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	var stat_names := {"attack": "攻击", "defense": "防御", "speed": "速度"}
+	for item in items:
+		var id: String = item.id
+		var entry := {"icon": id, "count": int(item.count), "story": ""}
+		match item.kind:
+			"item":
+				var definition: Dictionary = Catalog.ITEMS[id]
+				entry.merge({"title": definition.name, "category": "消耗品", "effect": definition.description})
+				entry.story = definition.get("story", "")
+			"relic":
+				var definition: Dictionary = Relics.DATA[id]
+				entry.merge({"title": definition.name, "category": item.get("status", "遗器"), "effect": definition.effect})
+				entry.story = definition.story
+			"gear":
+				var gear: Dictionary = run.data.gear_instances[id]
+				var definition: Dictionary = Gear.DATA[gear.definition_id]
+				var stats := PackedStringArray()
+				for stat in definition.stats:
+					stats.append("%s +%d" % [stat_names[stat], Gear.bonus(gear, stat)])
+				if not definition.effect.is_empty():
+					stats.append(definition.effect)
+				entry.merge({"title": Gear.label(gear), "category": "装备", "effect": "\n".join(stats), "level": int(gear.enhance_level)})
+				entry.icon = gear.definition_id
+				entry.story = definition.story
+			"coins":
+				entry.merge({"title": "灯铢", "category": "货币", "effect": "可在商摊购买道具、装备和遗器。"})
+		entries.append(entry)
+	return entries
 
 func _shop_dialog(feedback: String = "") -> void:
 	var trader = run.actor(selected_id)
@@ -1090,13 +1193,10 @@ func _inventory_dialog(id: String, current_tab: int = 0, selected_item: String =
 	_inventory_gear(tabs.get_child(1), id, selected_item if current_tab == 1 else "", feedback if current_tab == 1 else "")
 	_inventory_relics(tabs.get_child(2), id, selected_item if current_tab == 2 else "", feedback if current_tab == 2 else "")
 
-func _inventory_heading(content: VBoxContainer, title: String, icon_key: String) -> void:
+func _inventory_heading(content: VBoxContainer, title: String, icon_key: String, level: int = 0) -> void:
 	var texture := InventoryPage.icon(icon_key)
 	if texture != null:
-		var icon := TextureRect.new()
-		icon.texture = texture
-		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		var icon := InventoryPage.item_image(texture, level)
 		icon.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 		icon.custom_minimum_size = Vector2(110, 110)
 		content.add_child(icon)
@@ -1119,6 +1219,8 @@ func _inventory_consumables(page: InventoryPage, id: String, selection: String) 
 		if item == "salve" and run.has_relic("herbal_case"):
 			purpose += " 青枝药匣使恢复量提高 25%。"
 		_text(content, purpose, 16)
+		if definition.has("story"):
+			_text(content, definition.story, 15, muted)
 		var actions := HFlowContainer.new()
 		actions.add_theme_constant_override("h_separation", 8)
 		content.add_child(actions)
@@ -1165,7 +1267,7 @@ func _inventory_gear(page: InventoryPage, id: String, selection: String, feedbac
 			if set_filter.selected > 0 and definition.set_id != Gear.SETS.keys()[set_filter.selected - 1]:
 				continue
 			var equipped: bool = uid in run.actor(id).equipment.values()
-			entries.append({"id": uid, "title": Gear.label(item), "icon": definition.slot,
+			entries.append({"id": uid, "title": Gear.label(item), "icon": item.definition_id, "level": int(item.enhance_level),
 				"caption": definition.name, "badge": "已装备" if equipped else ""})
 		page.set_items(entries, selected)
 	filter.item_selected.connect(func(_index: int): refresh_grid.call(page.selected_id))
@@ -1176,7 +1278,7 @@ func _gear_detail(content: VBoxContainer, id: String, uid: String, feedback: Str
 	var item = run.data.gear_instances[uid]
 	var definition = Gear.DATA[item.definition_id]
 	var a = run.actor(id)
-	_inventory_heading(content, Gear.label(item), definition.slot)
+	_inventory_heading(content, Gear.label(item), item.definition_id, int(item.enhance_level))
 	if not feedback.is_empty():
 		_text(content, feedback, 16, gold)
 	var current_uid: String = a.equipment[definition.slot]
@@ -1238,7 +1340,7 @@ func _inventory_relics(page: InventoryPage, id: String, selection: String, feedb
 				continue
 			var count: int = int(run.data.relic_inventory.get(relic, 0))
 			var badge := "共鸣中" if run.has_relic(relic) else ("已发现" if count == 0 else "")
-			entries.append({"id": relic, "title": entry.name, "icon": "relic",
+			entries.append({"id": relic, "title": entry.name, "icon": relic,
 				"caption": entry.name, "count": count, "badge": badge})
 	page.item_selected.connect(func(relic: String):
 		if relic.is_empty():
@@ -1250,7 +1352,7 @@ func _inventory_relics(page: InventoryPage, id: String, selection: String, feedb
 func _relic_detail(content: VBoxContainer, id: String, relic: String, feedback: String) -> void:
 	var entry = Relics.DATA[relic]
 	var a = run.actor(id)
-	_inventory_heading(content, entry.name, "relic")
+	_inventory_heading(content, entry.name, relic)
 	if not feedback.is_empty():
 		_text(content, feedback, 16, gold)
 	var kind: String = {"P": "持续", "C": "消耗", "L": "永久"}[entry.type]
@@ -1775,20 +1877,28 @@ func _finish_battle() -> void:
 
 func _victory_dialog() -> void:
 	var result: Dictionary = run.data.pending_victory
-	var box = _modal("战斗胜利", 700, 530)
+	var box = _modal("战斗胜利", 730, 590)
 	box.get_parent().name = "VictoryScreen"
 	ui.hide()
 	var content = _scroll_content(box)
 	_text(content, "已击败 %d 名敌人" % int(result.enemies), 19, muted)
-	_text(content, "战利品", 20, gold)
+	var items: Array[Dictionary] = []
 	if not result.salve_receiver.is_empty():
-		_text(content, "疗伤药 ×1 · %s 收入背包" % run.actor(result.salve_receiver).name, 17)
+		items.append({"kind": "item", "id": "salve", "count": 1})
 	if not result.relic.is_empty():
-		_text(content, ("再次获得遗器 · " if result.get("relic_duplicate", false) else "发现遗器 · ") + Relics.DATA[result.relic].name, 17, gold)
+		items.append({"kind": "relic", "id": result.relic, "count": 1,
+			"status": "再次获得遗器" if result.get("relic_duplicate", false) else "发现遗器"})
 	if result.get("coins", 0) > 0:
-		_text(content, "获得 %d 灯铢" % result.coins, 17, gold)
-	if result.salve_receiver.is_empty() and result.relic.is_empty() and result.get("coins", 0) <= 0:
+		items.append({"kind": "coins", "id": "lamp_coin", "count": result.coins})
+	if items.is_empty():
 		_text(content, "这场没有战利品。", 17, muted)
+	else:
+		var rewards := RewardItems.new()
+		rewards.custom_minimum_size.y = 305
+		content.add_child(rewards)
+		rewards.setup(_reward_entries(items))
+		if not result.salve_receiver.is_empty():
+			_text(content, "疗伤药已放入%s的背包。" % run.actor(result.salve_receiver).name, 15, muted)
 	content.add_child(HSeparator.new())
 	_text(content, "参战队员", 20, gold)
 	for id in result.members:
@@ -1798,10 +1908,13 @@ func _victory_dialog() -> void:
 	var save_error = _text(box, "", 15, gold)
 	save_error.hide()
 	var next = _button(box, "继续远征", func():
+		var introductions: Array = run.data.relic_intros
+		_remove_reward_intros(items)
 		run.data.erase("pending_victory")
 		var saved = run.save_game()
 		if not saved.ok:
 			run.data.pending_victory = result
+			run.data.relic_intros = introductions
 			save_error.text = saved.message
 			save_error.show()
 			return
@@ -2295,6 +2408,16 @@ func _story_choice(option_id: String) -> void:
 	var result = narrative.choose(selected_id, dialogue_subject, "duel" if option_id == "start_duel" else option_id)
 	if not result.ok:
 		_notice(result.message, _render_dialogue)
+		return
+	var gift: String = result.get("relic", "")
+	if option_id == "join" and not gift.is_empty():
+		var person = run.actor(dialogue_subject)
+		_queue_story_rewards(_node_title(person.position), [{"kind": "relic", "id": gift, "count": 1}])
+		run.save_game()
+		_refresh()
+		_show_story(person.name, person.name, result.response, _story_scene_at(person.position),
+			[_story_portrait(selected_id), _story_portrait(dialogue_subject, "friendly")], [],
+			func(_option: String): _show_pending_story_rewards(), {})
 		return
 	if option_id in ["join", "start_duel", "personal_a", "personal_b"]:
 		run.save_game()

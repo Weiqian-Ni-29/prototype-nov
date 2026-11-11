@@ -110,9 +110,9 @@ const SKILLS = {
 	"stonewall": {"name": "磐城", "mp": 0, "shield": 42, "target": "all_allies", "element": "earth", "energy": 0, "delivery": "none"},
 }
 const ITEMS = {
-	"salve": {"name": "疗伤药", "description": "回复 45 点生命，也能救治同一地块的重伤队员。", "hp": 45},
-	"ether": {"name": "澄露", "description": "回复 30 点魔力。", "mp": 30},
-	"trail_food": {"name": "旅途干粮", "description": "可以送给别人或用来完成任务。每天赶路不用花干粮。"},
+	"salve": {"name": "疗伤药", "description": "回复 45 点生命，也能救治同一地块的重伤队员。", "story": "红褐色的草药汤装在缠布的厚玻璃瓶里。村里的人总会给过路的伤员留上一瓶。", "hp": 45},
+	"ether": {"name": "澄露", "description": "回复 30 点魔力。", "story": "清蓝色的露液有一点薄荷味。施术者常用软木塞封紧瓶口，带在身上赶路。", "mp": 30},
+	"trail_food": {"name": "旅途干粮", "description": "可以送给别人或用来完成任务。", "story": "粗布包里是烤得干透的麦饼，掰碎后泡在汤里也能吃。"},
 	"trail_blade": {"name": "巡路短刃", "slot": "weapon", "attack": 4},
 	"padded_coat": {"name": "夹棉旅衣", "slot": "armor", "defense": 3},
 	"lamp_charm": {"name": "旧灯护符", "slot": "accessory", "speed": 8},
