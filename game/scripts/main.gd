@@ -1921,39 +1921,75 @@ func _story_region(control: Control, left: float, top: float, right: float, bott
 func _story_text_pages(body: String, label: Label) -> PackedStringArray:
 	var pages = PackedStringArray()
 	var remaining = body
-	var font = label.get_theme_font("font")
-	var font_size = label.get_theme_font_size("font_size")
-	var spacing = label.get_theme_constant("line_spacing")
 	while not remaining.is_empty():
-		var paragraph = TextParagraph.new()
-		paragraph.width = label.size.x
-		paragraph.break_flags = TextServer.BREAK_MANDATORY | TextServer.BREAK_WORD_BOUND | TextServer.BREAK_ADAPTIVE
-		paragraph.add_string(remaining, font, font_size)
-		var height = 0.0
-		var end = 0
-		for line in paragraph.get_line_count():
-			var line_height = paragraph.get_line_size(line).y + (spacing if line > 0 else 0)
-			if line > 0 and height + line_height > label.size.y:
-				break
-			height += line_height
-			end = paragraph.get_line_range(line).y
+		var end = _story_fitted_end(remaining, label)
 		if end < remaining.length():
-			var fitted_end = end
-			var boundary = remaining.left(end).rfind("\n\n")
-			if boundary >= end / 2:
-				end = boundary + 2
+			var sentence_ends = _story_sentence_ends(remaining, end)
+			if not sentence_ends.is_empty():
+				end = _story_balanced_end(remaining, sentence_ends, label)
 			else:
-				for index in range(end - 1, end / 2, -1):
-					if remaining[index] in "。！？!?":
+				# A sentence taller than the page can still break at a clause or wrapped line.
+				for index in range(end - 1, 0, -1):
+					if remaining[index] in "；;，,、：:\n":
 						end = index + 1
-						if end < fitted_end and remaining[end] in "」』”\"":
-							end += 1
 						break
 			while end < remaining.length() and remaining[end] in "\n\r \t":
 				end += 1
 		pages.append(remaining.left(end))
 		remaining = remaining.substr(end)
 	return pages if not pages.is_empty() else PackedStringArray([""])
+
+func _story_fitted_end(text: String, label: Label) -> int:
+	var paragraph = TextParagraph.new()
+	paragraph.width = label.size.x
+	paragraph.break_flags = TextServer.BREAK_MANDATORY | TextServer.BREAK_WORD_BOUND | TextServer.BREAK_ADAPTIVE
+	paragraph.add_string(text, label.get_theme_font("font"), label.get_theme_font_size("font_size"))
+	var spacing = label.get_theme_constant("line_spacing")
+	var height = 0.0
+	var end = 0
+	for line in paragraph.get_line_count():
+		var line_height = paragraph.get_line_size(line).y + (spacing if line > 0 else 0)
+		if line > 0 and height + line_height > label.size.y:
+			break
+		height += line_height
+		end = paragraph.get_line_range(line).y
+	return clampi(end, mini(1, text.length()), text.length())
+
+func _story_sentence_ends(text: String, fitted_end: int) -> PackedInt32Array:
+	var ends = PackedInt32Array()
+	var marks = "。！？!?｡"
+	var closing = "」』”’）】》〉〕］)]}\"'"
+	var suffix = marks + closing
+	var index = 0
+	while index < fitted_end:
+		var mark = text[index]
+		var period = mark == "." and (index + 1 == text.length() or text[index + 1] in closing + " \t\n\r")
+		index += 1
+		if mark not in marks and not period:
+			continue
+		while index < text.length() and text[index] in suffix:
+			index += 1
+		if index <= fitted_end:
+			ends.append(index)
+	return ends
+
+func _story_balanced_end(text: String, sentence_ends: PackedInt32Array, label: Label) -> int:
+	var end = sentence_ends[-1]
+	var tail = text.substr(end).strip_edges()
+	if _story_fitted_end(tail, label) < tail.length():
+		return end
+	# When two pages suffice, choose the closest sentence ending to the midpoint that fits both.
+	var difference = absi(text.length() - 2 * end)
+	for index in range(sentence_ends.size() - 2, -1, -1):
+		var candidate = sentence_ends[index]
+		var candidate_difference = absi(text.length() - 2 * candidate)
+		if candidate_difference >= difference:
+			break
+		tail = text.substr(candidate).strip_edges()
+		if _story_fitted_end(tail, label) == tail.length():
+			end = candidate
+			difference = candidate_difference
+	return end
 
 func _show_story(title: String, speaker: String, body: String, scene: String,
 		portraits: Array, options: Array, on_choice: Callable, actions: Dictionary, tint: Color = Color.WHITE,

@@ -876,6 +876,22 @@ func check_pagination_helpers() -> void:
 					check_label_fit(label, bounds)
 			label.free()
 
+	var label = game._text(game.ui, "", 22)
+	label.position = Vector2(-2000, -2000)
+	var font = label.get_theme_font("font")
+	var size = label.get_theme_font_size("font_size")
+	var width = font.get_string_size("山".repeat(18), HORIZONTAL_ALIGNMENT_LEFT, -1, size).x + 1
+	label.size = Vector2(width, 2 * ceilf(font.get_height(size)) + label.get_theme_constant("line_spacing") + 1)
+	var first = "山上的灯一盏盏亮了。她问：“夜里还走吗？！”"
+	var second = "守桥的人认出了他们。车夫把最后一袋粮搬了下来。"
+	expect(game._story_text_pages(first + second, label) == PackedStringArray([first, second]),
+		"Two pages balance their lengths and retain the closing quote with the sentence")
+	first = "天亮了。"
+	second = "巡林人沿着水渠一步一步往前走寻找昨晚被风刮落的几面旗子直到看见城门。"
+	expect(game._story_text_pages(first + second, label) == PackedStringArray([first, second]),
+		"A short complete sentence is a better page break than cutting the next sentence")
+	label.free()
+
 func check_story_history() -> void:
 	var completed = func(_choice: String): expect(false, "History cannot finish the active story")
 	for index in range(12):
