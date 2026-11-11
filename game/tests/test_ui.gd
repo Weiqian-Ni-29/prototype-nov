@@ -686,6 +686,8 @@ func check_node_dialogs() -> void:
 	var scene: TextureRect = stage.get_child(0)
 	expect(scene.texture.resource_path.ends_with("/" + game._story_scene_at(rest_cell) + ".png"),
 		"The node story uses the occupied tile's terrain art")
+	expect(stage.get_node("Dialogue").get_children().filter(func(control): return control.visible) == [story_text()],
+		"Map narration shows only its body text")
 	await read_to_choices()
 	expect(find_button(game.modal_layer, "记入旅途手记") == null, "Node dialogue has no travel journal action")
 	expect(find_button(game.modal_layer, "在此休整") == null and find_button(game.modal_layer, "在此调息") == null,
@@ -1105,6 +1107,9 @@ func execute() -> void:
 	expect(find_button(game.ui, "继续上次远征") == null, "A main menu with no save does not show a resume button")
 	await press("开始新远征")
 	expect(dialogue_contains("维洛丹这片土地，比任何人的记性都老") and not dialogue_contains("后来，几位神打了起来"), "Opening starts with life before the war")
+	var opening_dialogue = game.modal_layer.get_node("StoryScreen/Dialogue")
+	expect(opening_dialogue.get_children().filter(func(control): return control.visible) == [story_text()],
+		"Opening narration has only its body text")
 	expect(story_owns_focus(), "Opening retains the story interface and focus")
 	await story_key(KEY_ESCAPE)
 	expect(dialogue_contains("维洛丹"), "Escape leaves an opening scene without an End Conversation action in place")
@@ -1128,7 +1133,11 @@ func execute() -> void:
 		expect(position > last_topic, "Opening introduces this topic in order: " + topic)
 		last_topic = position
 	expect(not world_text.contains("伊文洛") and not world_text.contains("死神"), "World introduction keeps the protagonist's identity for the final battle")
+	expect(world_text.contains("对方还会再来一趟") and not world_text.contains("它的账"), "The demon bargain uses a personal reference")
 	expect(dialogue_contains("你醒了"), "Reading reaches the hero waking without assuming a page count")
+	var village_dialogue = game.modal_layer.get_node("StoryScreen/Dialogue")
+	expect(story_speaker() == "村民" and village_dialogue.get_children().filter(func(control): return control.visible).size() == 3,
+		"Spoken dialogue retains the speaker and separator")
 	await click("历史对话")
 	var history = game.modal_layer.get_node("StoryHistory")
 	expect(contains_text(history, "维洛丹这片土地，比任何人的记性都老") and contains_text(history, "你醒了"),
