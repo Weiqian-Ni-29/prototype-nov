@@ -131,9 +131,7 @@ static func generate(tiles: Dictionary, seed_value: int, relic_sites: Dictionary
 			node.event = least_used[roller.randi_range(0, least_used.size() - 1)]
 			use_counts[node.event] = int(fewest) + 1
 		if kind == "trade":
-			var stock = {"salve": 1, "ether": 1, "trail_food": 1}
-			var local_supply = "ether" if biome in ["swamp", "ruins", "desert"] else "salve"
-			stock[local_supply] += roller.randi_range(0, 1)
+			var stock := shop_supplies(biome, roller)
 			stock[GEAR[roller.randi_range(0, GEAR.size() - 1)]] = 1
 			node.stock = stock
 		elif kind in ["rest", "choice"]:
@@ -146,3 +144,9 @@ static func generate(tiles: Dictionary, seed_value: int, relic_sites: Dictionary
 		elif kind in ["battle", "elite"]:
 			node.coins = battle_coins(seed_value, cell, kind == "elite")
 	return nodes
+
+static func shop_supplies(biome: String, roller: RandomNumberGenerator) -> Dictionary:
+	var stock := {"salve": 1, "ether": 1, "trail_food": 1}
+	var local_supply := "ether" if biome in ["swamp", "ruins", "desert"] else "salve"
+	stock[local_supply] += roller.randi_range(0, 1)
+	return stock

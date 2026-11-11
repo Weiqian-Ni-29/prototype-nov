@@ -2,6 +2,7 @@ extends RefCounted
 
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
+const Nodes = preload("res://scripts/domain/map_nodes.gd")
 
 static func initialize(data: Dictionary) -> void:
 	data.merge({"gear_instances": {}, "next_gear_uid": 1, "item_revision": 0,
@@ -27,12 +28,7 @@ static func stock(data: Dictionary, legacy: bool) -> void:
 		if node.kind == "trade":
 			if node.has("relic_stock"):
 				continue
-			node.relic_stock = {}
-			var pool = Relics.DATA.keys().filter(Relics.is_active)
-			pool.sort()
-			for i in 2:
-				var index = roller.randi_range(0, pool.size() - 1)
-				node.relic_stock[pool.pop_at(index)] = 1
+			node.relic_stock = _shop_relics(roller)
 			for id in node.stock.keys():
 				if not Gear.LEGACY_PRICES.has(id):
 					continue
@@ -41,11 +37,7 @@ static func stock(data: Dictionary, legacy: bool) -> void:
 						add_gear(data, id, "common", "shop", cell)
 				node.stock.erase(id)
 			if not legacy:
-				var slots: Array = Gear.SLOTS.duplicate()
-				for i in 2:
-					var id = Gear.roll_definition(terrain, roller, slots)
-					add_gear(data, id, Gear.roll_quality(roller), "shop", cell)
-					slots.erase(Gear.DATA[id].slot)
+				_stock_shop_gear(data, cell, terrain, roller)
 		elif node.kind == "cache" and node.result.is_empty() and not node.has("gear_uid"):
 			var definition: String = node.item
 			if not legacy:
@@ -53,6 +45,36 @@ static func stock(data: Dictionary, legacy: bool) -> void:
 			node.item = definition
 			if Gear.DATA.has(definition):
 				node.gear_uid = add_gear(data, definition, "common" if legacy else Gear.roll_quality(roller), "source", "field_cache:" + cell)
+
+static func refresh_shop(data: Dictionary, cell: String, old_gear: Array, refresh_count: int) -> void:
+	var node: Dictionary = data.nodes[cell]
+	var terrain: String = data.tiles[cell].terrain
+	var roller := RandomNumberGenerator.new()
+	roller.seed = hash("%d:shop_refresh:%s:%d" % [int(data.seed), cell, refresh_count])
+	node.stock = Nodes.shop_supplies(terrain, roller)
+	node.relic_stock = _shop_relics(roller, node.relic_stock.keys())
+	for uid in old_gear:
+		data.gear_instances.erase(uid)
+	_stock_shop_gear(data, cell, terrain, roller)
+	node.refresh_count = refresh_count
+
+static func _shop_relics(roller: RandomNumberGenerator, previous: Array = []) -> Dictionary:
+	var active := Relics.DATA.keys().filter(Relics.is_active)
+	var pool := active.filter(func(id): return id not in previous)
+	if pool.size() < 2:
+		pool = active
+	pool.sort()
+	var stock := {}
+	for i in 2:
+		stock[pool.pop_at(roller.randi_range(0, pool.size() - 1))] = 1
+	return stock
+
+static func _stock_shop_gear(data: Dictionary, cell: String, terrain: String, roller: RandomNumberGenerator) -> void:
+	var slots := Gear.SLOTS.duplicate()
+	for i in 2:
+		var id := Gear.roll_definition(terrain, roller, slots)
+		add_gear(data, id, Gear.roll_quality(roller), "shop", cell)
+		slots.erase(Gear.DATA[id].slot)
 
 static func migrate(data: Dictionary) -> void:
 	initialize(data)
@@ -174,7 +196,7 @@ static func validate(data: Dictionary) -> bool:
 			return false
 	for node in data.get("nodes", {}).values():
 		if node.kind == "trade":
-			if not node.get("relic_stock") is Dictionary:
+			if not node.get("relic_stock") is Dictionary or not whole(node.get("refresh_count", 0)):
 				return false
 			for id in node.relic_stock:
 				if not Relics.is_active(id) or not whole(node.relic_stock[id]):
