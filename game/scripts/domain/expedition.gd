@@ -165,7 +165,7 @@ func enhance(id: String, uid: String, voucher: String = "") -> Dictionary:
 	_commit_price(quote)
 	return _item_result("已强化「%s」，花费 %d 灯铢。" % [Gear.label(instance), quote.price])
 
-func item_quote(base: int, channel: String, uid: String = "", voucher: String = "") -> Dictionary:
+func item_quote(base: int, channel: String, uid: String = "", voucher: String = "", used_claims: Array = []) -> Dictionary:
 	var pp = 0
 	var claims: Array = []
 	for id in data.relic_attunement:
@@ -184,7 +184,7 @@ func item_quote(base: int, channel: String, uid: String = "", voucher: String = 
 			"first_discounted_enhancement_per_equipment_instance":
 				key = "%s:gear:%s" % [id, uid]
 		if not key.is_empty():
-			if data.item_effect_counts.has(key):
+			if data.item_effect_counts.has(key) or key in used_claims:
 				continue
 			claims.append(key)
 		pp += params.reduce_pp
@@ -282,7 +282,37 @@ func _node_access(id: String) -> Dictionary:
 		return fail("这里还有危险，先清掉敌人。")
 	return success()
 
-func trade(id: String, item: String, buying: bool, voucher: String = "") -> Dictionary:
+func shop_refresh_cost(cell: String) -> int:
+	return int(node_at(cell).get("refresh_count", 0)) + 1
+
+func refresh_shop(id: String) -> Dictionary:
+	var check := _node_access(id)
+	if not check.ok:
+		return check
+	var cell: String = actor(id).position
+	if node_at(cell).get("kind") != "trade":
+		return fail("这里没有可以刷新的商店。")
+	var cost := shop_refresh_cost(cell)
+	if int(data.lamp_coins) < cost:
+		return fail("灯铢不足，刷新需要 %d 灯铢。" % cost)
+	data.lamp_coins -= cost
+	Items.refresh_shop(data, cell, gear_owned("shop", cell), cost)
+	return _item_result("货物已刷新，花费 %d 灯铢。" % cost)
+
+func shop_quote(base: int, buying: bool, amount: int = 1, uid: String = "", voucher: String = "") -> Dictionary:
+	if amount < 1:
+		return fail("请选择有效的交易数量。")
+	var channel := "shop_buy" if buying else "shop_sell"
+	var quote := item_quote(base, channel, uid, voucher)
+	if not quote.ok:
+		return quote
+	var next_price: int = item_quote(base, channel, uid, "", quote.claims).price
+	quote.unit_price = quote.price
+	quote.additional_unit_price = next_price
+	quote.price += next_price * (amount - 1)
+	return quote
+
+func trade(id: String, item: String, buying: bool, voucher: String = "", amount: int = 1) -> Dictionary:
 	var check = _node_access(id)
 	if not check.ok:
 		return check
@@ -299,32 +329,34 @@ func trade(id: String, item: String, buying: bool, voucher: String = "") -> Dict
 	var inventory: Dictionary = data.relic_inventory if is_relic else trader.inventory
 	var owned: int = int(inventory.get(item, 0))
 	var base: int = Relics.DATA[item].price if is_relic else Nodes.PRICES[item]
-	var quote = item_quote(base, "shop_buy" if buying else "shop_sell", "", voucher)
+	var quote := shop_quote(base, buying, amount, "", voucher)
 	if not quote.ok:
 		return quote
 	if buying:
-		if int(stock.get(item, 0)) <= 0:
-			return fail("这件货已经售完。")
+		if int(stock.get(item, 0)) < amount:
+			return fail("库存不足。")
 		if data.lamp_coins < quote.price:
 			return fail("灯铢不足。")
-		stock[item] -= 1
+		stock[item] -= amount
 		data.lamp_coins -= quote.price
 		if is_relic:
-			grant_relic(item, id, trader.position)
+			grant_relic(item, id, trader.position, "", "", amount)
 		else:
-			inventory[item] = owned + 1
+			inventory[item] = owned + amount
 	else:
-		if owned <= 0:
-			return fail("没有可出售的物品。")
+		if owned < amount:
+			return fail("可出售的数量不足。")
 		if is_relic:
-			_remove_relic(item)
+			_remove_relic(item, amount)
 		else:
-			inventory[item] = owned - 1
+			inventory[item] = owned - amount
 		if not is_relic or Relics.is_active(item):
-			stock[item] = int(stock.get(item, 0)) + 1
+			stock[item] = int(stock.get(item, 0)) + amount
 		data.lamp_coins += quote.price
 	_commit_price(quote)
 	var name: String = Relics.DATA[item].name if is_relic else Catalog.item_name(item)
+	if amount > 1:
+		name += " ×%d" % amount
 	return _item_result("%s「%s」，%d 灯铢。" % ["买入" if buying else "卖出", name, quote.price])
 
 func reward_coins(source: String, base: int) -> int:
@@ -461,12 +493,12 @@ func claim_relic_reward(source: String, relic: String, finder: String, position:
 	data.relic_claims[source] = {"success": not delivered.is_empty(), "relic_id": delivered, "delivered": true}
 	return delivered
 
-func grant_relic(id: String, finder: String, position: String, npc: String = "", lead: String = "") -> bool:
+func grant_relic(id: String, finder: String, position: String, npc: String = "", lead: String = "", amount: int = 1) -> bool:
 	if not Relics.is_active(id):
 		return false
 	var first = not data.relic_seen.has(id)
 	data.relic_seen[id] = true
-	data.relic_inventory[id] = int(data.relic_inventory.get(id, 0)) + 1
+	data.relic_inventory[id] = int(data.relic_inventory.get(id, 0)) + amount
 	data.item_revision += 1
 	var new_sight: Array = []
 	if Relics.DATA[id].type == "P" and not has_relic(id) and data.relic_attunement.size() < 6:
@@ -501,8 +533,8 @@ func attune_relic(user: String, id: String) -> Dictionary:
 		_refresh_relic_sight()
 	return _item_result("已共鸣「%s」。" % Relics.DATA[id].name)
 
-func _remove_relic(id: String) -> void:
-	data.relic_inventory[id] -= 1
+func _remove_relic(id: String, amount: int = 1) -> void:
+	data.relic_inventory[id] -= amount
 	if data.relic_inventory[id] == 0:
 		data.relic_inventory.erase(id)
 		_unattune(id)

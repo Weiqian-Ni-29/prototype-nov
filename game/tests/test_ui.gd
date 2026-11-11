@@ -758,15 +758,44 @@ func check_node_dialogs() -> void:
 	await press("查看节点剧情")
 	await read_to_choices()
 	await click("查看货物")
-	await press("疗伤药 · 6 灯铢")
-	await press("确认 · 6 灯铢")
+	var shop = game.modal_layer.find_child("ShopView", true, false)
+	var wallet = shop.find_child("ShopBalance", true, false) as Label if shop != null else null
+	expect(shop != null and root.get_visible_rect().encloses(shop.get_global_rect())
+		and wallet != null and wallet.get_line_count() == 1, "The shop and wallet fit in the game viewport")
+	await select_shop_offer("疗伤药")
+	expect(contains_text(game.modal_layer, Catalog.ITEMS.salve.description), "Selecting a shop card exposes its details")
+	await click("确认买入 · 6 灯铢")
 	expect(run.data.lamp_coins == 2 and hero.inventory.salve == salves + 1, "The shop UI buys into the trader's inventory")
 	expect(saved_run().get("lamp_coins") == 2, "The shop UI saves the transaction")
 	balance = game.ui.find_child("LampCoinBalance", true, false) as Label
 	expect(balance != null and balance.text == "2", "The header balance updates after a purchase")
+	await click("刷新货物 · 1 灯铢")
+	var refresh = find_button(game.modal_layer, "刷新货物 · 2 灯铢")
+	expect(run.data.lamp_coins == 1 and refresh != null and refresh.disabled
+		and saved_run().nodes[shop_cell].refresh_count == 1, "Refresh debits and saves the next price, disabling an unaffordable refresh")
+	await click("卖出")
+	await select_shop_offer("疗伤药")
+	await click("确认卖出 · +2 灯铢")
+	expect(run.data.lamp_coins == 3 and hero.inventory.salve == salves and contains_text(game.modal_layer, "旅人的背包"),
+		"Selling updates the wallet and keeps the sell tab open")
+	await click("买入")
+	await click("刷新货物 · 2 灯铢")
+	expect(run.data.lamp_coins == 1 and run.shop_refresh_cost(shop_cell) == 3,
+		"Returning to Buy keeps the same shop's refresh count")
 	await press("返回节点")
 	await read_to_choices()
 	await click("返回地图")
+
+func select_shop_offer(title: String) -> void:
+	var grid = game.modal_layer.find_child("ShopGrid", true, false)
+	if grid != null:
+		for card in grid.get_children():
+			if card is Button and card.accessibility_name == title:
+				expect(card.find_children("*", "TextureRect", true, false).any(func(art): return art.texture != null),
+					"The shop card has a picture")
+				await click_button(card)
+				return
+	expect(false, "The shop displays " + title)
 
 func check_backpack_use() -> void:
 	game._start_new()

@@ -15,6 +15,7 @@ const World = preload("res://scripts/presentation/world_view.gd")
 const MapMovePreview = preload("res://scripts/presentation/map_move_preview.gd")
 const InventoryPage = preload("res://scripts/presentation/inventory_page.gd")
 const RewardItems = preload("res://scripts/presentation/reward_items.gd")
+const ShopView = preload("res://scripts/presentation/shop_view.gd")
 const DayTransition = preload("res://scripts/presentation/day_transition.gd")
 const FontAsset = preload("res://assets/fonts/NotoSansSC.ttf")
 const Sound = preload("res://scripts/presentation/sound.gd")
@@ -844,7 +845,7 @@ func _reward_entries(items: Array) -> Array[Dictionary]:
 	var stat_names := {"attack": "攻击", "defense": "防御", "speed": "速度"}
 	for item in items:
 		var id: String = item.id
-		var entry := {"icon": id, "count": int(item.count), "story": ""}
+		var entry := {"id": id, "kind": item.kind, "icon": id, "count": int(item.count), "story": ""}
 		match item.kind:
 			"item":
 				var definition: Dictionary = Catalog.ITEMS[id]
@@ -870,69 +871,72 @@ func _reward_entries(items: Array) -> Array[Dictionary]:
 		entries.append(entry)
 	return entries
 
-func _shop_dialog(feedback: String = "") -> void:
-	var trader = run.actor(selected_id)
-	var node = run.node_at(trader.position)
-	var box = _modal(_node_title(trader.position), 760, 660)
-	_text(box, "远征队持有 %d 灯铢 · 交易者 %s" % [run.data.lamp_coins, trader.name], 17, gold)
-	if not feedback.is_empty():
-		_text(box, feedback, 15, muted)
-	var list = _scroll_content(box)
-	for buying in [true, false]:
-		_text(list, "买入" if buying else "卖出", 20, gold)
-		var supplies: Dictionary = node.stock if buying else trader.inventory
-		_text(list, "补给", 16, muted)
-		for id in supplies:
-			if not Nodes.PRICES.has(id) or int(supplies[id]) <= 0:
-				continue
-			_shop_row(list, id, Catalog.item_name(id), Nodes.PRICES[id], int(supplies[id]), buying)
-		_text(list, "装备", 16, muted)
-		for uid in run.gear_owned("shop" if buying else "actor", trader.position if buying else selected_id):
-			if not buying and uid in trader.equipment.values():
-				continue
-			var item = run.data.gear_instances[uid]
-			_shop_row(list, uid, Gear.label(item), Gear.price(item), 1, buying, true)
-		_text(list, "遗器", 16, muted)
-		var relics: Dictionary = node.relic_stock if buying else run.data.relic_inventory
-		for id in relics:
-			if int(relics[id]) > 0:
-				_shop_row(list, id, Relics.DATA[id].name, Relics.DATA[id].price, int(relics[id]), buying)
-	_button(box, "返回节点", _node_dialog)
+func _shop_dialog(feedback: String = "", resume: Dictionary = {}) -> void:
+	var trader_id: String = selected_id
+	var box := _modal("", 1070, 680)
+	var panel := box.get_parent() as Control
+	var shop := ShopView.new()
+	box.add_child(shop)
+	shop.setup(run, trader_id, {true: _shop_offers(trader_id, true), false: _shop_offers(trader_id, false)},
+		panel.size.x, feedback, resume)
+	var buy_or_sell := _item_command(func():
+		var item := shop.selected
+		if item.kind == "gear":
+			return run.gear_trade(trader_id, item.id, shop.buying, shop.voucher)
+		return run.trade(trader_id, item.id, shop.buying, shop.voucher, shop.quantity))
+	var restock := _item_command(run.refresh_shop.bind(trader_id))
+	shop.trade_requested.connect(func():
+		if shop.is_inside_tree() and not shop.confirm.disabled:
+			_shop_action(buy_or_sell, shop.selection()))
+	shop.refresh_requested.connect(func():
+		if shop.is_inside_tree() and shop.buying and not shop.refresh.disabled:
+			_shop_action(restock, shop.selection()))
+	shop.return_requested.connect(_node_dialog)
 
-func _shop_row(list: Node, id: String, label: String, base: int, count: int, buying: bool, gear: bool = false) -> void:
-	var quote = run.item_quote(base, "shop_buy" if buying else "shop_sell", id if gear else "")
-	var detail = "%s · %d 灯铢 · %d 件" % [label, quote.price, count]
-	if run.has_relic("price_pair_slip"):
-		var buy_price = run.item_quote(base, "shop_buy", id if gear else "").price
-		var sell_price = run.item_quote(base, "shop_sell", id if gear else "").price
-		detail += " · 买 %d / 卖 %d" % [buy_price, sell_price]
-	_button(list, detail,
-		_shop_confirm.bind(id, label, base, buying, gear), buying and run.data.lamp_coins < quote.price and _vouchers("shop_buy").is_empty())
+func _shop_action(action: Callable, resume: Dictionary) -> void:
+	sound.play("click")
+	var result: Dictionary = action.call()
+	_run_action(result)
+	var message: String = toast_text if result.ok and toast_text != "已完成。" else result.get("message", "已完成。")
+	if not result.ok or not _show_relic_intro(_shop_dialog.bind(message, resume)):
+		_shop_dialog(message, resume)
 
-func _shop_confirm(id: String, label: String, base: int, buying: bool, gear: bool) -> void:
-	var actor_id = selected_id
-	var box = _modal(("买入 " if buying else "卖出 ") + label, 590, 420)
-	if gear:
-		_text(box, Gear.DATA[run.data.gear_instances[id].definition_id].effect, 16)
-	elif Relics.DATA.has(id):
-		_text(box, Relics.DATA[id].effect, 16)
-		if not buying and run.has_relic(id) and int(run.data.relic_inventory[id]) == 1:
-			_text(box, "售出最后一件会解除共鸣。", 17, gold)
-	var channel = "shop_buy" if buying else "shop_sell"
-	var vouchers = [""] + (_vouchers(channel) if buying else [])
-	for voucher in vouchers:
-		var quote = run.item_quote(base, channel, id if gear else "", voucher)
-		if not quote.ok:
-			continue
-		var action = run.gear_trade.bind(actor_id, id, buying, voucher) if gear else run.trade.bind(actor_id, id, buying, voucher)
-		var execute = _item_command(action)
-		_button(box, "确认 · %d 灯铢%s" % [quote.price, " · " + Relics.DATA[voucher].name if not voucher.is_empty() else ""], func():
-			var result = execute.call()
-			_run_action(result)
-			var message: String = result.get("message", "已完成。")
-			if not result.ok or not _show_relic_intro(_shop_dialog.bind(message)):
-				_shop_dialog(message), buying and run.data.lamp_coins < quote.price)
-	_button(box, "返回商摊", _shop_dialog)
+func _shop_offers(trader_id: String, buying: bool) -> Array[Dictionary]:
+	var trader: Dictionary = run.actor(trader_id)
+	var node: Dictionary = run.node_at(trader.position)
+	var items: Array[Dictionary] = []
+	var supplies: Dictionary = node.stock if buying else trader.inventory
+	for id in supplies:
+		if Nodes.PRICES.has(id) and not Gear.DATA.has(id) and int(supplies[id]) > 0:
+			items.append({"kind": "item", "id": id, "count": int(supplies[id])})
+	for uid in run.gear_owned("shop" if buying else "actor", trader.position if buying else trader_id):
+		items.append({"kind": "gear", "id": uid, "count": 1})
+	var relics: Dictionary = node.relic_stock if buying else run.data.relic_inventory
+	for id in relics:
+		if int(relics[id]) > 0:
+			items.append({"kind": "relic", "id": id, "count": int(relics[id])})
+	var entries := _reward_entries(items)
+	for entry in entries:
+		var id: String = entry.id
+		match entry.kind:
+			"item":
+				entry.base = Nodes.PRICES[id]
+				entry.category = "补给"
+				entry.owned = int(trader.inventory.get(id, 0))
+			"gear":
+				var instance: Dictionary = run.data.gear_instances[id]
+				entry.base = Gear.price(instance)
+				entry.owned = 0 if buying else 1
+				entry.title = Gear.DATA[instance.definition_id].name
+				entry.equipped = not buying and id in trader.equipment.values()
+				var grade: String = Gear.QUALITY_NAMES[Gear.QUALITIES.find(instance.quality)]
+				entry.grade = "%s +%d%s" % [grade, int(instance.enhance_level), " · 已装备" if entry.equipped else ""]
+			"relic":
+				entry.base = Relics.DATA[id].price
+				entry.owned = int(run.data.relic_inventory.get(id, 0))
+				if not buying and run.has_relic(id):
+					entry.grade = "共鸣中"
+	return entries
 
 func _item_command(action: Callable) -> Callable:
 	item_operation_serial += 1

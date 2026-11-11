@@ -99,6 +99,73 @@ func check_equipment() -> void:
 		and saved_copy.get("owner") == {"kind": "actor", "id": "hero"} and duplicate.data.gear_instances.size() == run.data.gear_instances.size(),
 		"Saving and loading preserves gear identity")
 
+func check_shop_refresh() -> void:
+	var run = fixture()
+	var shops: Array = run.data.nodes.keys().filter(func(cell):
+		return run.node_at(cell).kind == "trade" and run.data.tiles[cell].enemies.is_empty())
+	expect(shops.size() >= 2, "Refresh fixture includes independent shops")
+	if shops.size() < 2:
+		return
+	var first: String = shops[0]
+	var second: String = shops[1]
+	run.actor("hero").position = first
+	var purchased: String = run.gear_owned("shop", first)[0]
+	run.data.lamp_coins = 1000
+	expect(run.gear_trade("hero", purchased, true).ok, "Buy gear before refreshing")
+	var wallet: int = run.data.lamp_coins
+	var old_gear: Array = run.gear_owned("shop", first)
+	var old_relics: Dictionary = run.node_at(first).relic_stock.duplicate()
+	var other_stock: Dictionary = run.node_at(second).duplicate(true)
+	run.node_at(first).stock.salve = 0
+	var revision: int = run.data.item_revision
+	var refresh: Callable = run.refresh_shop.bind("hero")
+	expect(run.shop_refresh_cost(first) == 1 and run.commit_item_operation("first-refresh", revision, refresh).ok,
+		"The first refresh costs one lamp coin")
+	expect(run.commit_item_operation("first-refresh", revision, refresh).ok and run.data.lamp_coins == wallet - 1
+		and run.shop_refresh_cost(first) == 2, "A duplicate confirmation cannot refresh or charge twice")
+	expect(run.node_at(first).stock.salve > 0 and run.gear_owned("shop", first).size() == 2
+		and old_gear.all(func(uid): return not run.data.gear_instances.has(uid))
+		and old_relics.keys().all(func(id): return not run.node_at(first).relic_stock.has(id)),
+		"Refresh replenishes supplies and replaces shop-owned equipment and relics")
+	expect(purchased in run.gear_owned("actor", "hero") and run.node_at(second) == other_stock
+		and run.shop_refresh_cost(second) == 1, "Refresh preserves purchases and other merchants")
+	expect(run.refresh_shop("hero").ok and run.data.lamp_coins == wallet - 3 and run.shop_refresh_cost(first) == 3,
+		"The second refresh costs two lamp coins")
+	run.data.lamp_coins = 2
+	var before: Dictionary = run.data.duplicate(true)
+	expect(not run.refresh_shop("hero").ok and run.data == before, "A failed refresh leaves currency, goods and cost intact")
+	var saved: bool = run.save_game().ok and run.load_game().ok
+	var stock: Dictionary = run.node_at(first).relic_stock
+	var previous_stock: Dictionary = before.nodes[first].relic_stock
+	expect(saved and run.shop_refresh_cost(first) == 3 and run.shop_refresh_cost(second) == 1
+		and stock.size() == previous_stock.size()
+		and stock.keys().all(func(id): return int(stock[id]) == int(previous_stock.get(id, 0))),
+		"Save and load preserve the refreshed stock and each shop's price")
+
+func check_bulk_trade() -> void:
+	var run = fixture()
+	var cell := position_for(run, "trade")
+	run.actor("hero").position = cell
+	run.grant_relic("survey_bonus_stamp", "hero", cell)
+	run.grant_relic("modest_trade_coupon", "hero", cell)
+	for visited in run.data.tiles.keys().slice(0, 61):
+		run.data.visited[visited] = true
+	run.node_at(cell).relic_stock.lamp_badge = 2
+	run.data.lamp_coins = 174
+	var quote: Dictionary = run.shop_quote(100, true, 2, "", "modest_trade_coupon")
+	var before: Dictionary = run.data.duplicate(true)
+	expect(quote.price == 175 and quote.unit_price == 75 and quote.additional_unit_price == 100,
+		"Bulk quote applies the one-use coupon and first-purchase discount to the first unit")
+	expect(not run.trade("hero", "lamp_badge", true, "modest_trade_coupon", 2).ok and run.data == before,
+		"An unaffordable bulk order never partially changes the inventory or spends a coupon")
+	run.data.lamp_coins += 1
+	expect(run.trade("hero", "lamp_badge", true, "modest_trade_coupon", 2).ok and run.data.lamp_coins == 0
+		and run.data.relic_inventory.lamp_badge == 2 and run.node_at(cell).relic_stock.lamp_badge == 0
+		and not run.data.relic_inventory.has("modest_trade_coupon"), "Bulk purchase charges the quoted total and consumes the coupon once")
+	expect(run.trade("hero", "lamp_badge", false, "", 2).ok and run.data.lamp_coins == 80
+		and not run.has_relic("lamp_badge") and run.node_at(cell).relic_stock.lamp_badge == 2,
+		"Bulk sale restores stock and removes attunement only after selling the last copy")
+
 func check_relics() -> void:
 	var run = fixture()
 	var hero: Dictionary = run.actor("hero")
@@ -255,6 +322,8 @@ func check_ui() -> void:
 func execute() -> void:
 	check_catalogs()
 	check_equipment()
+	check_shop_refresh()
+	check_bulk_trade()
 	check_relics()
 	check_migration()
 	check_battle()
