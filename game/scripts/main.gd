@@ -2262,6 +2262,8 @@ func _story_scene_at(position: String) -> String:
 	return STORY_TERRAIN.get(run.data.tiles[position].terrain, "road")
 
 func _story_portrait(id: String, pose: String = "") -> Texture2D:
+	if id == "villager_elf" and pose == "concerned":
+		return preload("res://assets/portraits/villager_elf_water.png")
 	var villager = id.begins_with("villager_")
 	var directory = "res://assets/portraits/"
 	var atlas_path = directory + id + "_poses.png"

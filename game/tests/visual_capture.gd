@@ -533,7 +533,11 @@ func inspect_character_poses() -> void:
 	for group in ["human", "elf", "dwarf"]:
 		for pose in ["", "concerned", "serious", "farewell", "grief", "battle"]:
 			var portrait = game._story_portrait("villager_" + group, pose)
-			expect(portrait is AtlasTexture, "Village pose is available " + group + "/" + pose)
+			if group == "elf" and pose == "concerned":
+				expect(portrait != null and portrait.resource_path.ends_with("/villager_elf_water.png"),
+					"The concerned elf uses the water offering portrait")
+			else:
+				expect(portrait is AtlasTexture, "Village pose is available " + group + "/" + pose)
 			inspect_portrait_silhouette(portrait, group + "/" + pose)
 
 func capture_finale() -> void:
@@ -616,6 +620,13 @@ func execute() -> void:
 	await capture("story-dialogue-history")
 	await click_story_button("关闭")
 	await finish_linear_story()
+	for terrain in ["forest", "swamp"]:
+		game._village_page(terrain, 0)
+		var villager := game.modal_layer.find_child("StoryActor0", true, false) as TextureRect
+		expect(villager != null and villager.texture == game._story_portrait("villager_elf", "concerned"),
+			"The village opens with the elf offering water: " + terrain)
+		await capture("story-village-waking-" + terrain)
+	game._close_modal()
 	game._show_opening(menu_state)
 	await capture("01-menu-with-save")
 	var resume: Button
