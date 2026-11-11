@@ -5,6 +5,9 @@ const Hex = preload("res://scripts/domain/hex_map.gd")
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
 const Combat = preload("res://scripts/domain/battle.gd")
+const Gear = preload("res://scripts/domain/gear_catalog.gd")
+const Relics = preload("res://scripts/domain/relic_catalog.gd")
+const InventoryPage = preload("res://scripts/presentation/inventory_page.gd")
 var game: Node
 var checks = 0
 var failures: Array[String] = []
@@ -251,6 +254,36 @@ func finish_linear_story() -> void:
 		await advance_story()
 	expect(false, "Linear story closes within the bounded page count")
 
+func check_reward_art() -> void:
+	var pictures := {}
+	for catalog in [Relics.DATA, Gear.DATA]:
+		for id in catalog:
+			var texture := InventoryPage.icon(id)
+			expect(texture != null and not str(catalog[id].story).is_empty(), id + " has a picture and story")
+			if texture == null:
+				continue
+			var key := str(texture.region) if texture is AtlasTexture else texture.resource_path
+			expect(not pictures.has(key), id + " uses its own illustration")
+			pictures[key] = true
+	for level in range(1, Gear.MAX_LEVEL + 1):
+		var art := InventoryPage.item_image(InventoryPage.icon("trail_blade"), level)
+		expect(art.material is ShaderMaterial and int(art.material.get_shader_parameter("level")) == level,
+			"Equipment illustration receives its enhancement level")
+		art.free()
+
+func select_story_reward(title: String) -> void:
+	var rewards = game.modal_layer.find_child("RewardItems", true, false)
+	expect(rewards != null, "The reward list is visible")
+	if rewards == null:
+		return
+	for child in rewards.find_children("*", "Button", true, false):
+		var button := child as Button
+		if button.accessibility_name.begins_with(title + " ×"):
+			await click_button(button)
+			expect(button.button_pressed, "Reward selection stays highlighted")
+			return
+	expect(false, "The reward list contains " + title)
+
 func wait_for_map_arrival() -> void:
 	var deadline = Time.get_ticks_msec() + 5000
 	while game.map_traveling and Time.get_ticks_msec() < deadline:
@@ -416,17 +449,21 @@ func check_haunt_dialogue() -> void:
 	expect(investigation.contains(event.investigation), "The complete investigation is readable before deciding")
 	expect(saved_run().get("nodes", {}).get(cell, {}).get("investigated", false), "Investigation click is saved")
 	await click(event.alternative)
-	var conclusion = await read_to_choices()
+	var found_relic: bool = not run.relic_intro().is_empty()
+	var conclusion: String
+	if found_relic:
+		conclusion = "".join(await read_current_body())
+		await advance_story()
+		expect(game.modal_layer.has_node("StoryRewards"), "The reward screen follows the completed haunting story")
+	else:
+		conclusion = await read_to_choices()
 	expect(node.result == "settle_alternative" and run.data.peace.has(cell)
 		and conclusion.contains(event.alternative_resolved), "Second settlement click shows its own conclusion")
 	expect(find_button(game.modal_layer, event.work) == null and find_button(game.modal_layer, event.alternative) == null,
 		"Resolved haunting cannot be switched through the UI")
-	var found_relic: bool = not run.relic_intro().is_empty()
 	await click("返回地图")
 	if found_relic:
-		expect(game.modal_layer.has_node("StoryScreen"), "The relic introduction follows the node conclusion")
-		await finish_linear_story()
-		expect(run.relic_intro().is_empty(), "Reading the relic returns to the map")
+		expect(run.relic_intro().is_empty(), "The reward details acknowledge the relic introduction")
 
 func check_personal_dialogue() -> void:
 	var run = game.run
@@ -698,8 +735,17 @@ func check_node_dialogs() -> void:
 	expect(hero.hp == 1 and hero.mp == 0 and hero.inventory[supply] == quantity + 1,
 		"The node grants a finite supply item")
 	expect(find_button(game.modal_layer, "带走一份") == null, "Supply cannot be claimed twice")
-	await read_to_choices()
+	await finish_linear_story()
+	expect(game.modal_layer.has_node("StoryRewards") and contains_text(game.modal_layer, run.location_name(rest_cell))
+		and contains_text(game.modal_layer, Catalog.ITEMS[supply].description), "Node rewards show their source and the actual item")
+	game._continue_run()
+	expect(game.modal_layer.has_node("StoryRewards") and run.actor("hero").inventory[supply] == quantity + 1,
+		"Continuing restores the pending receipt without granting the item again")
 	await click("返回地图")
+	game._continue_run()
+	expect(not game.modal_layer.has_node("StoryRewards"), "An acknowledged node receipt stays closed after reloading")
+	game._close_modal()
+	hero = run.actor("hero")
 
 	var shop_cell: String = shop_cells[0]
 	hero.position = shop_cell
@@ -1037,8 +1083,14 @@ func check_familiarity_dialogue() -> void:
 	game._begin_dialogue("ember")
 	await read_to_choices()
 	await click(option_label(game.narrative.dialogue("hero", "ember"), "join"))
+	await finish_linear_story()
+	expect(person.joined and game.modal_layer.has_node("StoryRewards")
+		and contains_text(game.modal_layer, Relics.DATA.opening_flint.story),
+		"The companion's reply ends with an illustrated receipt for their gift")
+	await click("返回地图")
+	game._begin_dialogue("ember")
 	var idle = await read_to_choices()
-	expect(person.joined and run.relic_intro().is_empty(), "Recruitment finishes its relic introduction before optional conversation")
+	expect(run.relic_intro().is_empty(), "The gift story is acknowledged before optional conversation")
 	expect(not idle.contains(Story.HERO_LINES.ember), "Idle conversation does not volunteer the protagonist hint")
 	var before = run.data.duplicate(true)
 	await click(option_label(game.narrative.dialogue("hero", "ember"), "echo"))
@@ -1168,8 +1220,17 @@ func execute() -> void:
 	await advance_until_text("一路平安")
 	expect(dialogue_contains("一路平安"), "The villager sends off the traveler with supplies")
 	await finish_linear_story()
+	expect(game.modal_layer.has_node("StoryRewards") and contains_text(game.modal_layer, "疗伤药")
+		and contains_text(game.modal_layer, "澄露") and contains_text(game.modal_layer, "巡路短刃"), "Departure lists all village gifts")
+	for item in ["ether", "salve"]:
+		await select_story_reward(Catalog.ITEMS[item].name)
+		var detail = game.modal_layer.find_child("RewardDetails", true, false)
+		expect(detail != null and contains_text(detail, Catalog.ITEMS[item].description)
+			and contains_text(detail, Catalog.ITEMS[item].story), "Clicking a consumable shows its use and description")
+	await click("返回地图")
 	expect(game.modal_layer.get_child_count() == 0 and game.run.actor("hero").name == "旅人", "Departure enters the map as the fixed traveler")
 	expect(saved_run().get("actors", {}).get("hero", {}).get("inventory", {}).get("salve") == 3, "Village supplies are saved on departure")
+	check_reward_art()
 	await check_story_history()
 	await check_story_pagination()
 	await check_personal_dialogue()

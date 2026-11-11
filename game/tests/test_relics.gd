@@ -91,21 +91,30 @@ func check_battle_drop(run: RefCounted) -> void:
 	expect(run.load_game().ok and run.data.relic_claims["battle:0,0:"].relic_id == expected
 		and run.roll_relic("battle:0,0:", ["lamp_badge"], 1.0, "hero", "0,0").is_empty(), "Battle settlement and reward are saved together without a reroll")
 
-func check_victory_intro(save_path: String) -> void:
+func check_victory_receipt(save_path: String) -> void:
 	var game = Main.instantiate()
 	root.add_child(game)
 	await process_frame
 	game.run.save_path = save_path
 	game._continue_run()
 	var result = game.modal_layer.get_node_or_null("VictoryScreen")
-	expect(result != null and not game.modal_layer.has_node("StoryScreen"), "Battle loot opens the settlement before the relic intro")
+	expect(result != null and not game.modal_layer.has_node("StoryScreen"), "Battle loot opens the settlement")
 	if result != null:
+		var relic: String = game.run.data.pending_victory.relic
+		var rows = result.find_child("RewardItems", true, false)
+		expect(rows != null, "The settlement shows inspectable loot")
+		if rows != null:
+			for button in rows.find_children("*", "Button", true, false):
+				if button.accessibility_name.begins_with(Relics.DATA[relic].name):
+					button.pressed.emit()
+					break
+			expect(rows.details.find_children("*", "Label", true, false).any(
+				func(label): return label.text == Relics.DATA[relic].story), "The earned relic story is readable before leaving")
 		for button in result.find_children("*", "Button", true, false):
 			if button.text == "继续远征":
 				button.pressed.emit()
 				break
-		expect(game.modal_layer.has_node("StoryScreen") and not game.run.relic_intro().is_empty(),
-			"Acknowledging victory opens the earned relic introduction")
+		expect(game.run.relic_intro().is_empty(), "Acknowledging victory clears the earned relic introduction")
 	game.queue_free()
 
 func click_story() -> void:
@@ -167,12 +176,20 @@ func check_exploration() -> void:
 	var sight_is_hidden = new_sight.all(func(id):
 		return run.data.explored.has(id) and not run.has_visited(id) and not game.view.tile_nodes.has(id))
 	expect(not new_sight.is_empty() and sight_is_hidden, "Telescope adds shared sight, deferring map presentation until after the story")
-	await click_story()
+	for page in range(16):
+		if not game.modal_layer.has_node("StoryScreen"):
+			break
+		await click_story()
+	expect(game.modal_layer.has_node("StoryRewards"), "The cache conclusion opens its item receipt")
 	game._continue_run()
-	expect(run.relic_intro().get("stage") == 1 and game.modal_layer.has_node("StoryScreen"), "Continue resumes the saved relic effect page")
-	await click_story()
+	expect(run.relic_intro().get("id") == "telescope" and game.modal_layer.has_node("StoryRewards"),
+		"Continue resumes the saved cache receipt with the same relic")
+	for button in game.modal_layer.find_children("*", "Button", true, false):
+		if button.text.begins_with("返回地图"):
+			button.pressed.emit()
+			break
 	expect(run.relic_intro().is_empty() and game.view.fog_reveals.get_child_count() > 0
-		and not run.investigate_relic("hero").ok, "Closing the story starts the fog dissolve and prevents a second investigation")
+		and not run.investigate_relic("hero").ok, "Acknowledging the receipt starts the fog dissolve and prevents a second investigation")
 	game._inventory_dialog("hero", 2)
 	var tabs = game.modal_layer.find_child("InventoryTabs", true, false)
 	var page = tabs.get_child(2)
@@ -195,7 +212,7 @@ func execute() -> void:
 	expect(Relics.DATA.size() == 100, "One hundred distinct relics are defined")
 	check_effects(run)
 	check_battle_drop(run)
-	await check_victory_intro(run.save_path)
+	await check_victory_receipt(run.save_path)
 	await check_exploration()
 	await create_timer(0.3).timeout
 	print("RELICS: %d checks, %d failures" % [checks, failures])
