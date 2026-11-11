@@ -590,7 +590,7 @@ func execute() -> void:
 	await capture("story-village-waking")
 	await advance_until_text("一点也想不起来")
 	await capture("story-village-traveler")
-	await advance_until_text("我也想帮帮其他人")
+	await advance_until_text("那我出去走走")
 	await capture("story-village-decision")
 	await advance_until_text("一路平安")
 	await capture("story-village-farewell")
