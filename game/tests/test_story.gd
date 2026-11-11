@@ -429,7 +429,8 @@ func execute() -> void:
 	var r = Run.new()
 	r.save_path = "user://test-veylodan-story.json"
 	r.new_run(41, "wayfarer")
-	expect(not Opening.WORLD.contains("死亡之神") and not Opening.WORLD.contains("伊文洛"), "Opening preserves the identity reveal")
+	expect(Opening.world_pages().all(func(page): return "死亡之神" not in page.text and "伊文洛" not in page.text),
+		"Opening preserves the identity reveal")
 	expect(r.data.tiles.size() == 217 and Catalog.COMPANIONS.size() == 25, "Map and roster sizes")
 	expect(r.actor("hero").name == "旅人" and r.actor("hero").skill == "gravity" and r.actor("hero").element == "none", "Fixed gravity protagonist")
 	expect(r.actor("hero").inventory.salve == 3 and r.actor("hero").inventory.ether == 2 and r.actor("hero").inventory.trail_food == 2, "Village supplies")

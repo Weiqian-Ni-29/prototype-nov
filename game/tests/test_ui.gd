@@ -1109,11 +1109,19 @@ func execute() -> void:
 	await story_key(KEY_ESCAPE)
 	expect(dialogue_contains("维洛丹"), "Escape leaves an opening scene without an End Conversation action in place")
 	var world_text = ""
+	var world_scenes: Array[String] = []
 	for index in range(128):
 		if story_text() == null or story_speaker() != "旁白":
 			break
 		world_text += story_text().text
+		var background: TextureRect = game.modal_layer.get_node("StoryScreen").get_child(0)
+		var scene = background.texture.resource_path.get_file().get_basename()
+		if world_scenes.is_empty() or world_scenes.back() != scene:
+			world_scenes.append(scene)
 		await advance_story()
+	expect(world_scenes == ["world_intro", "dragon", "demon", "elves", "dwarves", "humans", "market",
+		"world_intro", "kadran", "mevenna", "dorank", "levensor", "world_intro"],
+		"Opening switches to the approved illustrations in narrative order")
 	var last_topic = -1
 	for topic in ["趴着睡的大兽", "最老的，是龙", "是恶魔", "精灵住在林子里", "矮人把家安进山", "人类生在平原上", "赶上开集", "卡德兰", "梅文娜", "多兰克", "莱文索", "运粮的车过不来", "已经下了葬"]:
 		var position = world_text.find(topic)

@@ -582,8 +582,14 @@ func execute() -> void:
 	await capture("01-menu")
 	game._begin_opening_story()
 	await capture("story-world-intro")
-	await advance_until_text("战神卡德兰")
-	await capture("story-world-gods")
+	var prologue_scenes = {
+		"最老的，是龙": "dragon", "是恶魔": "demon", "精灵住在林子里": "elves",
+		"矮人把家安进山": "dwarves", "人类生在平原上": "humans", "赶上开集": "market",
+		"战神卡德兰": "kadran", "四季之神梅文娜": "mevenna", "大地之神多兰克": "dorank", "天空神莱文索": "levensor",
+	}
+	for topic in prologue_scenes:
+		await advance_until_text(topic)
+		await capture("story-prologue-" + prologue_scenes[topic])
 	await advance_until_text("运粮的车过不来")
 	await capture("story-world-war")
 	await advance_until_text("你醒了")
