@@ -334,14 +334,14 @@ func capture_node_examples() -> void:
 	var original_seed: String = game.chosen_seed
 	var seed_value: int = int(run.data.seed)
 	var forest_rest = run.data.nodes.keys().filter(func(cell):
-		return run.node_at(cell).kind == "rest" and run.data.tiles[cell].terrain == "forest")
+		return run.node_at(cell).kind == "supply" and run.data.tiles[cell].terrain == "forest")
 	for candidate in range(24):
 		if not forest_rest.is_empty():
 			break
 		seed_value = candidate
 		run.new_run(seed_value, "wayfarer")
 		forest_rest = run.data.nodes.keys().filter(func(cell):
-			return run.node_at(cell).kind == "rest" and run.data.tiles[cell].terrain == "forest")
+			return run.node_at(cell).kind == "supply" and run.data.tiles[cell].terrain == "forest")
 	var shops = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "trade")
 	expect(not forest_rest.is_empty() and not shops.is_empty(), "Node fixture seed has a forest supply stop and a shop")
 	if forest_rest.is_empty() or shops.is_empty():
@@ -352,8 +352,11 @@ func capture_node_examples() -> void:
 	run.actor("hero").position = rest
 	run.reveal(rest)
 	game._select_actor("hero")
-	game._node_dialog()
-	await capture("node-forest-supply-stop")
+	game._cell_actions()
+	await capture("node-forest-supply")
+	game._node_choice("collect")
+	await capture("node-supply-reward")
+	await click_story_button("返回地图")
 	game._close_modal()
 	var shop: String = shops[0]
 	run.actor("hero").position = shop

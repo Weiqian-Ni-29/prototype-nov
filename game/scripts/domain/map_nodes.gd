@@ -1,12 +1,13 @@
 extends RefCounted
 ## Node placement uses a separate seed stream from terrain, combat and weather.
 const Hex = preload("res://scripts/domain/hex_map.gd")
+const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const STARTING_COINS = 8
 const PRICES = {"salve": 6, "ether": 7, "trail_food": 3, "trail_blade": 12, "padded_coat": 15, "lamp_charm": 18}
 const GEAR = ["trail_blade", "padded_coat", "lamp_charm"]
 const RETIRED_KINDS = ["choice", "haunt"]
 const LABELS = {
-	"story": "地点", "trade": "交易", "supply": "补给", "rest": "补给点",
+	"story": "地点", "trade": "交易", "supply": "补给",
 	"cache": "寻宝", "battle": "遭遇", "elite": "险地",
 }
 static var events: Dictionary = {}
@@ -166,27 +167,74 @@ static func replace_retired_nodes(data: Dictionary) -> void:
 		if cell == data.boss:
 			data.nodes[cell] = {"kind": "story", "event": "", "result": ""}
 			continue
-		var tile: Dictionary = data.tiles[cell]
 		roller.seed = hash("replacement-battle:%s:%s" % [data.seed, cell])
 		var opening := Hex.distance(Hex.coord(cell), Hex.coord(data.start)) <= 2
 		var elite := not opening and roller.randi_range(0, 4) == 0
-		var kind := "elite" if elite else "battle"
-		var biome: String = tile.base_terrain
-		var candidates: Array = pools[kind + ":" + biome]
-		var event: String = candidates[roller.randi_range(0, candidates.size() - 1)]
 		var cleared: bool = not previous.result.is_empty() or data.peace.has(cell)
-		data.nodes[cell] = {"kind": kind, "event": event, "result": "cleared" if cleared else "",
-			"coins": battle_coins(int(data.seed), cell, elite)}
+		_replace_with_battle(data, cell, roller, elite, opening, cleared)
+
+static func merge_supplies(data: Dictionary) -> void:
+	var roller := RandomNumberGenerator.new()
+	for cell in data.nodes:
+		var previous: Dictionary = data.nodes[cell]
+		if previous.kind not in ["rest", "supply"] or (previous.kind == "supply" and previous.has("coins")):
+			continue
+		var tile: Dictionary = data.tiles[cell]
+		var claimed: bool = not previous.result.is_empty() or (previous.kind == "supply" and tile.quantity <= 0)
+		roller.seed = hash("supply-reward:%s:%s" % [data.seed, cell])
+		var node := {"kind": "supply", "event": previous.event, "result": "collect" if claimed else "",
+			"coins": roller.randi_range(1, 3)}
+		var roll := roller.randi_range(0, 99)
+		if roll < 10:
+			node.gear_definition = Gear.roll_definition(tile.base_terrain, roller)
+			node.gear_quality = Gear.roll_quality(roller)
+		elif roll < 35:
+			node.item = ["salve", "ether", "trail_food"][roller.randi_range(0, 2)]
+		data.nodes[cell] = node
 		tile.resource = ""
 		tile.quantity = 0
-		tile.hidden = false
-		if cleared:
-			tile.enemies = []
-		elif elite:
-			tile.enemies = ["furnace_elite" if biome in ["mountain", "ruins", "desert"] else "hunter_elite"]
-		else:
-			tile.enemies = ["boar"] if opening else Hex._composition(biome, roller, true)
-		tile.discovered_enemy = not cleared and data.get("visited", {}).has(cell)
+
+static func raise_elite_share(data: Dictionary) -> void:
+	var target := roundi(data.nodes.size() * 0.20)
+	var current := 0
+	var candidates: Array[String] = []
+	var priority := {}
+	var start := Hex.coord(data.start)
+	for cell in data.nodes:
+		var node: Dictionary = data.nodes[cell]
+		if cell == data.boss:
+			continue
+		if node.kind == "elite":
+			current += 1
+		elif (node.kind == "supply" and node.result.is_empty()
+				and Hex.distance(Hex.coord(cell), start) > 2 and cell != data.actors.hero.position):
+			candidates.append(cell)
+			priority[cell] = hash("elite-from-supply:%s:%s" % [data.seed, cell])
+	candidates.sort_custom(func(a, b): return a < b if priority[a] == priority[b] else priority[a] < priority[b])
+	var roller := RandomNumberGenerator.new()
+	for index in mini(maxi(0, target - current), candidates.size()):
+		var cell := candidates[index]
+		roller.seed = priority[cell]
+		_replace_with_battle(data, cell, roller, true, false, false)
+
+static func _replace_with_battle(data: Dictionary, cell: String, roller: RandomNumberGenerator, elite: bool, opening: bool, cleared: bool) -> void:
+	var tile: Dictionary = data.tiles[cell]
+	var kind := "elite" if elite else "battle"
+	var biome: String = tile.base_terrain
+	var candidates: Array = pools[kind + ":" + biome]
+	var event: String = candidates[roller.randi_range(0, candidates.size() - 1)]
+	data.nodes[cell] = {"kind": kind, "event": event, "result": "cleared" if cleared else "",
+		"coins": battle_coins(int(data.seed), cell, elite)}
+	tile.resource = ""
+	tile.quantity = 0
+	tile.hidden = false
+	if cleared:
+		tile.enemies = []
+	elif elite:
+		tile.enemies = ["furnace_elite" if biome in ["mountain", "ruins", "desert"] else "hunter_elite"]
+	else:
+		tile.enemies = ["boar"] if opening else Hex._composition(biome, roller, true)
+	tile.discovered_enemy = not cleared and data.get("visited", {}).has(cell)
 
 static func shop_supplies(biome: String, roller: RandomNumberGenerator) -> Dictionary:
 	var stock := {"salve": 1, "ether": 1, "trail_food": 1}

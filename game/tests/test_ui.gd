@@ -632,7 +632,7 @@ func check_node_dialogs() -> void:
 	expect(find_button(game.modal_layer, "休整") == null, "Ordinary tiles have no general rest command")
 	await press("关闭")
 
-	var rest_cells = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "rest")
+	var rest_cells = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "supply")
 	var shop_cells = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "trade")
 	expect(not rest_cells.is_empty() and not shop_cells.is_empty(), "This seed has supply stops and trade nodes")
 	if rest_cells.is_empty() or shop_cells.is_empty():
@@ -644,29 +644,17 @@ func check_node_dialogs() -> void:
 	var action = find_button(game.ui, "行动")
 	expect(action != null and action.text == "行动", "A supply stop uses the plain action button label")
 	await press("行动")
-	await press("查看节点剧情")
-	var stage = game.modal_layer.get_node("StoryScreen")
-	var scene: TextureRect = stage.get_child(0)
-	expect(scene.texture.resource_path.ends_with("/" + game._story_scene_at(rest_cell) + ".png"),
-		"The node story uses the occupied tile's terrain art")
-	expect(stage.get_node("Dialogue").get_children().filter(func(control): return control.visible) == [story_text()],
-		"Map narration shows only its body text")
-	await read_to_choices()
-	expect(find_button(game.modal_layer, "记入旅途手记") == null, "Node dialogue has no travel journal action")
-	expect(find_button(game.modal_layer, "在此休整") == null and find_button(game.modal_layer, "在此调息") == null,
-		"The node offers supplies without recovery options")
-	var supply: String = run.node_at(rest_cell).item
-	var quantity = int(hero.inventory.get(supply, 0))
-	await click("带走一份")
-	expect(hero.hp == 1 and hero.mp == 0 and hero.inventory[supply] == quantity + 1,
-		"The node grants a finite supply item")
-	expect(find_button(game.modal_layer, "带走一份") == null, "Supply cannot be claimed twice")
-	await finish_linear_story()
+	expect(find_button(game.modal_layer, "查看节点剧情") == null and find_button(game.modal_layer, "休整") == null,
+		"Supply opens as a direct action without recovery or narration")
+	var coins: int = run.node_at(rest_cell).coins
+	await click("领取补给")
+	expect(hero.hp == 1 and hero.mp == 0 and run.data.lamp_coins == 8 + coins,
+		"The unified supply action adds coins without healing")
 	expect(game.modal_layer.has_node("StoryRewards") and contains_text(game.modal_layer, run.location_name(rest_cell))
-		and contains_text(game.modal_layer, Catalog.ITEMS[supply].description), "Node rewards show their source and the actual item")
+		and contains_text(game.modal_layer, "灯铢"), "The supply receipt displays its source and coins")
 	game._continue_run()
-	expect(game.modal_layer.has_node("StoryRewards") and run.actor("hero").inventory[supply] == quantity + 1,
-		"Continuing restores the pending receipt without granting the item again")
+	expect(game.modal_layer.has_node("StoryRewards") and run.data.lamp_coins == 8 + coins,
+		"Continuing restores the pending receipt without granting coins twice")
 	await click("返回地图")
 	game._continue_run()
 	expect(not game.modal_layer.has_node("StoryRewards"), "An acknowledged node receipt stays closed after reloading")
@@ -674,6 +662,7 @@ func check_node_dialogs() -> void:
 	hero = run.actor("hero")
 
 	var shop_cell: String = shop_cells[0]
+	run.data.lamp_coins = 8
 	hero.position = shop_cell
 	run.reveal(shop_cell)
 	game._select_actor("hero")

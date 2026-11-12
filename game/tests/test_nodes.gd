@@ -34,6 +34,7 @@ func check_generation() -> void:
 		expect(not Hex.path(run.data.tiles, run.data.start, run.data.boss).is_empty(), "Boss remains reachable through the land routes")
 		var coverage = true
 		var compatible = true
+		var elite_count := 0
 		var original = Hex.generate(seed_value)
 		var layout = Nodes.generate(original.tiles, seed_value, run.relic_sites, {}, {})
 		for cell in run.data.tiles:
@@ -43,16 +44,24 @@ func check_generation() -> void:
 			if node.is_empty():
 				continue
 			kinds[node.kind] = true
+			if node.kind == "elite" and cell != run.data.boss:
+				elite_count += 1
 			if layout[cell].kind in ["haunt", "choice"] and cell != run.data.boss:
 				expect(node.kind in ["battle", "elite"] and not tile.enemies.is_empty()
 					and Nodes.is_elite(tile.enemies) == (node.kind == "elite"), "Retired cell becomes an encounter of the correct tier")
 				if Hex.distance(Hex.coord(cell), Hex.coord(run.data.start)) <= 2:
 					expect(node.kind == "battle" and tile.enemies == ["boar"] and not tile.hidden, "Replacement encounters near the village are ordinary and visible")
+			elif layout[cell].kind in ["supply", "rest"]:
+				expect(node.kind in ["supply", "elite"], "Both supply types merge and donate cells to elites")
+				if node.kind == "elite":
+					expect(Hex.distance(Hex.coord(cell), Hex.coord(run.data.start)) > 2 and Nodes.is_elite(tile.enemies),
+						"Promoted supplies host a real elite encounter away from the village")
 			elif layout[cell].kind not in ["haunt", "choice"]:
 				expect(layout[cell].kind == node.kind, "Replacement preserves other node types")
 			if node.kind != "story":
 				var event = Nodes.story(node)
 				compatible = compatible and not event.is_empty() and tile.base_terrain in event.terrains
+		expect(elite_count == roundi(run.data.nodes.size() * 0.20), "Elite share is 20 percent of the land grid, rounded to a tile")
 		expect(coverage and compatible, "Every land tile has a compatible story and lakes have none")
 	expect(kinds.size() == Nodes.LABELS.size(), "Seeds exercise all node kinds")
 
@@ -61,7 +70,9 @@ func check_trade_and_recovery() -> void:
 	run.save_path = "user://test-nodes.json"
 	run.new_run(20261104, "wayfarer")
 	var shop = find_node(run, "trade")
-	var rest = find_node(run, "rest")
+	var supplies: Array = run.data.nodes.keys().filter(func(cell):
+		return run.node_at(cell).kind == "supply" and run.node_at(cell).has("gear_definition"))
+	var rest: String = "" if supplies.is_empty() else supplies[0]
 	if shop.is_empty() or rest.is_empty():
 		expect(false, "Fixture seed has a shop and supplies")
 		return
@@ -90,17 +101,20 @@ func check_trade_and_recovery() -> void:
 	lorne.hp = 0
 	expect(not run.use_node("hero", "hp").ok and not run.use_node("hero", "mp").ok,
 		"Supply stop does not offer recovery")
-	var item: String = run.node_at(rest).item
-	var count = int(hero.inventory.get(item, 0))
-	expect(run.use_node("hero", "pack").ok and hero.inventory[item] == count + 1
-		and hero.hp == 20 and hero.mp == 5 and lorne.hp == 0, "Supply stop grants a finite item")
-	expect(not run.use_node("hero", "pack").ok, "Supply can only be claimed once")
+	var supply: Dictionary = run.node_at(rest)
+	var result = run.use_node("hero", "collect")
+	expect(result.ok and run.data.lamp_coins == 4 + supply.coins and hero.hp == 20 and hero.mp == 5,
+		"Supply gives its fixed coins without recovering HP or MP")
+	expect(result.items.size() == 2 and result.items[0].kind == "coins" and result.items[1].kind == "gear"
+		and run.data.gear_instances[result.items[1].id].owner == {"kind": "actor", "id": "hero"},
+		"An equipment bonus becomes an owned item and appears in the receipt")
+	expect(not run.use_node("hero", "collect").ok, "Supply cannot be claimed twice")
 	expect(run.save_game().ok, "Save resolved nodes and wallet")
 	var continued = Run.new()
 	expect(continued.load_game(run.save_path).ok, "Load the expedition with node state")
-	expect(continued.node_at(shop).stock.salve == stock.salve and continued.node_at(rest).result == "pack"
+	expect(continued.node_at(shop).stock.salve == stock.salve and continued.node_at(rest).result == "collect"
 		and continued.data.lamp_coins == run.data.lamp_coins
-		and not continued.use_node("hero", "pack").ok, "Stock and claimed supply survive reload")
+		and not continued.use_node("hero", "collect").ok, "Stock and claimed supply survive reload")
 	var recorded_save = run.data.duplicate(true)
 	recorded_save.version = 5
 	var biome: String = recorded_save.tiles[rest].base_terrain
@@ -109,7 +123,7 @@ func check_trade_and_recovery() -> void:
 	var old_file = FileAccess.open(run.save_path, FileAccess.WRITE)
 	old_file.store_string(JSON.stringify(recorded_save))
 	old_file.close()
-	expect(continued.load_game(run.save_path).ok and continued.node_at(rest).kind in ["battle", "elite", "rest"]
+	expect(continued.load_game(run.save_path).ok and continued.node_at(rest).kind in ["battle", "elite", "supply"]
 		and continued.node_at(rest).result == "" and not continued.data.has("leads")
 		and continued.data.lamp_coins == run.data.lamp_coins,
 		"A legacy clue becomes a playable local event without changing other progress")

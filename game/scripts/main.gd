@@ -516,6 +516,7 @@ func _crew_stamina(parent: VBoxContainer) -> void:
 		segment.add_theme_stylebox_override("panel", bright if i < remaining else faded)
 		steps.add_child(segment)
 	var caption := _text(row, "精力", 13, muted)
+	caption.autowrap_mode = TextServer.AUTOWRAP_OFF
 	caption.size_flags_horizontal = Control.SIZE_SHRINK_END
 	caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 
@@ -541,11 +542,13 @@ func _cell_actions() -> void:
 			_text(box, "遭遇拓片 · %s · %d 个敌人 · %s" % [str(key).trim_prefix("encounter:"), info.count, "、".join(elements)], 15, muted)
 	if not has_encounter and (t.site.is_empty() or (t.site == "boss" and not run.boss_known())) and not Nodes.story(node).is_empty():
 		if not _node_resolved(node, t):
-			for option in _node_actions(node, t):
+			for option in _node_actions(node):
 				_button(box, option.text, _node_choice.bind(option.id))
-		_button(box, "查看节点剧情", _node_dialog)
+		if node.kind != "supply":
+			_button(box, "查看节点剧情", _node_dialog)
 	if has_encounter:
-		_text(box, "决战 · 已平定 %d 处遭遇" % run.data.peace.size() if t.enemies.has("war_god") else "驻守敌人", 18, Color("e4ab87"))
+		var kind := "精英险地" if node.get("kind") == "elite" else "普通遭遇"
+		_text(box, "决战 · 已平定 %d 处遭遇" % run.data.peace.size() if t.enemies.has("war_god") else kind, 18, Color("e4ab87"))
 		var commander: String = "war_god" if t.enemies.has("war_god") else t.enemies[0]
 		_text(box, "敌方主战者 · " + Catalog.ENEMIES[commander].name, 15, muted)
 		if run.actor("grit").joined and run.actor("grit").hp > 0 and run.actor("grit").position == cell:
@@ -596,8 +599,7 @@ func _site_impression() -> void:
 		{"结束交谈": _close_modal}, _node_tint())
 
 func _node_resolved(node: Dictionary, tile: Dictionary) -> bool:
-	return not node.result.is_empty() or (node.kind == "supply" and tile.quantity <= 0) \
-		or (node.kind in ["battle", "elite"] and tile.enemies.is_empty())
+	return not node.result.is_empty() or (node.kind in ["battle", "elite"] and tile.enemies.is_empty())
 
 func _node_tint() -> Color:
 	if run.data.weather == "rain":
@@ -612,14 +614,12 @@ func _node_description(node: Dictionary, tile: Dictionary, event: Dictionary) ->
 func _node_option(id: String, label: String, spoken: bool = false) -> Dictionary:
 	return {"id": id, "text": label, "spoken": spoken}
 
-func _node_actions(node: Dictionary, tile: Dictionary) -> Array:
+func _node_actions(node: Dictionary) -> Array:
 	match node.kind:
 		"trade":
 			return [_node_option("trade", "查看货物 · 持有 %d 灯铢" % run.data.lamp_coins)]
 		"supply":
-			return [_node_option("collect", "取用%s ×%d" % [Catalog.item_name(tile.resource), tile.quantity])]
-		"rest":
-			return [_node_option("pack", "带走一份" + Catalog.item_name(node.item))]
+			return [_node_option("collect", "领取补给")]
 		"cache":
 			return [_node_option("search", "搜寻旧物")]
 	return []
@@ -640,7 +640,7 @@ func _node_dialog() -> void:
 	if speaker in run.same_cell(cell, true) and event.has("reaction"):
 		text += "\n%s说「%s」" % [run.actor(speaker).name, event.reaction]
 	var title = "%s · %s" % [_node_title(cell), event.title]
-	var options := [] if _node_resolved(node, tile) else _node_actions(node, tile)
+	var options := [] if _node_resolved(node, tile) else _node_actions(node)
 	options.append(_node_option("leave", "返回地图"))
 	_show_story(title, "旁白", text, STORY_TERRAIN[tile.terrain], [], options, _node_choice, {}, _node_tint())
 
@@ -734,7 +734,7 @@ func _reward_entries(items: Array) -> Array[Dictionary]:
 				entry.icon = gear.definition_id
 				entry.story = definition.story
 			"coins":
-				entry.merge({"title": "灯铢", "category": "货币", "effect": "可在商摊购买道具、装备和遗器。"})
+				entry.merge({"title": "灯铢", "category": "货币", "effect": "可用于招募伙伴、突破和商店交易。"})
 		entries.append(entry)
 	return entries
 
@@ -1427,6 +1427,8 @@ func _deck_dialog(encounter: bool = false) -> void:
 			opponent = run.actor(pending.npc).name
 		elif not enemies.is_empty():
 			opponent = Catalog.ENEMIES["war_god" if "war_god" in enemies else enemies[0]].name
+			if "war_god" not in enemies and run.node_at(pending.position).get("kind") == "elite":
+				opponent += " · 精英险地"
 		if pending.ambush:
 			opponent += " · 伏击先手"
 	editor.setup(run.data.actors, run.card_deck(), encounter, (box.get_parent() as Control).size.x, opponent)

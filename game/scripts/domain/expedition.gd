@@ -8,7 +8,7 @@ const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Items = preload("res://scripts/domain/expedition_items.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
-const SAVE_VERSION = 6
+const SAVE_VERSION = 7
 const STEPS_PER_DAY = 5
 signal changed
 var data: Dictionary = {}
@@ -43,7 +43,7 @@ func new_run(seed_value: int, profession: String) -> void:
 		data.actors[id] = _actor(id, Catalog.COMPANIONS[id], location, false)
 		data.story[id] = {"relation": "unmet", "result": "E0", "met": false}
 	_initialize_relics()
-	_initialize_nodes()
+	_initialize_nodes(true)
 	Items.stock(data, false)
 	reveal(generated.start)
 	note("村民送来了疗伤药、澄露和干粮。你想到附近走走，看有没有人认得你，能不能想起自己的名字。")
@@ -247,11 +247,14 @@ func _reveal_sight(position: String) -> void:
 func _initialize_relics() -> void:
 	relic_sites = Relics.exploration_sites(data.tiles, int(data.seed))
 
-func _initialize_nodes() -> void:
+func _initialize_nodes(rebalance: bool = false) -> void:
 	data.merge({"lamp_coins": Nodes.STARTING_COINS})
 	if not data.has("nodes"):
 		data.nodes = Nodes.generate(data.tiles, int(data.seed), relic_sites, data.rewards, {})
 	Nodes.replace_retired_nodes(data)
+	Nodes.merge_supplies(data)
+	if rebalance:
+		Nodes.raise_elite_share(data)
 	location_names.clear()
 	var by_title: Dictionary = {}
 	var cells = data.nodes.keys()
@@ -385,12 +388,22 @@ func use_node(id: String, option: String) -> Dictionary:
 	var items: Array[Dictionary] = []
 	match [node.kind, option]:
 		["supply", "collect"]:
-			return collect(id)
-		["rest", "pack"], ["cache", "search"]:
+			var coins := int(node.coins)
+			data.lamp_coins += coins
+			items.append({"kind": "coins", "id": "lamp_coin", "count": coins})
+			message = "%s取得 %d 灯铢。" % [visitor.name, coins]
+			if node.has("gear_definition"):
+				var equipment := Items.add_gear(data, node.gear_definition, node.gear_quality, "actor", id)
+				items.append({"kind": "gear", "id": equipment, "count": 1})
+			elif node.has("item"):
+				var supply: String = node.item
+				visitor.inventory[supply] = int(visitor.inventory.get(supply, 0)) + 1
+				items.append({"kind": "item", "id": supply, "count": 1})
+		["cache", "search"]:
 			var relic = ""
-			if option == "search" and relic_sites.has(cell):
+			if relic_sites.has(cell):
 				relic = str(investigate_relic(id).get("relic", ""))
-			elif option == "search":
+			else:
 				relic = roll_relic("field_cache:" + cell, Relics.DATA.keys(), 0.20, id, cell)
 			var uid: String = node.get("gear_uid", "")
 			if not uid.is_empty():
@@ -902,6 +915,8 @@ func collect(id: String) -> Dictionary:
 		return check
 	var a = actor(id)
 	var t = data.tiles[a.position]
+	if t.quantity <= 0 and node_at(a.position).kind == "supply":
+		return use_node(id, "collect")
 	if not t.enemies.is_empty() or t.quantity <= 0:
 		return fail("这里没有安全可采集的道具。")
 	var amount = int(t.quantity) + (1 if id == "cen" and t.terrain == "forest" else 0)
@@ -1028,11 +1043,11 @@ func load_game(path: String = "") -> Dictionary:
 	if json.parse(FileAccess.get_file_as_string(path)) != OK or not json.data is Dictionary:
 		return fail("存档损坏了，原来的文件还在。")
 	var loaded: Dictionary = json.data
-	if not _whole_number(loaded.get("version", -1)) or int(loaded.version) not in [3, 4, 5, SAVE_VERSION] or not loaded.has_all(["actors", "tiles", "rng_state", "day", "explored", "status"]):
+	if not _whole_number(loaded.get("version", -1)) or int(loaded.version) not in [3, 4, 5, 6, SAVE_VERSION] or not loaded.has_all(["actors", "tiles", "rng_state", "day", "explored", "status"]):
 		return fail("存档版本不兼容，或者进度记录不完整。")
 	if int(loaded.version) >= 4 and (not loaded.get("relic_seen") is Dictionary or not loaded.get("nodes") is Dictionary):
 		return fail("遗器发现记录无效。")
-	if int(loaded.version) < SAVE_VERSION and loaded.get("card_deck") is Array and loaded.actors is Dictionary:
+	if int(loaded.version) < 6 and loaded.get("card_deck") is Array and loaded.actors is Dictionary:
 		loaded.card_deck = Cards.migrate_deck(loaded.card_deck, loaded.actors)
 	var invalid = _validate_save(loaded)
 	if invalid != "":
@@ -1049,9 +1064,10 @@ func load_game(path: String = "") -> Dictionary:
 		return fail("存档中的装备或遗器记录无效。")
 	Nodes.replace_legacy_clues(loaded.nodes, loaded.tiles, int(loaded.seed))
 	loaded.erase("leads")
-	if int(loaded.version) < SAVE_VERSION and not str(loaded.pending_battle.get("npc", "")).is_empty():
+	if int(loaded.version) < 6 and not str(loaded.pending_battle.get("npc", "")).is_empty():
 		loaded.pending_battle = {}
-	if int(loaded.version) < SAVE_VERSION:
+	var rebalance := int(loaded.version) < SAVE_VERSION
+	if rebalance:
 		loaded.version = SAVE_VERSION
 	data = loaded
 	_remove_legacy_map_effects()
@@ -1062,7 +1078,7 @@ func load_game(path: String = "") -> Dictionary:
 	if not data.has("choices"):
 		data.choices = []
 	_initialize_relics()
-	_initialize_nodes()
+	_initialize_nodes(rebalance)
 	rng.state = int(data.rng_state)
 	changed.emit()
 	return success()
@@ -1300,17 +1316,27 @@ func _valid_nodes(loaded: Dictionary) -> bool:
 		if not node.kind is String or not node.event is String or not node.result is String:
 			return false
 		if node.kind == "clue":
-			if int(loaded.version) >= SAVE_VERSION:
+			if int(loaded.version) >= 6:
 				return false
 			var biome: String = loaded.tiles[cell].base_terrain
 			if node.event not in [biome + "_clue_1", biome + "_clue_2"] or node.result not in ["", "record"] or node.has("investigated"):
 				return false
 			continue
 		if node.kind in Nodes.RETIRED_KINDS:
-			if int(loaded.version) >= SAVE_VERSION or node.event not in Nodes.legacy_event_ids(node.kind, loaded.tiles[cell].base_terrain):
+			if int(loaded.version) >= 6 or node.event not in Nodes.legacy_event_ids(node.kind, loaded.tiles[cell].base_terrain):
+				return false
+		elif node.kind == "rest":
+			if int(loaded.version) >= SAVE_VERSION or Nodes.story(node).is_empty():
 				return false
 		elif not Nodes.LABELS.has(node.kind) or (node.kind != "story" and Nodes.story(node).is_empty()):
 			return false
+		if node.kind == "supply" and int(loaded.version) >= SAVE_VERSION:
+			if not _whole_number(node.get("coins")) or node.coins < 1 or node.coins > 3 or node.result not in ["", "collect"]:
+				return false
+			if node.has("item") and (node.item not in ["salve", "ether", "trail_food"] or node.has("gear_definition")):
+				return false
+			if node.has("gear_definition") and (not Gear.DATA.has(node.gear_definition) or node.get("gear_quality") not in Gear.QUALITIES):
+				return false
 		if node.has("investigated") and (node.kind != "haunt" or not node.investigated is bool):
 			return false
 		if node.kind == "trade":
