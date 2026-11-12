@@ -424,7 +424,7 @@ func _header(screen: Vector2) -> void:
 	balance.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	balance.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var weather = "细雨" if travel_clock.get("weather", run.data.weather) == "rain" else "晴朗"
-	var exploration = floori(100.0 * run.data.explored.size() / run.data.tiles.size())
+	var exploration: int = run.exploration_percent()
 	var conditions = "第 %d 天 · %s" % [travel_clock.get("day", run.data.day), weather]
 	if combat == null and run.data.status == "exploring":
 		var tile = run.data.tiles[run.actor(selected_id).position]
@@ -564,7 +564,7 @@ func _cell_actions() -> void:
 		if npc.joined:
 			_button(box, "交谈 / 个人故事", _talk.bind(t.npc))
 		else:
-			_button(box, "招募%s · %d 灯铢" % [npc.name, Cards.RECRUIT_PRICE], _recruit_dialog.bind(t.npc))
+			_text(box, "可在商店招募伙伴。", 15, muted)
 	elif t.site == "start":
 		_button(box, "看看村庄", _site_impression)
 	for id in run.same_cell(cell):
@@ -733,6 +733,11 @@ func _reward_entries(items: Array) -> Array[Dictionary]:
 				var card: Dictionary = Cards.ACTIONS[id]
 				entry.merge({"title": card.name, "category": "法术牌谱", "effect": card.trait + " 购买后永久解锁到本次远征的卡牌收藏。"})
 				entry.icon = card.icon
+			"companion":
+				var card := Cards.owned_definition(id, run.data.actors)
+				var talent := Cards.breakthrough_talent(id)
+				entry.merge({"title": card.name, "category": "招募伙伴", "portrait": card.portrait,
+					"effect": "%s\n%s\n第三次突破 · %s：%s" % [Cards.stats(card), card.trait, talent.name, talent.text]})
 			"coins":
 				entry.merge({"title": "灯铢", "category": "货币", "effect": "可用于招募伙伴、突破和商店交易。"})
 		entries.append(entry)
@@ -752,6 +757,8 @@ func _shop_dialog(feedback: String = "", resume: Dictionary = {}) -> void:
 			return run.gear_trade(trader_id, item.id, shop.buying, shop.voucher)
 		if item.kind == "spell":
 			return run.buy_spell(trader_id, item.id)
+		if item.kind == "companion":
+			return run.recruit_companion(item.id)
 		return run.trade(trader_id, item.id, shop.buying, shop.voucher, shop.quantity))
 	var restock := _item_command(run.refresh_shop.bind(trader_id))
 	shop.trade_requested.connect(func():
@@ -766,7 +773,10 @@ func _shop_action(action: Callable, resume: Dictionary) -> void:
 	sound.play("click")
 	var result: Dictionary = action.call()
 	_run_action(result)
-	var message: String = toast_text if result.ok and toast_text != "已完成。" else result.get("message", "已完成。")
+	if result.ok and run.data.has("pending_story_rewards"):
+		_show_pending_story_rewards()
+		return
+	var message: String = result.get("message", toast_text)
 	if not result.ok or not _show_relic_intro(_shop_dialog.bind(message, resume)):
 		_shop_dialog(message, resume)
 
@@ -787,6 +797,8 @@ func _shop_offers(trader_id: String, buying: bool) -> Array[Dictionary]:
 	if buying:
 		for spell in run.spell_shop_offers(trader.position):
 			items.append({"kind": "spell", "id": spell, "count": 1})
+		for id in run.recruit_shop_offers(trader.position):
+			items.append({"kind": "companion", "id": id, "count": 1})
 	var entries := _reward_entries(items)
 	for entry in entries:
 		var id: String = entry.id
@@ -802,6 +814,9 @@ func _shop_offers(trader_id: String, buying: bool) -> Array[Dictionary]:
 				entry.title = Gear.DATA[instance.definition_id].name
 				var grade: String = Gear.QUALITY_NAMES[Gear.QUALITIES.find(instance.quality)]
 				entry.grade = "%s +%d" % [grade, int(instance.enhance_level)]
+			"companion":
+				entry.base = run.recruit_shop_price(trader.position)
+				entry.owned = 0
 			"spell":
 				entry.base = run.spell_shop_price()
 				entry.owned = 0
@@ -921,14 +936,8 @@ func _show_arrival() -> void:
 func _show_arrival_node() -> void:
 	if not run.data.has("pending_arrival"):
 		return
-	var arrival: Dictionary = run.data.pending_arrival
 	run.data.erase("pending_arrival")
 	run.save_game()
-	if selected_id == arrival.actor and run.actor(selected_id).position == arrival.cell:
-		var resident: String = run.data.tiles[arrival.cell].npc
-		var person: Dictionary = run.actor(resident)
-		if not person.is_empty() and not person.joined and person.position == arrival.cell and run.data.tiles[arrival.cell].enemies.is_empty():
-			_recruit_dialog(resident)
 
 func _run_action(result: Dictionary) -> void:
 	toast_text = "已完成。" if result.ok else str(result.get("message", "无法执行。"))
@@ -1313,6 +1322,9 @@ func _deck_dialog(encounter: bool = false) -> void:
 			opponent = Catalog.ENEMIES["war_god" if "war_god" in enemies else enemies[0]].name
 			if "war_god" not in enemies and run.node_at(pending.position).get("kind") == "elite":
 				opponent += " · 精英险地"
+		var exploration: int = run.exploration_percent()
+		var tier := Chess.difficulty_tier(exploration, Chess.is_elite_encounter(run, pending.position, pending), "war_god" in enemies)
+		opponent += " · %s（探索度 %d%%）" % [Chess.difficulty_name(tier), exploration]
 		if pending.ambush:
 			opponent += " · 伏击先手"
 	editor.setup(run.data.actors, run.card_deck(), encounter, (box.get_parent() as Control).size.x, opponent, run)
@@ -1433,9 +1445,9 @@ func _process(delta: float) -> void:
 	elif combat.reveal_pending:
 		_final_battle_page(0)
 	elif combat.turn == Chess.ENEMY:
-		combat.enemy_turn()
+		combat.enemy_turn(true)
 		chess_view.render()
-		battle_timer = 0.46
+		battle_timer = 0.8 if combat.enemy_action_resolved else 0.25
 
 func _chapter_pages() -> Array:
 	return [
@@ -1484,47 +1496,9 @@ func _final_battle_page(index: int) -> void:
 				_close_modal()
 				_refresh(), {})
 
-func _recruit_dialog(id: String, feedback: String = "") -> void:
-	var person: Dictionary = run.actor(id)
-	if person.is_empty() or person.joined:
-		return
-	var quote: Dictionary = run.recruit_quote(id)
-	var box := _modal("招募伙伴", 570, 485)
-	box.get_parent().name = "CompanionRecruitment"
-	var summary := HBoxContainer.new()
-	box.add_child(summary)
-	var card := Cards.definition(id)
-	CardUI.art(summary, card, Vector2(132, 135))
-	var description := VBoxContainer.new()
-	description.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	summary.add_child(description)
-	_text(description, person.name, 25, gold)
-	_text(description, person.title + " · " + Cards.stats(card), 16, muted)
-	_text(description, card.trait, 16)
-	var talent := Cards.breakthrough_talent(id)
-	_text(box, "第三次突破 · " + talent.name, 17, gold)
-	_text(box, talent.text, 16)
-	_text(box, "远征队持有 %d 灯铢" % run.data.lamp_coins, 17, muted)
-	if not quote.ok or not feedback.is_empty():
-		_text(box, str(quote.get("message", feedback)), 16, gold)
-	var buy := _button(box, "招募 · %d 灯铢" % Cards.RECRUIT_PRICE, func():
-		var result: Dictionary = run.recruit_companion(id)
-		if not result.ok:
-			_recruit_dialog(id, result.message)
-			return
-		_close_modal()
-		toast_text = "%s入队，伙伴牌已解锁。" % person.name
-		_refresh()
-		if run.data.has("pending_story_rewards"):
-			_show_pending_story_rewards(), not quote.ok)
-	buy.name = "ConfirmCompanionRecruitment"
-	if person.hp <= 0:
-		_button(box, "打开补给", _item_dialog.bind("hero"))
-	_button(box, "关闭", _close_modal)
-
 func _talk(id: String) -> void:
 	if not run.actor(id).get("joined", false):
-		_recruit_dialog(id)
+		_notice("可在商店招募伙伴。")
 		return
 	var intro = narrative.encounter_intro(selected_id, id)
 	if not intro.ok:
@@ -1534,7 +1508,7 @@ func _talk(id: String) -> void:
 
 func _begin_dialogue(id: String) -> void:
 	if not run.actor(id).get("joined", false):
-		_recruit_dialog(id)
+		_notice("可在商店招募伙伴。")
 		return
 	dialogue_subject = id
 	_render_dialogue()

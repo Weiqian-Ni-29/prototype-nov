@@ -410,18 +410,30 @@ func check_manual_encounter_intro() -> void:
 	await click("返回遭遇")
 	expect(find_button(game.modal_layer, "备战") != null, "Returning from preparation keeps the encounter accessible")
 
+func open_companion_shop(id: String) -> bool:
+	var run = game.run
+	for cell in run.data.nodes:
+		if id not in run.recruit_shop_offers(cell):
+			continue
+		run.retreat_party(cell)
+		run.data.tiles[cell].enemies.clear()
+		game._select_actor("hero")
+		game._shop_dialog("", {"category": "companion", "id": id})
+		return true
+	expect(false, "A merchant offers " + id)
+	return false
+
 func check_personal_dialogue() -> void:
 	var run = game.run
 	var person = run.actor("lorne")
-	run.actor("hero").position = person.position
-	run.data.tiles[person.position].enemies.clear()
-	run.reveal(person.position)
-	game._select_actor("hero")
-	run.data.pending_arrival = {"actor": "hero", "cell": person.position}
-	game._show_arrival_node()
-	expect(game.modal_layer.has_node("CompanionRecruitment") and not game.modal_layer.has_node("StoryScreen"),
-		"Arriving at a companion opens paid recruitment directly")
-	await click("招募 · 8 灯铢")
+	if not open_companion_shop("lorne"):
+		return
+	var price: int = run.recruit_shop_price(run.actor("hero").position)
+	run.data.lamp_coins = price
+	game._shop_dialog("", {"category": "companion", "id": "lorne"})
+	expect(game.modal_layer.find_child("ShopView", true, false) != null,
+		"Recruitment is offered inside the shop")
+	await click("确认招募 · %d 灯铢" % price)
 	expect(person.joined and person.position == run.actor("hero").position and run.data.lamp_coins == 0
 		and saved_run().actors.lorne.joined, "Recruitment debits the wallet and saves the new companion")
 	game._begin_dialogue("lorne")
@@ -489,7 +501,7 @@ func check_personal_dialogue() -> void:
 	await click("继续上次远征")
 	expect(game.run.data.story.lorne.get("personal_choice", "") == choice, "Reopened UI loads the saved personal decision")
 	await click("行动")
-	await click("交谈 / 个人故事")
+	await click("与 洛恩 交谈")
 	var recalled = await read_to_choices()
 	expect(not recalled.contains(response), "Normal conversation does not replay the completed decision")
 	await click(option_label(game.narrative.dialogue("hero", "lorne"), "quest"))
@@ -1021,8 +1033,10 @@ func check_familiarity_dialogue() -> void:
 	run.data.tiles[person.position].enemies.clear()
 	run.reveal(person.position)
 	game._select_actor("hero")
-	game._begin_dialogue("ember")
-	await click("招募 · 8 灯铢")
+	if not open_companion_shop("ember"):
+		return
+	var price: int = run.recruit_shop_price(run.actor("hero").position)
+	await click("确认招募 · %d 灯铢" % price)
 	expect(person.joined and game.modal_layer.has_node("StoryRewards")
 		and contains_text(game.modal_layer, Relics.DATA.opening_flint.story),
 		"Paid recruitment opens the illustrated gift receipt")

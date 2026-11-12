@@ -8,7 +8,7 @@ const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Items = preload("res://scripts/domain/expedition_items.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
-const SAVE_VERSION = 8
+const SAVE_VERSION = 9
 const STEPS_PER_DAY = 5
 signal changed
 var data: Dictionary = {}
@@ -42,7 +42,7 @@ func new_run(seed_value: int, profession: String) -> void:
 	for id in Gear.LEGACY_PRICES:
 		data.actors.hero.equipment[Gear.DATA[id].slot] = Items.add_gear(data, id, "common", "actor", "hero")
 	Items.add_gear(data, "frontier_guard_weapon", "common", "actor", "hero")
-	data.spell_collection = []
+	data.spell_collection = Cards.STARTER_SPELLS.duplicate()
 	for id in Catalog.COMPANIONS:
 		var location = ""
 		for k in data.tiles:
@@ -51,7 +51,7 @@ func new_run(seed_value: int, profession: String) -> void:
 		data.actors[id] = _actor(id, Catalog.COMPANIONS[id], location, false)
 		data.story[id] = {"relation": "unmet", "result": "E0", "met": false}
 	_initialize_relics()
-	_initialize_nodes(true)
+	_initialize_nodes(true, true)
 	Items.stock(data, false)
 	reveal(generated.start)
 	note("村民送来了疗伤药、澄露和干粮。你想到附近走走，看有没有人认得你，能不能想起自己的名字。")
@@ -237,12 +237,14 @@ func _reveal_sight(position: String) -> void:
 func _initialize_relics() -> void:
 	relic_sites = Relics.exploration_sites(data.tiles, int(data.seed))
 
-func _initialize_nodes(rebalance: bool = false) -> void:
+func _initialize_nodes(rebalance: bool = false, opening_shop: bool = false) -> void:
 	data.merge({"lamp_coins": Nodes.STARTING_COINS})
 	if not data.has("nodes"):
 		data.nodes = Nodes.generate(data.tiles, int(data.seed), relic_sites, data.rewards, {})
 	Nodes.replace_retired_nodes(data)
 	Nodes.merge_supplies(data)
+	if opening_shop:
+		Nodes.place_opening_shop(data, relic_sites)
 	if rebalance:
 		Nodes.raise_elite_share(data)
 	location_names.clear()
@@ -601,22 +603,44 @@ func join_companion(id: String, recruiter_id: String = "") -> Dictionary:
 			break
 	return {"ok": true, "relic": gift}
 
+func recruit_shop_offers(cell: String) -> Array:
+	var node := node_at(cell)
+	if node.get("kind") != "trade":
+		return []
+	var stock: Array = ["grit", "lorne", "eve"]
+	if not node.get("starter_shop", false):
+		var roster := Catalog.COMPANIONS.keys()
+		var priority := {}
+		for id in roster:
+			priority[id] = hash("recruits:%s:%s" % [data.seed, id])
+		roster.sort_custom(func(a, b): return a < b if priority[a] == priority[b] else priority[a] < priority[b])
+		var stores: Array = data.nodes.keys().filter(func(position):
+			var location: Dictionary = data.nodes[position]
+			return location.kind == "trade" and not location.get("starter_shop", false))
+		stores.sort()
+		var capacity := clampi(ceili(roster.size() / float(stores.size())), 3, roster.size())
+		var offset := stores.find(cell) * capacity
+		stock = []
+		for i in capacity:
+			stock.append(roster[(offset + i) % roster.size()])
+	return stock.filter(func(id): return not actor(id).joined and actor(id).hp > 0)
+
+func recruit_shop_price(cell: String) -> int:
+	return 6 if node_at(cell).get("starter_shop", false) and joined_ids().size() == 1 else Cards.RECRUIT_PRICE
+
 func recruit_quote(id: String) -> Dictionary:
 	var check := _node_access("hero")
 	if not check.ok:
 		return check
-	var person := actor(id)
-	if id == "hero" or person.is_empty() or person.position != actor("hero").position:
-		return fail("到达伙伴所在地点后可以招募。")
-	if person.joined:
-		return fail("这位伙伴已经入队。")
-	if person.hp <= 0:
-		return fail("这位伙伴重伤了，需要先救治。")
+	var cell: String = actor("hero").position
+	if id not in recruit_shop_offers(cell):
+		return fail("请在有这位伙伴的商店招募。")
 	if data.has("pending_story_rewards") or data.has("pending_victory"):
 		return fail("请先领取本次奖励。")
-	if data.lamp_coins < Cards.RECRUIT_PRICE:
-		return fail("还差 %d 灯铢。" % (Cards.RECRUIT_PRICE - int(data.lamp_coins)))
-	return {"ok": true, "price": Cards.RECRUIT_PRICE}
+	var price := recruit_shop_price(cell)
+	if data.lamp_coins < price:
+		return fail("还差 %d 灯铢。" % (price - int(data.lamp_coins)))
+	return {"ok": true, "price": price}
 
 func recruit_companion(id: String) -> Dictionary:
 	var quote := recruit_quote(id)
@@ -624,6 +648,7 @@ func recruit_companion(id: String) -> Dictionary:
 		return quote
 	var previous := data.duplicate(true)
 	data.lamp_coins -= quote.price
+	actor(id).position = actor("hero").position
 	var result := join_companion(id, "hero")
 	if not result.ok:
 		data = previous
@@ -631,7 +656,10 @@ func recruit_companion(id: String) -> Dictionary:
 	if not result.relic.is_empty():
 		data.pending_story_rewards = {"source": "招募 · " + actor(id).name,
 			"items": [{"kind": "relic", "id": result.relic, "count": 1}]}
-	return _save_companion_purchase(previous)
+	var saved := _save_companion_purchase(previous)
+	if saved.ok:
+		saved.message = "%s已入队，伙伴牌已解锁。可在卡组中更换一张牌。" % actor(id).name
+	return saved
 
 func breakthrough_quote(id: String) -> Dictionary:
 	var check := _node_access("hero")
@@ -791,9 +819,12 @@ func war_god_stats() -> Dictionary:
 func boss_known() -> bool:
 	return int(data.chapter) >= 4
 
+func exploration_percent() -> int:
+	return floori(100.0 * data.explored.size() / maxi(1, data.tiles.size()))
+
 func pending_chapter() -> int:
 	var chapter = int(data.chapter)
-	if data.status == "exploring" and chapter < 4 and data.explored.size() * 100 >= (chapter + 1) * 20 * data.tiles.size():
+	if data.status == "exploring" and chapter < 4 and exploration_percent() >= (chapter + 1) * 20:
 		return chapter + 1
 	return 0
 
@@ -841,6 +872,18 @@ func _convert_gear_cards(legacy_deck: Array) -> Array:
 			if found:
 				break
 	return result
+
+func _replace_old_support_cards() -> void:
+	var deck: Array = data.card_deck
+	var slots := deck.size()
+	data.card_deck = deck.filter(func(card): return not Cards.SUPPORT.has(card))
+	if slots == data.card_deck.size():
+		return
+	for card in _convert_gear_cards(Cards.DEFAULT_DECK):
+		if data.card_deck.size() == slots:
+			break
+		if data.card_deck.count(card) < Cards.limit(card):
+			data.card_deck.append(card)
 
 func unlock_spell(id: String) -> bool:
 	if id not in Cards.UNLOCKABLE_SPELLS or id in data.spell_collection:
@@ -936,7 +979,7 @@ func load_game(path: String = "") -> Dictionary:
 	if json.parse(FileAccess.get_file_as_string(path)) != OK or not json.data is Dictionary:
 		return fail("存档损坏了，原来的文件还在。")
 	var loaded: Dictionary = json.data
-	if not _whole_number(loaded.get("version", -1)) or int(loaded.version) not in [3, 4, 5, 6, 7, SAVE_VERSION] or not loaded.has_all(["actors", "tiles", "rng_state", "day", "explored", "status"]):
+	if not _whole_number(loaded.get("version", -1)) or int(loaded.version) not in [3, 4, 5, 6, 7, 8, SAVE_VERSION] or not loaded.has_all(["actors", "tiles", "rng_state", "day", "explored", "status"]):
 		return fail("存档版本不兼容，或者进度记录不完整。")
 	if int(loaded.version) >= 4 and (not loaded.get("relic_seen") is Dictionary or not loaded.get("nodes") is Dictionary):
 		return fail("遗器发现记录无效。")
@@ -955,7 +998,7 @@ func load_game(path: String = "") -> Dictionary:
 		_migrate_travel(loaded)
 	if not Items.validate(loaded):
 		return fail("存档中的装备或遗器记录无效。")
-	if int(loaded.version) >= 8 and loaded.has("card_deck") and not Cards.valid_deck(loaded.card_deck, loaded.actors, false, loaded):
+	if int(loaded.version) >= 8 and loaded.has("card_deck") and not Cards.valid_deck(loaded.card_deck, loaded.actors, false, loaded, int(loaded.version) < 9):
 		return fail("存档中的卡组记录无效。")
 	Nodes.replace_legacy_clues(loaded.nodes, loaded.tiles, int(loaded.seed))
 	loaded.erase("leads")
@@ -963,6 +1006,7 @@ func load_game(path: String = "") -> Dictionary:
 		loaded.pending_battle = {}
 	var rebalance := int(loaded.version) < 7
 	var old_cards := int(loaded.version) < 8
+	var old_support := int(loaded.version) < 9
 	loaded.version = SAVE_VERSION
 	data = loaded
 	data.merge({"spell_collection": []})
@@ -976,6 +1020,12 @@ func load_game(path: String = "") -> Dictionary:
 			Items.add_gear(data, "frontier_guard_weapon", "common", "actor", "hero")
 		if data.has("card_deck"):
 			data.card_deck = _convert_gear_cards(data.card_deck)
+	if old_support:
+		for spell in Cards.STARTER_SPELLS:
+			if spell not in data.spell_collection:
+				data.spell_collection.append(spell)
+		if data.has("card_deck"):
+			_replace_old_support_cards()
 	_remove_legacy_map_effects()
 	for id in data.actors:
 		actor(id).attack_delivery = "ranged" if id == "hero" else Catalog.COMPANIONS[id].attack_delivery
@@ -1072,7 +1122,7 @@ func _validate_save(loaded: Dictionary) -> String:
 	if not spells is Array or spells.any(func(spell): return spell not in Cards.UNLOCKABLE_SPELLS) or spells.any(func(spell): return spells.count(spell) > 1):
 		return "法术牌谱无效"
 	if loaded.has("card_deck") and not (loaded.card_deck is Array and loaded.card_deck.size() <= Cards.DECK_SIZE
-			and (int(loaded.version) >= 8 or Cards.valid_deck(loaded.card_deck, loaded.actors))):
+			and (int(loaded.version) >= 8 or Cards.valid_deck(loaded.card_deck, loaded.actors, false, {}, true))):
 		return "卡组记录无效"
 	if loaded.has("choices") and not loaded.choices is Array:
 		return "选择记录无效"

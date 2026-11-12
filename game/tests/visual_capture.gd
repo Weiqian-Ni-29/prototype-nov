@@ -423,6 +423,19 @@ func story_contains(text: String) -> bool:
 	var label = story_text()
 	return label != null and label.text.contains(text)
 
+func open_recruitment_shop(id: String) -> bool:
+	var run = game.run
+	for cell in run.data.nodes:
+		if id not in run.recruit_shop_offers(cell):
+			continue
+		run.retreat_party(cell)
+		run.data.tiles[cell].enemies.clear()
+		game._select_actor("hero")
+		game._shop_dialog("", {"category": "companion", "id": id})
+		return true
+	expect(false, "A merchant offers " + id)
+	return false
+
 func capture_branch_examples() -> void:
 	game._start_new()
 	var run = game.run
@@ -431,9 +444,10 @@ func capture_branch_examples() -> void:
 	run.data.tiles[person.position].enemies.clear()
 	run.reveal(person.position)
 	game._select_actor("hero")
-	game._talk("longroad")
+	if not open_recruitment_shop("longroad"):
+		return
 	await capture("companion-recruitment")
-	game.modal_layer.find_child("ConfirmCompanionRecruitment", true, false).pressed.emit()
+	game.modal_layer.find_child("ConfirmTrade", true, false).pressed.emit()
 	if game.modal_layer.has_node("StoryRewards"):
 		await click_story_button("返回地图")
 	game._talk("longroad")
@@ -719,9 +733,11 @@ func execute() -> void:
 	game.run.data.story.lorne.relation = "unmet"
 	game.run.data.tiles[game.run.actor("lorne").position].enemies.clear()
 	game.run.data.lamp_coins = 8
-	game._talk("lorne")
+	if not open_recruitment_shop("lorne"):
+		quit(1)
+		return
 	await capture("courier-recruitment")
-	game.modal_layer.find_child("ConfirmCompanionRecruitment", true, false).pressed.emit()
+	game.modal_layer.find_child("ConfirmTrade", true, false).pressed.emit()
 	game._talk("lorne")
 	await await_story_choices()
 	await capture("story-courier-joined-choices")
@@ -734,13 +750,15 @@ func execute() -> void:
 	game._start_new()
 	game.run.actor("hero").position = game.run.actor("eve").position
 	game.run.data.tiles[game.run.actor("eve").position].enemies.clear()
-	game._talk("eve")
+	if not open_recruitment_shop("eve"):
+		quit(1)
+		return
 	await capture("eve-recruitment")
-	expect(game.modal_layer.has_node("CompanionRecruitment"), "The companion opens the recruitment panel")
-	await click_story_button("关闭")
-	expect(game.modal_layer.get_child_count() == 0 and game.view.visible, "Closing recruitment returns to the map")
-	game._talk("eve")
-	game.modal_layer.find_child("ConfirmCompanionRecruitment", true, false).pressed.emit()
+	expect(game.modal_layer.find_child("ShopView", true, false) != null, "Companion recruitment appears inside the shop")
+	game._close_modal()
+	expect(game.modal_layer.get_child_count() == 0 and game.view.visible, "Closing the shop returns to the map")
+	open_recruitment_shop("eve")
+	game.modal_layer.find_child("ConfirmTrade", true, false).pressed.emit()
 	expect(game.modal_layer.has_node("StoryRewards"), "Recruitment opens the illustrated relic receipt")
 	await capture("eve-recruitment-reward")
 	game._close_modal()

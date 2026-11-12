@@ -46,7 +46,11 @@ func check_generation() -> void:
 			kinds[node.kind] = true
 			if node.kind == "elite" and cell != run.data.boss:
 				elite_count += 1
-			if layout[cell].kind in ["haunt", "choice"] and cell != run.data.boss:
+			if node.get("starter_shop", false):
+				expect(node.kind == "trade" and tile.enemies.is_empty(), "Opening recruitment shop is safe")
+			elif node.get("intro_duel", false):
+				expect(node.kind == "battle" and tile.enemies == ["boar"], "Opening route has an ordinary boar duel")
+			elif layout[cell].kind in ["haunt", "choice"] and cell != run.data.boss:
 				expect(node.kind in ["battle", "elite"] and not tile.enemies.is_empty()
 					and Nodes.is_elite(tile.enemies) == (node.kind == "elite"), "Retired cell becomes an encounter of the correct tier")
 				if Hex.distance(Hex.coord(cell), Hex.coord(run.data.start)) <= 2:

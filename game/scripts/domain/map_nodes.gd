@@ -236,6 +236,47 @@ static func _replace_with_battle(data: Dictionary, cell: String, roller: RandomN
 		tile.enemies = ["boar"] if opening else Hex._composition(biome, roller, true)
 	tile.discovered_enemy = not cleared and data.get("visited", {}).has(cell)
 
+static func place_opening_shop(data: Dictionary, relic_sites: Dictionary) -> void:
+	var start: String = data.start
+	var tiles: Dictionary = data.tiles
+	var neighbors := Hex.neighbors(start, tiles)
+	var roller := RandomNumberGenerator.new()
+	roller.seed = hash("opening-shop:%s" % data.seed)
+	var candidates: Array = []
+	var best := -10
+	for battle in neighbors:
+		if not Hex.is_land(tiles, battle) or not tiles[battle].npc.is_empty():
+			continue
+		for shop in Hex.neighbors(battle, tiles):
+			if Hex.distance(Hex.coord(start), Hex.coord(shop)) != 2 or not Hex.is_land(tiles, shop):
+				continue
+			var tile: Dictionary = tiles[shop]
+			if tile.site.is_empty() and tile.npc.is_empty():
+				var priority := 4 * int(tile.enemies.is_empty()) + 2 * int(data.nodes[battle].kind == "battle")
+				priority += int(data.nodes[shop].kind == "trade")
+				if relic_sites.has(battle) or relic_sites.has(shop):
+					priority -= 8
+				if priority > best:
+					candidates.clear()
+					best = priority
+				if priority == best:
+					candidates.append([battle, shop])
+	if candidates.is_empty():
+		return
+	var pair: Array = candidates[roller.randi_range(0, candidates.size() - 1)]
+	_replace_with_battle(data, pair[0], roller, false, true, false)
+	data.nodes[pair[0]].intro_duel = true
+	var shop: String = pair[1]
+	var biome: String = tiles[shop].base_terrain
+	var events: Array = pools["trade:" + biome]
+	tiles[shop].resource = ""
+	tiles[shop].quantity = 0
+	tiles[shop].enemies = []
+	tiles[shop].hidden = false
+	tiles[shop].discovered_enemy = false
+	data.nodes[shop] = {"kind": "trade", "event": events[roller.randi_range(0, events.size() - 1)],
+		"result": "", "stock": shop_supplies(biome, roller), "starter_shop": true}
+
 static func shop_supplies(biome: String, roller: RandomNumberGenerator) -> Dictionary:
 	var stock := {"salve": 1, "ether": 1, "trail_food": 1}
 	var local_supply := "ether" if biome in ["swamp", "ruins", "desert"] else "salve"

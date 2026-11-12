@@ -2,6 +2,7 @@ extends SceneTree
 
 const Run = preload("res://scripts/domain/expedition.gd")
 const Chess = preload("res://scripts/domain/chess_battle.gd")
+const Hex = preload("res://scripts/domain/hex_map.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 var checks := 0
 var failures := 0
@@ -22,10 +23,10 @@ func execute() -> void:
 	var deck := run.card_deck()
 	var start: String = run.actor("hero").position
 	var owned := Cards.collection(run.data.actors, run.data)
-	expect(deck.size() == 12 and deck.count("rain") == 1 and deck.count("sun") == 1
+	expect(deck.size() == 12 and deck.count("ember_spell") == 2 and deck.count("sun") == 1
 		and deck.filter(func(id): return id.begins_with("gear:")).size() == 4
-		and "ember_spell" not in owned, "New game owns four real equipment cards and two weather spells")
-	var blade_id: String = deck[5]
+		and "ice_spell" not in owned and not owned.any(func(id): return Cards.definition(id).get("kind") == "partner"), "New game owns four real equipment cards, solo defense and spells")
+	var blade_id: String = deck[0]
 	var uid := blade_id.trim_prefix("gear:")
 	var original := Cards.owned_definition(blade_id, run.data.actors, run.data)
 	run.data.lamp_coins = 100
@@ -63,12 +64,13 @@ func execute() -> void:
 	start = run.actor("hero").position
 	run.grant_relic("dry_ink_seal", "hero", start)
 	run.grant_relic("banked_ember_box", "hero", start)
+	run.grant_relic("rime_thimble", "hero", start)
 	run.grant_relic("clear_air_reed", "hero", start)
 	run.prepared_weather = "clear_air_reed"
 	run.data.tiles[start].enemies = ["boar"]
 	battle = Chess.new()
 	expect(battle.begin(run, encounter, run.card_deck()).ok and battle.weather == "sun"
-		and battle.piles[0].size() == 9 and battle.hands[0].has("temp:ember_spell") and battle.hands[0].size() == 4,
+		and battle.piles[0].size() == 9 and battle.hands[0].has("temp:ember_spell") and battle.hands[0].size() == 5,
 		"A temporary spell enters hand without drawing or changing deck size")
 	var spell_index: int = battle.hands[0].find("temp:ember_spell")
 	var enemy := battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
@@ -81,7 +83,62 @@ func execute() -> void:
 	expect(battle.play(spell_index, 4) and enemy.armor == 0 and enemy.hp == old_hp - 2
 		and battle.board[10].leader and not battle.can_act(), "Fire, weather, relic damage and armor resolve together without moving a piece")
 	var loaded := Run.new()
-	expect(loaded.load_game(run.save_path).ok and "ember_spell" in Cards.collection(loaded.data.actors, loaded.data),
+	expect(loaded.load_game(run.save_path).ok and "ice_spell" in Cards.collection(loaded.data.actors, loaded.data),
 		"A relic spell unlock survives reloading")
+	check_progression()
+	check_legacy_loadout()
 	print("CHESS LOADOUT: %d checks, %d failures" % [checks, failures])
 	quit(1 if failures > 0 else 0)
+
+
+func check_progression() -> void:
+	var run := Run.new()
+	run.save_path = "user://test-chess-progression.json"
+	var earlier_hp := 0
+	for tier in 5:
+		run.new_run(41, "wayfarer")
+		var cell: String = run.actor("hero").position
+		run.data.tiles[cell].enemies = ["boar"]
+		run.data.explored.clear()
+		for key in run.data.tiles.keys().slice(0, ceili(run.data.tiles.size() * tier / 5.0)):
+			run.data.explored[key] = true
+		var battle := Chess.new()
+		var result := battle.begin(run, {"position": cell, "origin": cell, "npc": "", "ambush": false}, run.card_deck())
+		expect(result.ok and battle.difficulty == tier and battle.commanders[Chess.ENEMY].hp > earlier_hp,
+			"Each new exploration band increases enemy strength")
+		var enemy_deck: Array = battle.hands[Chess.ENEMY] + battle.piles[Chess.ENEMY]
+		expect(enemy_deck.size() == 12 and enemy_deck.filter(func(card): return card.begins_with("foe:")).size() == tier,
+			"Enemy deck retains the same size and gains a reinforcement at each band")
+		earlier_hp = battle.commanders[Chess.ENEMY].hp
+		expect(battle.hands[Chess.PLAYER].any(func(card):
+			var entry := battle.definition(card)
+			return entry.has("damage") or entry.get("slot") == "weapon"), "First battle guarantees an attack option")
+	expect(Chess.difficulty_tier(0, true, false) == 1 and Chess.difficulty_tier(80, true, false) == 4,
+		"Elite encounters use the next band, capped at the maximum")
+
+	for seed in 24:
+		run.new_run(seed, "wayfarer")
+		var shops: Array = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).get("starter_shop", false))
+		var guards: Array = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).get("intro_duel", false))
+		var route: bool = shops.size() == 1 and guards.size() == 1 and guards[0] in Hex.neighbors(run.data.start, run.data.tiles) \
+			and shops[0] in Hex.neighbors(guards[0], run.data.tiles) \
+			and run.data.tiles[shops[0]].enemies.is_empty() and run.data.tiles[guards[0]].enemies == ["boar"]
+		expect(route and run.recruit_shop_offers(shops[0]).size() == 3 and run.recruit_shop_price(shops[0]) == 6,
+			"Seed %d offers a safe, affordable early recruitment shop" % seed)
+
+
+func check_legacy_loadout() -> void:
+	var run := Run.new()
+	run.save_path = "user://test-chess-v8-migration.json"
+	run.new_run(18, "wayfarer")
+	var hero_cell: String = run.actor("hero").position
+	run.actor("eve").position = hero_cell
+	run.join_companion("eve")
+	run.data.version = 8
+	run.data.spell_collection = []
+	var equipment := run.card_deck().slice(0, 4)
+	run.data.card_deck = ["support_vanguard", "support_archer", "support_medic", "support_guard",
+		"eve", "ward", "rain", "sun"] + equipment
+	expect(run.save_game().ok and run.load_game().ok and Cards.valid_deck(run.card_deck(), run.data.actors, true, run.data)
+		and "eve" in run.card_deck() and run.actor("eve").joined and "support_vanguard" not in run.card_deck(),
+		"Version 8 saves retain recruited cards and replace former free support without shrinking the deck")

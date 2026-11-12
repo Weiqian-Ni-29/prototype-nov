@@ -46,12 +46,20 @@ func execute() -> void:
 	chess.cells[10].pressed.emit()
 	chess.cells[7].pressed.emit()
 	await create_timer(0.65).timeout
+	expect(b.enemy_action_resolved and b.turn == Chess.ENEMY and chess.enemy_action_label.visible,
+		"Enemy's actual action is displayed while input is locked")
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("user://chess-enemy-turn.png")
+	await create_timer(0.85).timeout
 	expect(b.round_number == 2 and b.turn == Chess.PLAYER and b.hands[Chess.PLAYER].size() == 4,
 		"Native move lets the opponent respond and draws the next card")
 	await create_timer(0.4).timeout
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("user://chess-round-two.png")
 	# Stage the last attack after exercising the normal opening and turn loop.
+	var enemy_square: int = b.board.find(b.commanders[Chess.ENEMY])
+	b.board[enemy_square] = {}
+	b.board[1] = b.commanders[Chess.ENEMY]
 	b.board[4] = b.board[7]
 	b.board[7] = {}
 	b.commanders[Chess.ENEMY].hp = 1
@@ -116,12 +124,19 @@ func execute() -> void:
 	await process_frame
 	expect(game.view.dolls.keys() == ["hero"], "Loading does not add extra map figures")
 	r.data.lamp_coins = 52
-	game._recruit_dialog("ember")
+	var stores: Array = r.data.nodes.keys().filter(func(cell): return "ember" in r.recruit_shop_offers(cell))
+	expect(not stores.is_empty(), "A merchant stocks Ember in this session")
+	if stores.is_empty():
+		quit(1)
+		return
+	r.retreat_party(stores[0])
+	r.data.tiles[stores[0]].enemies.clear()
+	game._shop_dialog("", {"category": "companion", "id": "ember"})
 	await process_frame
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("user://companion-recruitment.png")
-	var recruit = game.modal_layer.find_child("ConfirmCompanionRecruitment", true, false)
-	expect(recruit != null and not recruit.disabled, "Recruitment is offered at the recovered companion's location")
+	var recruit = game.modal_layer.find_child("ConfirmTrade", true, false)
+	expect(recruit != null and not recruit.disabled, "The merchant offers the recovered companion")
 	recruit.pressed.emit()
 	expect(r.actor("ember").joined and r.data.lamp_coins == 44 and game.modal_layer.has_node("StoryRewards"),
 		"Recruitment charges the wallet and opens the gift receipt")
