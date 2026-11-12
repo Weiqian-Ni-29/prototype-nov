@@ -184,7 +184,8 @@ static func validate(data: Dictionary) -> bool:
 			return false
 		seen[id] = true
 	for id in data.relic_effect_flags:
-		if id != "life_seed_applied" or data.relic_effect_flags[id] != true:
+		if id not in ["life_seed_applied", "last_battle_wounded_victory", "chess_survey_elite", "chess_survey_ordinary",
+				"chess_survey_bonus", "chess_workshop_credit", "chess_spell_discount"] or data.relic_effect_flags[id] != true:
 			return false
 	for claim in data.relic_claims.values():
 		if not claim is Dictionary or not claim.get("delivered") is bool or not claim.get("success") is bool \

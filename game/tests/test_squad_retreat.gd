@@ -46,26 +46,26 @@ func execute():
 	expect(run.data.pending_battle.origin == origin and run.remaining_steps() == 4, "Encounter remembers origin and committed step")
 	expect(run.same_cell(destination).size() == 3, "All companions arrive together")
 	var deadline = Time.get_ticks_msec() + 5000
-	expect(game.map_traveling and game.modal_layer.get_child_count() == 0, "Encounter story waits while the traveler is walking")
+	expect(game.map_traveling and game.modal_layer.get_child_count() == 0, "Battle preparation waits while the traveler is walking")
 	while game.map_traveling and Time.get_ticks_msec() < deadline:
 		await process_frame
-	await press("选择出战阵容")
 	await press("开始战斗")
-	expect(game.combat != null and run.data.status == "battle", "actual Battle.begin through formation button")
-	# Retreat wounds one mover; the survivor remains selectable and can move.
-	run.actor("grit").hp = 1
+	expect(game.combat != null and run.data.status == "battle", "Actual chess battle begins through the deck editor")
+	game.combat.enemy_turn()
+	game.chess_view.render()
+	var hero_health: int = run.actor("hero").hp
 	await press("撤退")
 	await press("确认")
 	expect(game.combat == null and run.data.status == "exploring", "retreat confirmation completes _finish_battle")
 	expect(not run.data.has("pending_arrival") and not game.modal_layer.has_node("StoryScreen"),
 		"Retreat clears the abandoned encounter's arrival story")
 	expect(run.same_cell(origin).size() == 3, "Actual battle retreat moves the whole party")
-	expect(run.actor("grit").hp == 0, "Retreat can incapacitate a companion")
+	expect(run.actor("hero").hp < hero_health, "Retreat wounds the traveler")
 	expect(game.selected_cell == origin and run.remaining_steps() == 4, "Retreat returns without advancing or refunding a step")
 	expect(game.view.dolls.keys() == ["hero"], "Map still shows only the traveler")
 	var loaded = Model.new()
 	expect(loaded.load_game(run.save_path).ok, "Retreat checkpoint reloads")
-	expect(loaded.same_cell(origin).size() == 3 and loaded.actor("grit").hp == 0 and loaded.remaining_steps() == 4,
+	expect(loaded.same_cell(origin).size() == 3 and loaded.actor("hero").hp < hero_health and loaded.remaining_steps() == 4,
 		"Reload retains the party, injury and remaining steps")
 	for suffix in ["", ".bak", ".tmp"]: DirAccess.remove_absolute(run.save_path + suffix)
 	game.queue_free()

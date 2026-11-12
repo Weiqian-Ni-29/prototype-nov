@@ -4,7 +4,7 @@ const Catalog = preload("res://scripts/domain/catalog.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
-const Combat = preload("res://scripts/domain/battle.gd")
+const Chess = preload("res://scripts/domain/chess_battle.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const InventoryPage = preload("res://scripts/presentation/inventory_page.gd")
@@ -321,17 +321,15 @@ func check_node_arrival() -> void:
 	game._select_cell(start)
 	expect(game.selected_cell == cell and game.move_target.is_empty(), "A click during travel cannot replace the arrival")
 	await wait_for_map_arrival()
-	expect(not game.view.dolls.hero.is_moving() and game.modal_layer.has_node("StoryScreen") and contains_text(game.modal_layer, title),
-		"The first-arrival story opens once the hero has finished moving")
-	expect(run.data.day == 2 and game.day_transition.get_child_count() == 0 and not game.sound.cache.has("day"),
-		"The last step advances the day without a notice or chime in the arrival story")
+	expect(not game.view.dolls.hero.is_moving() and game.modal_layer.get_child_count() == 0,
+		"A peaceful first arrival stays on the map without a story")
+	expect(run.data.day == 2, "The last step advances the day")
 	var marker: Label3D = game.view.tile_nodes[cell].get_node("LocationName")
 	expect(marker.text == title and marker.position.x == 0 and marker.position.z == 0,
 		"The same name appears at the visited tile's center")
-	await click("返回地图")
 	expect(game.day_transition.has_node("MapNotice") and contains_text(game.day_transition, "精力已恢复")
 		and game.sound.cache.get("day") == game.sound.DAY_CHIME,
-		"Returning to the map shows the full notice and plays the selected chime")
+		"The map shows the full notice and plays the selected chime")
 	var sound_count: int = game.sound.voice_index
 	game._refresh()
 	await process_frame
@@ -358,13 +356,13 @@ func check_arrival_after_victory() -> void:
 	game._start_new()
 	var run = game.run
 	var cells = run.data.nodes.keys().filter(func(cell):
-		return run.node_at(cell).kind == "battle" and not run.data.tiles[cell].enemies.is_empty())
+		return run.node_at(cell).kind == "battle" and not run.data.tiles[cell].enemies.is_empty() and run.data.tiles[cell].npc.is_empty())
 	expect(not cells.is_empty(), "Battle arrival fixture has an ordinary encounter")
 	if cells.is_empty():
 		return
 	var cell: String = cells[0]
-	var event = Nodes.story(run.node_at(cell))
 	var from: String = Hex.neighbors(cell, run.data.tiles).filter(func(id): return Hex.is_land(run.data.tiles, id))[0]
+	run.data.tiles[from].enemies.clear()
 	run.data.tiles[cell].hidden = true
 	run.data.tiles[cell].discovered_enemy = false
 	run.actor("hero").position = from
@@ -375,30 +373,22 @@ func check_arrival_after_victory() -> void:
 	game._select_cell(cell)
 	expect(game.modal_layer.get_child_count() == 0, "The encounter does not interrupt movement")
 	await wait_for_map_arrival()
-	expect(game.modal_layer.has_node("StoryScreen") and find_button(game.modal_layer, "开始战斗") == null
-		and run.data.get("pending_arrival", {}).get("cell") == cell,
-		"Arriving at an encounter opens its story before formation and remembers the new tile")
+	expect(game.modal_layer.find_child("CardDeckEditor", true, false) != null and not game.modal_layer.has_node("StoryScreen"),
+		"Arriving at an ordinary encounter opens the deck editor directly")
 	expect(run.data.day == 2 and game.day_transition.get_child_count() == 0,
-		"A day change on an encounter leaves the story clear")
+		"A day change waits while preparing for combat")
 	var pending: Dictionary = run.data.pending_battle.duplicate(true)
-	expect(pending.origin == from and pending.ambush, "The encounter records the original retreat tile and ambush")
+	expect(pending.origin == from and pending.ambush, "The encounter records the retreat tile and ambush")
 	game._continue_run()
-	expect(game.day_transition.get_child_count() == 0, "Loading does not replay a prior day change")
-	var introduction = await read_to_choices(func(): return game.combat == null and run.data.pending_battle == pending)
-	expect(compact(introduction).contains(compact(event.intro)) and introduction.contains("抢先扑了出来"),
-		"Resuming an encounter presents its complete node introduction and ambush before formation")
-	await click("选择出战阵容")
-	expect(not game.modal_layer.has_node("StoryScreen") and run.data.pending_battle == pending,
-		"Confirming the introduction preserves the encounter and opens formation")
+	expect(game.day_transition.get_child_count() == 0 and run.data.pending_battle == pending
+		and contains_text(game.modal_layer, "伏击先手"), "Resuming reopens preparation and explains the enemy's first turn")
 	await press("开始战斗")
 	game.combat._finish("victory")
 	game._finish_battle()
 	game._continue_run()
 	await press("继续远征")
-	expect(game.modal_layer.has_node("StoryScreen") and contains_text(game.modal_layer, run.location_name(cell)),
-		"After resuming from victory, continuing opens the arrival story")
-	await click("返回地图")
-	expect(game.day_transition.get_child_count() == 0, "Returning to the map after loading does not replay the day notice")
+	expect(game.modal_layer.get_child_count() == 0 and game.day_transition.get_child_count() == 0,
+		"Continuing after victory returns directly to the map")
 
 func check_manual_encounter_intro() -> void:
 	game._start_new()
@@ -409,61 +399,16 @@ func check_manual_encounter_intro() -> void:
 	if cells.is_empty():
 		return
 	var cell: String = cells[0]
-	var event = Nodes.story(run.node_at(cell))
 	run.actor("hero").position = cell
 	run.reveal(cell)
 	run.data.tiles[cell].discovered_enemy = true
 	game._select_actor("hero")
 	await click("行动")
-	await click("查看遭遇剧情")
-	var introduction = await read_to_choices()
-	expect(compact(introduction).contains(compact(event.intro)) and find_button(game.modal_layer, "开始战斗") == null,
-		"Opening a known elite encounter from the action menu reads its story first")
-	await click("选择出战阵容")
-	expect(find_button(game.modal_layer, "开始战斗") != null, "The elite introduction opens formation")
-
-func check_haunt_dialogue() -> void:
-	game._start_new()
-	var run = game.run
-	var cells = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "haunt")
-	expect(not cells.is_empty(), "UI fixture has an unresolved haunting")
-	if cells.is_empty():
-		return
-	var cell: String = cells[0]
-	var node = run.node_at(cell)
-	var event = Nodes.story(node)
-	run.actor("hero").position = cell
-	run.reveal(cell)
-	game._select_actor("hero")
-	await click("行动")
-	await click("查看节点剧情")
-	var introduction = await read_to_choices(func(): return not node.get("investigated", false) and node.result == "" and not run.data.peace.has(cell))
-	expect(introduction.contains(event.intro), "Haunting introduction is read before investigation")
-	expect(find_button(game.modal_layer, event.work) == null and find_button(game.modal_layer, event.alternative) == null,
-		"Neither settlement is offered before investigation")
-	await click(event.investigation_label)
-	expect(node.get("investigated", false) and node.result == ""
-		and not run.data.peace.has(cell), "Real investigation click opens the next stage without resolving the haunt")
-	expect(not game.modal_layer.has_node("StoryScreen/StoryChoices"), "Evidence is presented before settlement choices")
-	var investigation = await read_to_choices(func(): return node.result == "" and not run.data.peace.has(cell))
-	expect(investigation.contains(event.investigation), "The complete investigation is readable before deciding")
-	expect(saved_run().get("nodes", {}).get(cell, {}).get("investigated", false), "Investigation click is saved")
-	await click(event.alternative)
-	var found_relic: bool = not run.relic_intro().is_empty()
-	var conclusion: String
-	if found_relic:
-		conclusion = "".join(await read_current_body())
-		await advance_story()
-		expect(game.modal_layer.has_node("StoryRewards"), "The reward screen follows the completed haunting story")
-	else:
-		conclusion = await read_to_choices()
-	expect(node.result == "settle_alternative" and run.data.peace.has(cell)
-		and conclusion.contains(event.alternative_resolved), "Second settlement click shows its own conclusion")
-	expect(find_button(game.modal_layer, event.work) == null and find_button(game.modal_layer, event.alternative) == null,
-		"Resolved haunting cannot be switched through the UI")
-	await click("返回地图")
-	if found_relic:
-		expect(run.relic_intro().is_empty(), "The reward details acknowledge the relic introduction")
+	await click("备战")
+	expect(game.modal_layer.find_child("CardDeckEditor", true, false) != null and not game.modal_layer.has_node("StoryScreen"),
+		"Manual elite encounters open preparation directly")
+	await click("返回遭遇")
+	expect(find_button(game.modal_layer, "备战") != null, "Returning from preparation keeps the encounter accessible")
 
 func check_personal_dialogue() -> void:
 	var run = game.run
@@ -472,40 +417,18 @@ func check_personal_dialogue() -> void:
 	run.data.tiles[person.position].enemies.clear()
 	run.reveal(person.position)
 	game._select_actor("hero")
-	game._show_npc_encounter("hero")
-	await read_to_choices()
-	await click("和洛恩交谈")
-	var initial = game.narrative.dialogue("hero", "lorne")
-	var join_line = option_label(initial, "join")
-	expect((find_button(game.modal_layer, join_line) != null) == (story_page().x == story_page().y),
-		"Recruitment choices only appear with the final introduction page")
-	var introduction = game.modal_layer.get_node("StoryScreen")
-	await click("历史对话")
-	await story_key(KEY_ESCAPE)
-	expect(not game.modal_layer.has_node("StoryHistory") and game.modal_layer.get_node_or_null("StoryScreen") == introduction,
-		"Escape first closes history and returns to the same conversation")
-	await story_key(KEY_ESCAPE, true)
-	expect(game.modal_layer.has_node("StoryScreen"), "Holding Escape cannot close a second layer")
-	await story_key(KEY_ESCAPE)
-	expect(game.modal_layer.get_child_count() == 0 and game.ui.visible and game.view.is_processing_unhandled_input(),
-		"Escape activates End Conversation and restores map input")
+	run.data.pending_arrival = {"actor": "hero", "cell": person.position}
+	game._show_arrival_node()
+	expect(game.modal_layer.has_node("CompanionRecruitment") and not game.modal_layer.has_node("StoryScreen"),
+		"Arriving at a companion opens paid recruitment directly")
+	await click("招募 · 8 灯铢")
+	expect(person.joined and person.position == run.actor("hero").position and run.data.lamp_coins == 0
+		and saved_run().actors.lorne.joined, "Recruitment debits the wallet and saves the new companion")
 	game._begin_dialogue("lorne")
 	game._story_choice("unavailable_reply")
 	expect(contains_text(game.modal_layer, "现在无法这样做"), "A rejected reply shows a separate gameplay notice")
 	await click("知道了")
-	var introduction_text = await read_to_choices()
-	expect(compact(introduction_text) == compact(initial.text) and story_speaker() == "洛恩",
-		"Choices appear beside the NPC's final line without an extra prompt")
-	await click(join_line)
-	expect(story_speaker() == "旅人" and dialogue_contains(join_line) and not person.joined,
-		"The player speaks the selected line before the recruitment is applied")
-	await click("历史对话")
-	expect(contains_text(game.modal_layer.get_node("StoryHistory"), join_line), "The selected reply appears in dialogue history")
-	await click("关闭")
-	await click_story_blank()
-	expect(person.joined and person.position == run.actor("hero").position, "Actual recruitment adds the companion to the party")
-	var acceptance = await read_to_choices()
-	expect(story_speaker() == "洛恩" and acceptance.contains(Story.CHARACTER_BEHAVIOR.lorne[1]), "Recruitment receives an answer from the companion")
+	await read_to_choices()
 	var before_past = run.data.duplicate(true)
 	await click(option_label(game.narrative.dialogue("hero", "lorne"), "past"))
 	expect(story_speaker() == "旅人", "The player asks about the past before receiving it")
@@ -566,9 +489,7 @@ func check_personal_dialogue() -> void:
 	await click("继续上次远征")
 	expect(game.run.data.story.lorne.get("personal_choice", "") == choice, "Reopened UI loads the saved personal decision")
 	await click("行动")
-	await click("查看节点剧情")
-	await read_to_choices()
-	await click("和洛恩交谈")
+	await click("交谈 / 个人故事")
 	var recalled = await read_to_choices()
 	expect(not recalled.contains(response), "Normal conversation does not replay the completed decision")
 	await click(option_label(game.narrative.dialogue("hero", "lorne"), "quest"))
@@ -639,8 +560,8 @@ func check_character_codex() -> void:
 	var traveler_background = background.texture
 	expect(traveler_background != null and background.get_global_rect().is_equal_approx(background.get_parent().get_global_rect()),
 		"The known character backdrop covers the portrait frame")
-	await click("技能")
-	expect(contains_text(codex, "重力魔法"), "The traveler profile uses the current skills")
+	await click("棋子")
+	expect(contains_text(codex, "重力属性") and contains_text(codex, "横竖斜走一格"), "The traveler profile shows the commander rules")
 	await click("战斗")
 	expect(game.character_codex_state.pose == "battle", "Battle pose changes the displayed art")
 	var portrait = codex.find_child("CodexPortrait", true, false) as TextureButton
@@ -673,9 +594,7 @@ func check_character_codex() -> void:
 		and game.move_preview.visible, "Closing the codex restores the original map selection and route preview")
 
 	run.actor("lorne").position = source
-	game._begin_dialogue("lorne")
-	await read_to_choices()
-	await click("结束交谈")
+	run.data.story.lorne.met = true
 	await click("角色")
 	await click("见过未加入")
 	expect(game.character_codex_state.actor == "lorne", "Meeting a companion makes that character appear in the filter")
@@ -686,10 +605,17 @@ func check_character_codex() -> void:
 	expect(contains_text(game.modal_layer, "尚未加入远征队。"), "A known but unjoined character has no player equipment")
 	await click("×")
 	expect(run.join_companion("lorne", "hero").ok, "Fixture recruits the known companion")
+	run.data.lamp_coins = 44
 	await click("角色")
 	await click("洛恩")
-	await click("技能")
-	expect(contains_text(game.modal_layer, "巡路连射") and game.selected_id == "hero", "Recruitment exposes the skills without switching the map actor")
+	await click("棋子")
+	expect(contains_text(game.modal_layer, "攻击两格") and game.selected_id == "hero", "The profile explains the companion card without switching the map actor")
+	for index in [1, 2, 3]:
+		await click("突破至 %d 阶" % index)
+		expect(run.actor("lorne").get("breakthrough", 0) == index, "Actual codex button purchases the next breakthrough")
+	expect(run.data.lamp_coins == 0 and contains_text(game.modal_layer, "直线攻击三格")
+		and find_button(game.modal_layer, "突破至") == null and saved_run().actors.lorne.breakthrough == 3,
+		"The third breakthrough exposes the talent and stops at the cap")
 	await click("×")
 	run.data.flags.hero_identity_revealed = true
 	await click("角色")
@@ -706,7 +632,7 @@ func check_node_dialogs() -> void:
 	expect(find_button(game.modal_layer, "休整") == null, "Ordinary tiles have no general rest command")
 	await press("关闭")
 
-	var rest_cells = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "rest")
+	var rest_cells = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "supply")
 	var shop_cells = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "trade")
 	expect(not rest_cells.is_empty() and not shop_cells.is_empty(), "This seed has supply stops and trade nodes")
 	if rest_cells.is_empty() or shop_cells.is_empty():
@@ -718,29 +644,17 @@ func check_node_dialogs() -> void:
 	var action = find_button(game.ui, "行动")
 	expect(action != null and action.text == "行动", "A supply stop uses the plain action button label")
 	await press("行动")
-	await press("查看节点剧情")
-	var stage = game.modal_layer.get_node("StoryScreen")
-	var scene: TextureRect = stage.get_child(0)
-	expect(scene.texture.resource_path.ends_with("/" + game._story_scene_at(rest_cell) + ".png"),
-		"The node story uses the occupied tile's terrain art")
-	expect(stage.get_node("Dialogue").get_children().filter(func(control): return control.visible) == [story_text()],
-		"Map narration shows only its body text")
-	await read_to_choices()
-	expect(find_button(game.modal_layer, "记入旅途手记") == null, "Node dialogue has no travel journal action")
-	expect(find_button(game.modal_layer, "在此休整") == null and find_button(game.modal_layer, "在此调息") == null,
-		"The node offers supplies without recovery options")
-	var supply: String = run.node_at(rest_cell).item
-	var quantity = int(hero.inventory.get(supply, 0))
-	await click("带走一份")
-	expect(hero.hp == 1 and hero.mp == 0 and hero.inventory[supply] == quantity + 1,
-		"The node grants a finite supply item")
-	expect(find_button(game.modal_layer, "带走一份") == null, "Supply cannot be claimed twice")
-	await finish_linear_story()
+	expect(find_button(game.modal_layer, "查看节点剧情") == null and find_button(game.modal_layer, "休整") == null,
+		"Supply opens as a direct action without recovery or narration")
+	var coins: int = run.node_at(rest_cell).coins
+	await click("领取补给")
+	expect(hero.hp == 1 and hero.mp == 0 and run.data.lamp_coins == 8 + coins,
+		"The unified supply action adds coins without healing")
 	expect(game.modal_layer.has_node("StoryRewards") and contains_text(game.modal_layer, run.location_name(rest_cell))
-		and contains_text(game.modal_layer, Catalog.ITEMS[supply].description), "Node rewards show their source and the actual item")
+		and contains_text(game.modal_layer, "灯铢"), "The supply receipt displays its source and coins")
 	game._continue_run()
-	expect(game.modal_layer.has_node("StoryRewards") and run.actor("hero").inventory[supply] == quantity + 1,
-		"Continuing restores the pending receipt without granting the item again")
+	expect(game.modal_layer.has_node("StoryRewards") and run.data.lamp_coins == 8 + coins,
+		"Continuing restores the pending receipt without granting coins twice")
 	await click("返回地图")
 	game._continue_run()
 	expect(not game.modal_layer.has_node("StoryRewards"), "An acknowledged node receipt stays closed after reloading")
@@ -748,6 +662,7 @@ func check_node_dialogs() -> void:
 	hero = run.actor("hero")
 
 	var shop_cell: String = shop_cells[0]
+	run.data.lamp_coins = 8
 	hero.position = shop_cell
 	run.reveal(shop_cell)
 	game._select_actor("hero")
@@ -755,8 +670,6 @@ func check_node_dialogs() -> void:
 	expect(balance != null and balance.text == "8", "The header displays the starting wallet balance")
 	var salves: int = int(hero.inventory.salve)
 	await press("行动")
-	await press("查看节点剧情")
-	await read_to_choices()
 	await click("查看货物")
 	var shop = game.modal_layer.find_child("ShopView", true, false)
 	var wallet = shop.find_child("ShopBalance", true, false) as Label if shop != null else null
@@ -783,8 +696,7 @@ func check_node_dialogs() -> void:
 	expect(run.data.lamp_coins == 1 and run.shop_refresh_cost(shop_cell) == 3,
 		"Returning to Buy keeps the same shop's refresh count")
 	await press("返回节点")
-	await read_to_choices()
-	await click("返回地图")
+	await click("关闭")
 
 func select_shop_offer(title: String) -> void:
 	var grid = game.modal_layer.find_child("ShopGrid", true, false)
@@ -1110,12 +1022,10 @@ func check_familiarity_dialogue() -> void:
 	run.reveal(person.position)
 	game._select_actor("hero")
 	game._begin_dialogue("ember")
-	await read_to_choices()
-	await click(option_label(game.narrative.dialogue("hero", "ember"), "join"))
-	await finish_linear_story()
+	await click("招募 · 8 灯铢")
 	expect(person.joined and game.modal_layer.has_node("StoryRewards")
 		and contains_text(game.modal_layer, Relics.DATA.opening_flint.story),
-		"The companion's reply ends with an illustrated receipt for their gift")
+		"Paid recruitment opens the illustrated gift receipt")
 	await click("返回地图")
 	game._begin_dialogue("ember")
 	var idle = await read_to_choices()
@@ -1131,7 +1041,7 @@ func check_familiarity_dialogue() -> void:
 	expect(run.data == before, "Reading familiarity changes no resources or personal choice")
 	await click("结束交谈")
 	run.actor("lorne").position = person.position
-	expect(game.narrative.choose("hero", "lorne", "join").ok, "Recruit a local ordinary visitor")
+	expect(run.join_companion("lorne", "hero").ok, "Recruit a local ordinary visitor")
 	game._select_actor("lorne")
 	game._begin_dialogue("ember")
 	var ordinary = await read_to_choices()
@@ -1148,12 +1058,12 @@ func check_final_reveal() -> void:
 	for stage in range(1, 5):
 		run.finish_chapter(stage)
 	run.actor("hero").position = run.data.boss
-	var battle = Combat.new()
+	var battle = Chess.new()
 	var encounter = {"position": run.data.boss, "origin": run.data.boss, "movers": [], "npc": "", "ambush": false}
-	expect(battle.begin(run, encounter, ["hero"]).ok, "Final revelation fixture begins at the actual boss")
+	expect(battle.begin(run, encounter, run.card_deck()).ok, "Final revelation fixture begins at the actual boss")
 	game.combat = battle
-	battle.unit("enemy_0").hp = 1
-	battle.check_end()
+	battle.commanders[Chess.ENEMY].hp = 1
+	battle._check_outcome()
 	expect(battle.reveal_pending and not battle.river, "The old strike opens the memory before awakening")
 	game._final_battle_page(0)
 	var complete = ""
@@ -1271,7 +1181,7 @@ func execute() -> void:
 	await check_manual_encounter_intro()
 	await check_familiarity_dialogue()
 	await check_final_reveal()
-	await check_haunt_dialogue()
+	game._start_new()
 	expect(game._expedition_objective() == "踏出旅程的第一步", "HUD shows the departure objective")
 	var chapter_run = game.run
 	var pages: Array = game._chapter_pages()
@@ -1293,7 +1203,7 @@ func execute() -> void:
 		"Selected wounded hero cannot trigger a chapter")
 	chapter_run.actor("hero").hp = chapter_run.actor("hero").hp_max
 	expect(game._show_chapter() and game._expedition_objective() == "踏出旅程的第一步", "Current objective is stable while a chapter is displayed")
-	var next_objectives = ["帮助被亡灵困扰的地方", "查清谁在延长战争", "找到战神的驻地", "击败战神卡德兰"]
+	var next_objectives = ["平定沿途的战斗遭遇", "查清谁在延长战争", "找到战神的驻地", "击败战神卡德兰"]
 	for index in next_objectives.size():
 		var objective: String = game._expedition_objective()
 		var chapter_pages = await read_current_body(true, func():

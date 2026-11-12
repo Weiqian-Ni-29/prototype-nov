@@ -198,7 +198,7 @@ static func _pick_free(tiles: Dictionary, occupied: Dictionary, rng: RandomNumbe
 	assert(not candidates.is_empty(), "Map placement exhausted")
 	return candidates[rng.randi_range(0, candidates.size() - 1)]
 
-static func _composition(terrain: String, rng: RandomNumberGenerator) -> Array:
+static func _composition(terrain: String, rng: RandomNumberGenerator, ordinary_only: bool = false) -> Array:
 	var options = {
 		"plains": [["archer", "boar"], ["swarm", "swarm", "swarm"]],
 		"forest": [["spider", "swarm"], ["boar", "apothecary"], ["hunter_elite"]],
@@ -208,4 +208,6 @@ static func _composition(terrain: String, rng: RandomNumberGenerator) -> Array:
 		"swamp": [["lurker", "spider"], ["lurker", "apothecary"]],
 	}
 	var choices = options.get(terrain, options.plains)
+	if ordinary_only and terrain in ["forest", "ruins"]:
+		choices = choices.slice(0, 2)
 	return choices[rng.randi_range(0, choices.size() - 1)].duplicate()

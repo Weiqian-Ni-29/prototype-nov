@@ -1,7 +1,7 @@
 extends SceneTree
 ## Wall-clock native frame sample; run without movie mode or --headless.
 const Main = preload("res://scenes/main.tscn")
-const Combat = preload("res://scripts/domain/battle.gd")
+const Combat = preload("res://tests/legacy/realtime_battle.gd")
 
 func _initialize() -> void: call_deferred("execute")
 func execute() -> void:
@@ -21,9 +21,8 @@ func execute() -> void:
 	run.data.tiles[p].enemies = ["archer","furnace","spider","boar"]
 	var b = Combat.new()
 	b.begin(run,{"position":p,"origin":p,"ambush":false,"movers":[],"npc":""},["hero","cen","eve","grit"])
-	game.combat = b
 	game.view.begin_battle(run,b)
-	game._refresh()
+	game.ui.hide()
 	await create_timer(2.0).timeout
 	var times: Array[float] = []
 	var previous = Time.get_ticks_usec()

@@ -107,3 +107,46 @@ static func price(instance: Dictionary) -> int:
 
 static func label(instance: Dictionary) -> String:
 	return "%s · %s +%d" % [DATA[instance.definition_id].name, QUALITY_NAMES[QUALITIES.find(instance.quality)], instance.enhance_level]
+
+
+static func card(instance: Dictionary) -> Dictionary:
+	var id: String = instance.definition_id
+	var item: Dictionary = DATA[id]
+	var level := int(instance.enhance_level)
+	var slot: String = item.slot
+	var theme: String = item.set_id
+	var card_data := {"kind": "equipment", "name": label(instance), "icon": id, "level": level,
+		"slot": slot, "element": "", "story": item.story}
+	var text: Array[String] = []
+	var tiers := floori(level / 2.0)
+	if slot == "weapon":
+		var ranged := theme in ["frontier_guard", "gale_runner", "storm_conductor"]
+		card_data.attack = (1 if ranged else 2) + tiers
+		card_data.range = 2 if ranged else 0
+		text.append("普通攻击 +%d" % card_data.attack)
+		if ranged:
+			text.append("横竖攻击射程至少 2，路径须畅通")
+	elif slot == "armor":
+		card_data.armor = 3 + tiers
+		text.append("获得 %d 点护甲" % card_data.armor)
+	else:
+		card_data.hp_bonus = 1 + tiers
+		text.append("本场生命上限和当前生命各 +%d" % card_data.hp_bonus)
+	var quality := QUALITIES.find(instance.quality)
+	var guard := int(level >= 1) + int(level >= 5) + int(quality >= 2)
+	if guard > 0:
+		card_data.equip_guard = guard
+		text.append("装备时额外获得 %d 点护甲" % card_data.equip_guard)
+	var heal := int(level >= 3) + int(quality >= 4)
+	if heal > 0:
+		card_data.heal = heal
+		text.append("装备时回复 %d 点生命" % heal)
+	var elements := {"ember_warden": "fire", "tide_weaver": "water", "rime_path": "ice",
+		"storm_conductor": "lightning", "gale_runner": "wind", "stone_vow": "earth",
+		"dune_keeper": "water", "grove_mender": "water", "grave_wayfarer": "gravity"}
+	card_data.element = elements.get(theme, "")
+	if not card_data.element.is_empty():
+		card_data.affinity_guard = 1
+		text.append("装备给同属性棋子时再获得 1 点护甲")
+	card_data.trait = "装备给一枚友方棋子。" + "；".join(text) + "。"
+	return card_data

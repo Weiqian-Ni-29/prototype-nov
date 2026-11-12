@@ -4,7 +4,7 @@ const Run = preload("res://scripts/domain/expedition.gd")
 const Items = preload("res://scripts/domain/expedition_items.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
-const Battle = preload("res://scripts/domain/battle.gd")
+const Battle = preload("res://tests/legacy/realtime_battle.gd")
 const Main = preload("res://scenes/main.tscn")
 
 var checks = 0
@@ -151,17 +151,17 @@ func check_bulk_trade() -> void:
 	for visited in run.data.tiles.keys().slice(0, 61):
 		run.data.visited[visited] = true
 	run.node_at(cell).relic_stock.lamp_badge = 2
-	run.data.lamp_coins = 174
-	var quote: Dictionary = run.shop_quote(100, true, 2, "", "modest_trade_coupon")
+	run.data.lamp_coins = 199
+	var quote: Dictionary = run.shop_quote(100, true, 2)
 	var before: Dictionary = run.data.duplicate(true)
-	expect(quote.price == 175 and quote.unit_price == 75 and quote.additional_unit_price == 100,
-		"Bulk quote applies the one-use coupon and first-purchase discount to the first unit")
-	expect(not run.trade("hero", "lamp_badge", true, "modest_trade_coupon", 2).ok and run.data == before,
-		"An unaffordable bulk order never partially changes the inventory or spends a coupon")
+	expect(quote.price == 200 and quote.unit_price == 100 and quote.additional_unit_price == 100,
+		"Bulk quote charges both units at the shown price")
+	expect(not run.trade("hero", "lamp_badge", true, "", 2).ok and run.data == before,
+		"An unaffordable bulk order never partially changes the inventory")
 	run.data.lamp_coins += 1
-	expect(run.trade("hero", "lamp_badge", true, "modest_trade_coupon", 2).ok and run.data.lamp_coins == 0
+	expect(run.trade("hero", "lamp_badge", true, "", 2).ok and run.data.lamp_coins == 0
 		and run.data.relic_inventory.lamp_badge == 2 and run.node_at(cell).relic_stock.lamp_badge == 0
-		and not run.data.relic_inventory.has("modest_trade_coupon"), "Bulk purchase charges the quoted total and consumes the coupon once")
+		and run.data.relic_inventory.modest_trade_coupon == 1, "Bulk purchase charges the quote and preserves battle preparations")
 	expect(run.trade("hero", "lamp_badge", false, "", 2).ok and run.data.lamp_coins == 80
 		and not run.has_relic("lamp_badge") and run.node_at(cell).relic_stock.lamp_badge == 2,
 		"Bulk sale restores stock and removes attunement only after selling the last copy")
@@ -187,8 +187,8 @@ func check_relics() -> void:
 	expect(not run.use_relic("hero", "stillwater_stone").ok and run.data.relic_inventory.stillwater_stone == 1,
 		"An inapplicable consumable is not spent")
 	hero.mp = 0
-	expect(run.use_relic("hero", "stillwater_stone").ok and hero.mp == roundi(hero.mp_max * 0.4),
-		"Usable consumable grants the specified resource")
+	expect(not run.use_relic("hero", "stillwater_stone").ok and "stillwater_stone" in run.preparation_options(),
+		"Consumable is available for the next battle without changing map resources")
 	var successes = 0
 	for seed in 10000:
 		run.data.seed = seed
@@ -234,7 +234,7 @@ func check_migration() -> void:
 	if loaded.data.is_empty():
 		return
 	var a = loaded.actor("hero")
-	expect(loaded.data.version == Run.SAVE_VERSION and loaded.gear_owned("actor", "hero").size() == 4
+	expect(loaded.data.version == Run.SAVE_VERSION and loaded.gear_owned("actor", "hero").size() == 5
 		and loaded.equipped_definition("hero", "weapon") == "trail_blade" and not a.inventory.has("trail_blade"),
 		"Migration does not create an extra copy for the worn weapon")
 	expect(a.hp == 21 and a.hp_max == 114 and loaded.data.relic_effect_flags.life_seed_applied

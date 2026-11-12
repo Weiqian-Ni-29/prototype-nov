@@ -1,7 +1,7 @@
 extends SceneTree
 ## Explicit native fixtures use real domain skills; replay must leave all settled data unchanged.
 const Main = preload("res://scenes/main.tscn")
-const Combat = preload("res://scripts/domain/battle.gd")
+const Combat = preload("res://tests/legacy/realtime_battle.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")
 var game: Node
 var checks = 0
@@ -35,20 +35,19 @@ func fixture(profession: String, members: Array) -> RefCounted:
 	for enemy in b.enemies.values():
 		enemy.hp = 5000
 		enemy.hp_max = 5000
-	game.combat = b
 	game.view.begin_battle(r,b)
-	game._refresh()
+	game.ui.hide()
 	return b
 
-func replay(events: Array, name: String, positive: bool = false) -> void:
+func replay(battle: RefCounted, events: Array, name: String, positive: bool = false) -> void:
 	var state = JSON.stringify(game.run.data)
-	var enemy_state = JSON.stringify(game.combat.enemies)
+	var enemy_state = JSON.stringify(battle.enemies)
 	var nodes = {}
 	for id in game.view.battle_dolls: nodes[id] = game.view.battle_dolls[id].get_instance_id()
 	var count = game.view.presenter.event_order.size()
 	game.view.animate_events(events)
 	game.view.animate_events(events) # stable IDs must not replay the same settlement twice
-	game._refresh()
+	game.view.refresh_battle(game.run, battle)
 	var started = Time.get_ticks_msec()
 	var captured_event = false
 	while game.view.is_animating() and Time.get_ticks_msec()-started<12000:
@@ -60,7 +59,7 @@ func replay(events: Array, name: String, positive: bool = false) -> void:
 					var target = game.view.battle_dolls[result.target]
 					expect(target.rigged.action!="hit","Healing/protection never makes target flinch "+name)
 	expect(not game.view.is_animating(),"Queue drains "+name)
-	expect(JSON.stringify(game.run.data)==state and JSON.stringify(game.combat.enemies)==enemy_state,"Replay changes no settled friendly or enemy state "+name)
+	expect(JSON.stringify(game.run.data)==state and JSON.stringify(battle.enemies)==enemy_state,"Replay changes no settled friendly or enemy state "+name)
 	expect(game.view.presenter.event_order.size()==count+events.size(),"Events play once in FIFO order "+name)
 	for id in nodes: expect(game.view.battle_dolls[id].get_instance_id()==nodes[id],"Environment preserves actor instance "+id)
 	await create_timer(0.16).timeout
@@ -95,7 +94,7 @@ func execute() -> void:
 			var events = b.events.duplicate(true)
 			b.events.clear()
 			expect(events[0].skill_id==a.skill and events[0].has("results"),"Explicit skill ID and settled results")
-			await replay(events,a.skill,skill.get("healing",false) or skill.has("shield"))
+			await replay(b, events,a.skill,skill.get("healing",false) or skill.has("shield"))
 			a.energy = 100
 			b.current = id
 			var next_normal = b.next_time[id]
@@ -107,7 +106,7 @@ func execute() -> void:
 			capture_name = a.ultimate
 			captured = false
 			var ultimate = Catalog.SKILLS[a.ultimate]
-			await replay(events,a.ultimate,ultimate.get("healing",false) or ultimate.has("shield"))
+			await replay(b, events,a.ultimate,ultimate.get("healing",false) or ultimate.has("shield"))
 			expect(captured,"Native impact frame captured "+a.ultimate)
 			capture_name = ""
 		game.view.end_battle()

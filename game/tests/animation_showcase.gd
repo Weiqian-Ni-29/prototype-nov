@@ -1,7 +1,7 @@
 extends SceneTree
 ## Reproducible presentation fixture, recorded with --write-movie; never a gameplay journey.
 const Main = preload("res://scenes/main.tscn")
-const Combat = preload("res://scripts/domain/battle.gd")
+const Combat = preload("res://tests/legacy/realtime_battle.gd")
 var game: Node
 var label: Label
 var variant = "after"
@@ -43,9 +43,8 @@ func execute() -> void:
 	r.data.tiles[position].enemies = ["boar", "archer", "spider", "swarm"]
 	var b = Combat.new()
 	b.begin(r, {"position":position, "origin":position, "movers":[], "npc":"", "ambush":false}, ["hero","cen","eve","grit"])
-	game.combat = b
 	game.view.begin_battle(r, b)
-	game._refresh()
+	game.ui.hide()
 	label = Label.new()
 	label.position = Vector2(310,115)
 	label.add_theme_font_size_override("font_size", 22)

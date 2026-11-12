@@ -3,7 +3,8 @@ extends SceneTree
 const Main = preload("res://scenes/main.tscn")
 const Game = preload("res://scripts/main.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")
-const Combat = preload("res://scripts/domain/battle.gd")
+const Combat = preload("res://tests/legacy/realtime_battle.gd")
+const Chess = preload("res://scripts/domain/chess_battle.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
@@ -333,14 +334,14 @@ func capture_node_examples() -> void:
 	var original_seed: String = game.chosen_seed
 	var seed_value: int = int(run.data.seed)
 	var forest_rest = run.data.nodes.keys().filter(func(cell):
-		return run.node_at(cell).kind == "rest" and run.data.tiles[cell].terrain == "forest")
+		return run.node_at(cell).kind == "supply" and run.data.tiles[cell].terrain == "forest")
 	for candidate in range(24):
 		if not forest_rest.is_empty():
 			break
 		seed_value = candidate
 		run.new_run(seed_value, "wayfarer")
 		forest_rest = run.data.nodes.keys().filter(func(cell):
-			return run.node_at(cell).kind == "rest" and run.data.tiles[cell].terrain == "forest")
+			return run.node_at(cell).kind == "supply" and run.data.tiles[cell].terrain == "forest")
 	var shops = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "trade")
 	expect(not forest_rest.is_empty() and not shops.is_empty(), "Node fixture seed has a forest supply stop and a shop")
 	if forest_rest.is_empty() or shops.is_empty():
@@ -351,8 +352,11 @@ func capture_node_examples() -> void:
 	run.actor("hero").position = rest
 	run.reveal(rest)
 	game._select_actor("hero")
-	game._node_dialog()
-	await capture("node-forest-supply-stop")
+	game._cell_actions()
+	await capture("node-forest-supply")
+	game._node_choice("collect")
+	await capture("node-supply-reward")
+	await click_story_button("返回地图")
 	game._close_modal()
 	var shop: String = shops[0]
 	run.actor("hero").position = shop
@@ -428,10 +432,11 @@ func capture_branch_examples() -> void:
 	run.reveal(person.position)
 	game._select_actor("hero")
 	game._talk("longroad")
-	if not await await_story_choices():
-		return
-	await click_story_button(quest_option_label(game.narrative.dialogue("hero", "longroad"), "join"))
-	await advance_story()
+	await capture("companion-recruitment")
+	game.modal_layer.find_child("ConfirmCompanionRecruitment", true, false).pressed.emit()
+	if game.modal_layer.has_node("StoryRewards"):
+		await click_story_button("返回地图")
+	game._talk("longroad")
 	if not await await_story_choices():
 		return
 	await click_story_button(quest_option_label(game.narrative.dialogue("hero", "longroad"), "quest"))
@@ -449,34 +454,6 @@ func capture_branch_examples() -> void:
 	await capture("story-personal-player-reply")
 	await advance_story()
 	await capture_story_body("story-personal-conclusion", Story.PERSONAL_QUESTS.longroad.personal_b.response)
-	game._close_modal()
-	var haunts = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "haunt")
-	expect(not haunts.is_empty(), "Visual fixture includes a haunting")
-	if haunts.is_empty():
-		return
-	var cell: String = haunts[0]
-	var event = Nodes.story(run.node_at(cell))
-	run.actor("hero").position = cell
-	run.reveal(cell)
-	game._select_actor("hero")
-	game._node_dialog()
-	if not await await_story_choices():
-		return
-	await click_story_button(event.investigation_label)
-	await capture_story_body("node-haunt-investigation", event.investigation)
-	expect(run.node_at(cell).get("investigated", false) and run.node_at(cell).result == ""
-		and not run.data.peace.has(cell) and game.modal_layer.has_node("StoryScreen/StoryChoices"),
-		"Reading the full investigation exposes settlement once without resolving it")
-	if not await await_story_choices():
-		return
-	await click_story_button(event.alternative)
-	await capture_story_body("node-haunt-alternative-conclusion",
-		"送别时，旅人伸出手，给亡魂指了条离开这里的路。\n\n" + event.alternative_resolved)
-	expect(not game.modal_layer.has_node("StoryScreen/StoryChoices"), "The narrative is separate from the action result")
-	await advance_story()
-	await capture_story_body("node-haunt-action-result", "你送别了这里的亡者。")
-	expect(game.modal_layer.has_node("StoryScreen/StoryChoices"), "The action result offers the return after the full conclusion")
-	expect(run.node_at(cell).result == "settle_alternative", "Haunting screenshot follows the actual second settlement click")
 	game._close_modal()
 	run.data.status = "won"
 	game._refresh()
@@ -551,19 +528,19 @@ func capture_finale() -> void:
 		run.finish_chapter(chapter)
 	hero.position = run.data.boss
 	run.reveal(hero.position)
-	var battle = Combat.new()
-	var encounter = {"position": hero.position, "origin": hero.position, "movers": [], "npc": "", "ambush": false}
-	expect(battle.begin(run, encounter, ["hero"]).ok, "Finale starts the actual boss battle")
+	var battle := Chess.new()
+	var encounter = {"position": hero.position, "origin": hero.position, "npc": "", "ambush": false}
+	expect(battle.begin(run, encounter, run.card_deck()).ok, "Finale starts the actual boss battle")
 	game.combat = battle
-	game.view.begin_battle(run, battle)
-	battle.current = "hero"
-	battle.unit("enemy_0").hp = 1
-	game._perform_combat("gravity", "enemy_0")
-	while game.view.is_animating():
-		await process_frame
+	game._refresh()
+	battle.board[4] = battle.board[10]
+	battle.board[10] = {}
+	battle.commanders[Chess.ENEMY].hp = 1
+	battle.commanders[Chess.ENEMY].armor = 0
+	battle.move(4, 1)
 	game._process(0.1)
 	expect(game.modal_layer.has_node("StoryScreen") and battle.reveal_pending and not battle.river,
-		"The old strike triggers the flashback before the river")
+		"A lethal attack triggers the flashback before the river")
 	await capture("story-final-memory")
 	await advance_until_text("都留在我身后")
 	await capture("story-final-before-river")
@@ -571,11 +548,10 @@ func capture_finale() -> void:
 	await capture("story-final-river")
 	await finish_linear_story()
 	await process_frame
-	expect(battle.river and hero.name == "伊文洛" and game.view.battle_root.get_meta("environment_signature").ends_with(":true"),
+	expect(battle.river and hero.name == "伊文洛" and battle.weather == "river",
 		"Leaving the flashback brings the river into the actual combat view")
 	await capture("battle-final-river")
 	game.combat = null
-	game.view.end_battle()
 
 func execute() -> void:
 	DirAccess.make_dir_recursive_absolute(destination)
@@ -620,6 +596,8 @@ func execute() -> void:
 	await capture("story-dialogue-history")
 	await click_story_button("关闭")
 	await finish_linear_story()
+	expect(game.modal_layer.has_node("StoryRewards"), "The village departure shows its supplies")
+	await click_story_button("返回地图")
 	for terrain in ["forest", "swamp"]:
 		game._village_page(terrain, 0)
 		var villager := game.modal_layer.find_child("StoryActor0", true, false) as TextureRect
@@ -641,15 +619,15 @@ func execute() -> void:
 	await capture("02-exploration")
 	var arrival_run = game.run
 	var first_tile: String = Hex.neighbors(arrival_run.data.start, arrival_run.data.tiles).filter(func(cell):
-		return Hex.is_land(arrival_run.data.tiles, cell) and arrival_run.data.tiles[cell].enemies.is_empty())[0]
+		return Hex.is_land(arrival_run.data.tiles, cell) and arrival_run.data.tiles[cell].enemies.is_empty() and arrival_run.data.tiles[cell].npc.is_empty())[0]
 	game._select_cell(first_tile)
 	game._select_cell(first_tile)
 	var arrival_deadline = Time.get_ticks_msec() + 5000
 	while game.map_traveling and Time.get_ticks_msec() < arrival_deadline:
 		await process_frame
-	expect(game.modal_layer.has_node("StoryScreen"), "First-arrival story appears after the walk")
+	expect(game.modal_layer.get_child_count() == 0 and arrival_run.actor("hero").position == first_tile,
+		"First arrival keeps the map visible")
 	await capture("node-first-arrival")
-	await click_story_button("返回地图")
 	await create_timer(0.9).timeout
 	await capture("map-visited-locations")
 	game.crew_collapsed = true
@@ -680,10 +658,8 @@ func execute() -> void:
 			battle._apply_field_effect("ignite")
 		elif biome == "swamp":
 			battle._apply_field_effect("wet")
-		game.combat = battle
-		game.battle_timer = 0
 		game.view.begin_battle(run, battle)
-		game._refresh()
+		game.ui.hide()
 		await create_timer(0.6).timeout
 		expect(game.view.battle_dolls.size() == 8, "Four friends and four distinct foes rendered")
 		expect(game.view.battle_dolls.grit.skeleton.get_bone_count() >= 23 and game.view.battle_dolls.grit.rigged.animator != null, "Dragon in human form has a full imported rig and animation player")
@@ -691,7 +667,7 @@ func execute() -> void:
 		await capture("battle-" + biome)
 		if biome == "plains":
 			battle.step_auto()
-			game._refresh()
+			game.view.refresh_battle(run, battle)
 			await capture("battle-friendly-decision")
 		var caster = game.view.battle_dolls.ember
 		caster.play_action("cast")
@@ -703,13 +679,13 @@ func execute() -> void:
 			await capture("animation-cast-forest")
 			battle._apply_field_effect("wet")
 			game.view.sync_event_environment({"environment_after": battle.field_view()})
-			game._refresh()
+			game.view.refresh_battle(run, battle)
 			expect(game.view.battle_root.get_meta("environment_signature") == "forest:true:true:false", "Fire and wetness render together")
 			await create_timer(0.6).timeout
 			await capture("battle-forest-wet")
 			expect(battle.retreat().ok, "Leave burning battle")
-		game.combat = null
 		game.view.end_battle()
+		game.ui.show()
 		if biome == "forest":
 			game._refresh()
 			await capture("map-forest-after-battle")
@@ -741,14 +717,12 @@ func execute() -> void:
 	game.run.actor("lorne").joined = false
 	game.run.data.story.lorne.met = false
 	game.run.data.story.lorne.relation = "unmet"
+	game.run.data.tiles[game.run.actor("lorne").position].enemies.clear()
+	game.run.data.lamp_coins = 8
 	game._talk("lorne")
-	await capture("story-courier-first-meeting")
-	await capture("dialogue-portrait")
-	await await_story_choices()
-	inspect_story_layout()
-	await click_story_button(quest_option_label(game.narrative.dialogue("hero", "lorne"), "join"))
-	await advance_story()
-	await capture("story-lorne-joins")
+	await capture("courier-recruitment")
+	game.modal_layer.find_child("ConfirmCompanionRecruitment", true, false).pressed.emit()
+	game._talk("lorne")
 	await await_story_choices()
 	await capture("story-courier-joined-choices")
 	await click_story_button(quest_option_label(game.narrative.dialogue("hero", "lorne"), "quest"))
@@ -761,22 +735,14 @@ func execute() -> void:
 	game.run.actor("hero").position = game.run.actor("eve").position
 	game.run.data.tiles[game.run.actor("eve").position].enemies.clear()
 	game._talk("eve")
-	await capture("story-eve-first-meeting")
-	await await_story_choices()
-	await capture("story-eve-decision")
-	for pressed in [true, false]:
-		var event = InputEventKey.new()
-		event.keycode = KEY_ESCAPE
-		event.pressed = pressed
-		root.push_input(event, true)
-	expect(game.modal_layer.get_child_count() == 0 and game.view.visible, "Escape returns from a conversation to the map")
+	await capture("eve-recruitment")
+	expect(game.modal_layer.has_node("CompanionRecruitment"), "The companion opens the recruitment panel")
+	await click_story_button("关闭")
+	expect(game.modal_layer.get_child_count() == 0 and game.view.visible, "Closing recruitment returns to the map")
 	game._talk("eve")
-	await await_story_choices()
-	await click_story_button(quest_option_label(game.narrative.dialogue("hero", "eve"), "join"))
-	await advance_story()
-	expect(story_contains(Story.CHARACTER_BEHAVIOR.eve[1]), "A companion replies before opening the recruitment relic")
-	await advance_until_text(Relics.DATA.tender_gauze.story)
-	expect(story_contains(Relics.DATA.tender_gauze.story), "The recruitment relic follows the companion's reply")
+	game.modal_layer.find_child("ConfirmCompanionRecruitment", true, false).pressed.emit()
+	expect(game.modal_layer.has_node("StoryRewards"), "Recruitment opens the illustrated relic receipt")
+	await capture("eve-recruitment-reward")
 	game._close_modal()
 	# Instantiate every remaining enemy art family and verify its skeleton in the tree.
 	for id in Catalog.ENEMIES:

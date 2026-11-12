@@ -1,7 +1,6 @@
 extends SceneTree
 const Main = preload("res://scenes/main.tscn")
 const Hex = preload("res://scripts/domain/hex_map.gd")
-const Catalog = preload("res://scripts/domain/catalog.gd")
 var checks = 0
 var failures = 0
 
@@ -45,7 +44,6 @@ func execute() -> void:
 	var origin: String = run.actor("hero").position
 	var next: String = Hex.neighbors(origin, run.data.tiles).filter(func(cell): return Hex.is_land(run.data.tiles, cell))[0]
 	run.data.tiles[next].enemies.clear()
-	var colors = {"hero": "17161e", "ember": "773831", "tide": "24536e", "wind_runner": "376452"}
 	for id in ["ember", "tide", "wind_runner"]:
 		run.actor(id).position = origin
 		expect(run.join_companion(id).ok, "Recruit companion " + id)
@@ -55,28 +53,12 @@ func execute() -> void:
 	run.actor("hero").mp = 17
 	run.actor("hero").energy = 61
 	game._refresh()
-	for id in colors:
-		var member = game.ui.find_child("CrewMember_" + id, true, false)
-		expect(member is Button, "Roster row exists for " + id)
-		if member == null:
-			continue
-		var portrait: Panel = member.find_child("Portrait", true, false)
-		expect(portrait.get_theme_stylebox("panel").bg_color == Color(colors[id])
-			and portrait.get_child_count() == 1 and portrait.get_child(0).texture != null,
-			"Portrait uses the correct element color and character art for " + id)
-		expect(has_label(member, run.actor(id).name), "Character name appears in their portrait row")
-		var bars = member.find_children("*", "ProgressBar", true, false)
-		var actor = run.actor(id)
-		expect(bars.size() == 3 and bars[0].value == actor.hp and bars[0].max_value == actor.hp_max
-			and bars[1].value == actor.mp and bars[1].max_value == actor.mp_max and bars[2].value == actor.energy,
-			"Personal bars match the actor's health, magic and charge")
-		expect(bars.map(func(bar): return bar.get_parent().get_child(1).text) == [
-			"%d/%d" % [actor.hp, actor.hp_max], "%d/%d" % [actor.mp, actor.mp_max],
-			"%d/%d" % [actor.energy, Catalog.ENERGY_MAX],
-		], "Map bars show exact current and maximum values")
-	var ember_card: Button = game.ui.find_child("CrewMember_ember", true, false)
-	ember_card.pressed.emit()
-	expect(game.selected_id == "ember", "Clicking a portrait row selects its character")
+	var panel = game.ui.get_node("ExpeditionControls")
+	expect(game.ui.find_children("CrewMember_*", "Button", true, false).is_empty()
+		and panel.find_children("*", "ProgressBar", true, false).is_empty(),
+		"The map sidebar has no personal portraits, HP, MP, or charge meters")
+	var actions = panel.find_children("*", "Button", true, false).map(func(button): return button.text)
+	expect(actions == ["收起", "角色", "行动", "卡组", "背包"], "Compact map sidebar keeps all four entry points")
 	expect(game.view.dolls.keys() == ["hero"], "Only the traveler is drawn on the map")
 	expect_stamina(game, 5)
 	game._select_cell(next)

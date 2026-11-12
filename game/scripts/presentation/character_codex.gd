@@ -1,11 +1,13 @@
 extends PanelContainer
 
 const Catalog = preload("res://scripts/domain/catalog.gd")
+const Cards = preload("res://scripts/domain/card_catalog.gd")
+const Chess = preload("res://scripts/domain/chess_battle.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const SYMBOLS = preload("res://assets/ui/codex-symbols.svg")
 const POSES = {"": "常规", "serious": "严肃", "friendly": "友善", "grief": "悲伤", "anger": "愤怒", "surprise": "惊讶", "battle": "战斗"}
 const FILTERS = ["全部", "已入队", "见过未加入"]
-const TABS = ["概览", "装备", "技能", "故事"]
+const TABS = ["概览", "装备", "棋子", "故事"]
 const GRID_COLUMNS = 5
 const SLOT_NAMES = {"weapon": "武器", "armor": "护甲", "accessory": "饰品"}
 const STAT_NAMES = {"attack": "攻击", "defense": "防御", "speed": "速度"}
@@ -468,7 +470,7 @@ func _set_tab(index: int) -> void:
 	match index:
 		0: _overview(id)
 		1: _equipment(id)
-		2: _skills(id)
+		2: _piece(id)
 		3: _stories(id)
 
 func _overview(id: String) -> void:
@@ -494,71 +496,62 @@ func _overview(id: String) -> void:
 		return
 	game._text(details, "当前状态", 19, game.gold)
 	var condition = "重伤 · " if actor.hp <= 0 else ""
-	game._text(details, "%sHP %d/%d · MP %d/%d\n充能 %d%%" % [condition, actor.hp, actor.hp_max, actor.mp, actor.mp_max, actor.energy], 16)
-	game._text(details, "攻击 %d · 防御 %d · 速度 %d" % [game.run.stat(id, "attack"), game.run.stat(id, "defense"), game.run.stat(id, "speed")], 16)
+	game._text(details, "%sHP %d/%d · MP %d/%d" % [condition, actor.hp, actor.hp_max, actor.mp, actor.mp_max], 16)
 
 func _equipment(id: String) -> void:
-	var actor: Dictionary = game.run.actor(id)
-	if not actor.joined:
+	if not game.run.actor(id).joined:
 		game._text(details, "尚未加入远征队。", 16, game.muted)
 		return
-	for slot in Gear.SLOTS:
-		var uid: String = actor.equipment.get(slot, "")
-		var item: Dictionary = game.run.data.gear_instances.get(uid, {})
-		var card = PanelContainer.new()
-		card.add_theme_stylebox_override("panel", game._style(Color("203a34"), Color("4c6051"), 6))
-		details.add_child(card)
-		var content = VBoxContainer.new()
-		card.add_child(content)
-		var row = HBoxContainer.new()
-		content.add_child(row)
-		var icon = _texture(_symbol(Gear.SLOTS.find(slot)), Vector2(48, 48))
-		row.add_child(icon)
-		var labels = VBoxContainer.new()
-		labels.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(labels)
-		game._text(labels, SLOT_NAMES[slot], 13, game.muted)
-		if item.is_empty():
-			game._text(labels, "未装备", 17)
-			continue
-		var definition: Dictionary = Gear.DATA[item.definition_id]
-		game._text(labels, definition.name, 18, game.gold)
-		var quality: String = Gear.QUALITY_NAMES[Gear.QUALITIES.find(item.quality)]
-		var summary: Array[String] = ["%s +%d" % [quality, item.enhance_level]]
-		for stat in definition.stats:
-			summary.append("%s +%d" % [STAT_NAMES[stat], Gear.bonus(item, stat)])
-		game._text(labels, " · ".join(summary), 14)
-		var expanded = VBoxContainer.new()
-		content.add_child(expanded)
-		expanded.hide()
-		game._text(expanded, definition.effect, 15)
-		if not definition.set_id.is_empty():
-			var set_info: Dictionary = Gear.SETS[definition.set_id]
-			var count: int = game.run.set_count(id, definition.set_id)
-			game._text(labels, "%s · %d / 3" % [set_info.name, count], 14, game.muted)
-			if not set_info.two.is_empty():
-				game._text(expanded, ("已激活 · " if count >= 2 else "未激活 · ") + set_info.two, 15)
-			if not set_info.three.is_empty():
-				game._text(expanded, ("已激活 · " if count >= 3 else "未激活 · ") + set_info.three, 15)
-		game._button(row, "详情", func(): expanded.visible = not expanded.visible)
-	var manage: Button = game._button(footer, "管理装备", game._inventory_dialog.bind(id, 1), game.run.data.status != "exploring")
+	game._text(details, "装备编入全队卡组，开战后可打给任意友方棋子。", 16)
+	for uid in game.run.gear_owned("actor", id):
+		var item: Dictionary = game.run.data.gear_instances[uid]
+		var card := Gear.card(item)
+		game._text(details, card.name, 18, game.gold)
+		game._text(details, card.trait, 15)
+	var manage: Button = game._button(footer, "管理装备牌", game._inventory_dialog.bind(id, 1), game.run.data.status != "exploring")
 	manage.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-func _skills(id: String) -> void:
-	var actor: Dictionary = game.run.actor(id)
-	if not actor.joined:
-		game._text(details, "入队后可查看这位角色的技能。", 16, game.muted)
-		return
-	for skill in [["普通攻击", "attack"], ["主动技能", actor.skill], ["终结技", actor.ultimate]]:
-		var heading_text: String = skill[0] if skill[1] == "attack" else skill[0] + " · " + Catalog.SKILLS[skill[1]].name
-		game._text(details, heading_text, 18, game.gold)
-		var description = Catalog.skill_description(skill[1])
-		if skill[0] == "终结技":
-			description += "。充能到 100% 后可释放。"
-		game._text(details, description, 16)
-	var passive = Catalog.passive_description(id)
-	game._text(details, "专长", 18, game.gold)
-	game._text(details, "暂无额外专长。" if passive.is_empty() else passive, 16)
+func _piece(id: String) -> void:
+	var piece := Chess.commander_definition(game.run) if id == "hero" else Cards.owned_definition(id, game.run.data.actors)
+	game._text(details, "主战者 · 开局登场" if id == "hero" else "伙伴 · 部署至己方半场", 18, game.gold)
+	game._text(details, Cards.stats(piece), 16)
+	game._text(details, piece.trait, 16)
+	if id == "cen":
+		game._text(details, "森林采集时多拿一份。", 16)
+	elif id == "grit":
+		game._text(details, "可辨识已发现敌方主战者的属性。", 16)
+	if id != "hero":
+		_breakthroughs(id)
+
+func _breakthroughs(id: String) -> void:
+	var person: Dictionary = game.run.actor(id)
+	var rank := int(person.get("breakthrough", 0))
+	game._text(details, "突破 %d / 3 · 持有 %d 灯铢" % [rank, game.run.data.lamp_coins], 18, game.gold)
+	var talent := Cards.breakthrough_talent(id)
+	for index in Cards.BREAKTHROUGH_PRICES.size():
+		var benefit: String = Cards.BREAKTHROUGH_BENEFITS[index]
+		if index == 2:
+			benefit = "攻击 +1 · " + talent.name
+		var cost := "已完成" if index < rank else "%d 灯铢" % Cards.BREAKTHROUGH_PRICES[index]
+		game._text(details, "%d 阶 · %s · %s" % [index + 1, benefit, cost], 15, game.ink if index < rank else game.muted)
+	if rank < 3:
+		game._text(details, talent.text, 15, game.muted)
+	if not person.joined:
+		game._text(details, "招募后解锁伙伴牌和突破。", 15, game.muted)
+	elif rank < Cards.BREAKTHROUGH_PRICES.size():
+		var quote: Dictionary = game.run.breakthrough_quote(id)
+		var feedback: Label = game._text(details, str(quote.get("message", "")), 15, game.gold)
+		feedback.visible = not quote.ok
+		var upgrade: Button = game._button(footer, "突破至 %d 阶 · %d 灯铢" % [rank + 1, Cards.BREAKTHROUGH_PRICES[rank]], func():
+			var result: Dictionary = game.run.breakthrough_companion(id, rank)
+			if result.ok:
+				game._refresh()
+				_set_tab(2)
+			else:
+				feedback.text = result.message
+				feedback.show(), not quote.ok)
+		upgrade.name = "ConfirmCompanionBreakthrough"
+		upgrade.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 func _stories(id: String) -> void:
 	var records: Array = game.narrative.character_records(id)

@@ -45,7 +45,7 @@ def main() -> int:
     commands = [('import', ['--headless', '--editor', '--quit'])]
     scripts = ['test_rules.gd', 'test_story.gd', 'test_journey.gd', 'test_edges.gd', 'test_ui.gd', 'test_relics.gd', 'test_squads.gd', 'test_squad_markers.gd', 'test_squad_retreat.gd', 'test_nodes.gd', 'test_equipment_system.gd']
     if (GAME / 'tests/test_battle_ui.gd').exists():
-        scripts.append('test_battle_ui.gd')
+        scripts.extend(['test_battle_ui.gd', 'test_chess_loadout.gd'])
     for script in scripts:
         command = ['--headless', '--script', 'res://tests/' + script]
         if args.quick and script == 'test_rules.gd':

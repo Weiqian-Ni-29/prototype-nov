@@ -9,7 +9,7 @@ const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const GOLD = Color("dec38e")
 const INK = Color("e8e4d1")
 const MUTED = Color("a2b3a7")
-const FILTERS = {"all": "全部", "item": "补给", "gear": "装备", "relic": "遗器"}
+const FILTERS = {"all": "全部", "item": "补给", "gear": "装备牌", "spell": "法术牌谱", "relic": "遗器"}
 
 var run: RefCounted
 var trader: String
@@ -268,25 +268,16 @@ func _show_item(entry: Dictionary) -> void:
 	_label(detail, entry.effect, 16, INK, true)
 	if not entry.story.is_empty():
 		_label(detail, entry.story, 14, MUTED, true)
-	if run.has_relic("price_pair_slip"):
-		var uid: String = entry.id if entry.kind == "gear" else ""
-		var buy: int = run.item_quote(entry.base, "shop_buy", uid).price
-		var sell: int = run.item_quote(entry.base, "shop_sell", uid).price
-		_label(detail, "买入 %d · 卖出 %d 灯铢" % [buy, sell], 14, GOLD)
 	voucher_picker.clear()
 	voucher_picker.add_item("不使用凭券")
 	voucher_picker.set_item_metadata(0, "")
-	if buying:
-		for id in run.data.relic_inventory:
-			var definition: Dictionary = Relics.DATA[id]
-			if definition.hook == "transaction_use" and definition.params.channel == "shop_buy" and _quote(entry, 1, id).ok:
-				voucher_picker.add_item("使用" + definition.name)
-				voucher_picker.set_item_metadata(voucher_picker.item_count - 1, id)
 	voucher_picker.select(0)
 	voucher_picker.visible = voucher_picker.item_count > 1
 	_update_order()
 
 func _quote(entry: Dictionary, amount: int = 1, coupon: String = "") -> Dictionary:
+	if entry.kind == "spell":
+		return {"ok": true, "unit_price": entry.base, "additional_unit_price": entry.base, "price": entry.base}
 	return run.shop_quote(entry.base, buying, amount, entry.id if entry.kind == "gear" else "", coupon)
 
 func _update_order() -> void:

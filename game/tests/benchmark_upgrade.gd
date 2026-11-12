@@ -1,7 +1,7 @@
 extends SceneTree
 ## Native wall-clock frames, no movie/headless. Deliberate full-map and maximal battle fixtures.
 const Main = preload("res://scenes/main.tscn")
-const Combat = preload("res://scripts/domain/battle.gd")
+const Combat = preload("res://tests/legacy/realtime_battle.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 var game: Node
@@ -28,7 +28,7 @@ func sample(name: String, battle: bool) -> void:
 		if battle and i%30==0:
 			for doll in game.view.battle_dolls.values(): doll.play_action("cast")
 			var points: Array = []
-			for id in game.combat.active: points.append(game.view.battle_dolls[id].position+Vector3.UP)
+			for doll in game.view.battle_dolls.values(): points.append(doll.position+Vector3.UP)
 			game.view.effects.ultimate_start("tide_shelter",Vector3.ZERO,points)
 			for point in points: game.view.effects.shield(point,Color("9bd9e1"))
 	frames.sort()
@@ -76,13 +76,12 @@ func execute() -> void:
 		var b = Combat.new()
 		expect(b.begin(r,{"position":p,"origin":p,"movers":[],"npc":"","ambush":false},["hero","grit","ember","tide"]).ok,"Maximal battle fixture begins")
 		b.burning = true
-		game.combat = b
 		game.view.begin_battle(r,b)
-		game._refresh()
+		game.ui.hide()
 		expect(game.view.battle_dolls.size()==8 and not game.view.ocean.visible,"Four allies plus four enemies, ocean absent from inland battle")
 		await sample("battle-rain-fire",true)
 		game.view.end_battle()
-		game.combat = null
+		game.ui.show()
 	var output = FileAccess.open("user://upgrade-performance.json",FileAccess.WRITE)
 	output.store_string(JSON.stringify(results,"  "))
 	output.close()

@@ -2,7 +2,11 @@ extends Node
 const Run = preload("res://scripts/domain/expedition.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
-const Combat = preload("res://scripts/domain/battle.gd")
+const Chess = preload("res://scripts/domain/chess_battle.gd")
+const Cards = preload("res://scripts/domain/card_catalog.gd")
+const CardUI = preload("res://scripts/presentation/card_ui.gd")
+const ChessView = preload("res://scripts/presentation/chess_battle_view.gd")
+const DeckEditor = preload("res://scripts/presentation/card_deck_editor.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
@@ -22,28 +26,17 @@ const Sound = preload("res://scripts/presentation/sound.gd")
 enum Screen { MENU, OPENING_STORY, EXPEDITION }
 const OBJECTIVE_ICON = preload("res://assets/ui/expedition-objective.svg")
 const LAMP_COIN_ICON = preload("res://assets/ui/lamp-coin.svg")
-const SHIELD_ICON = preload("res://assets/ui/shield-badge.svg")
-const SHIELD_BADGE_SIZE = Vector2(29, 31)
-const CREW_PANEL_WIDTH = 288
+const CREW_PANEL_WIDTH = 230
 const STORY_TERRAIN = {
 	"plains": "road", "forest": "woodland", "mountain": "highland", "ruins": "ruins",
 	"desert": "drylands", "swamp": "wetlands",
-}
-const CREW_PORTRAIT_BACKGROUNDS = {
-	"gravity": Color("17161e"),
-	"fire": Color("773831"),
-	"water": Color("24536e"),
-	"wind": Color("376452"),
-	"ice": Color("496978"),
-	"lightning": Color("513b69"),
-	"earth": Color("5e482f"),
-	"normal": Color("3d4741"),
 }
 var run = Run.new()
 var view: Node3D
 var ui: Control
 var modal_layer: Control
 var combat: RefCounted
+var chess_view: Control
 var selected_id = "hero"
 var selected_cell = ""
 var move_target = ""
@@ -55,7 +48,6 @@ var day_transition_pending := false
 var crew_collapsed = false
 var chosen_seed = ""
 var opening_seed = 20261104
-var selected_target = "enemy_0"
 var screen_state = Screen.MENU
 var battle_timer = 0.0
 var toast_text = ""
@@ -75,7 +67,6 @@ func _ready() -> void:
 	view = World.new()
 	add_child(view)
 	view.cell_clicked.connect(_select_cell)
-	view.enemy_clicked.connect(_select_battle_target)
 	view.presentation_changed.connect(func(): call_deferred("_refresh"))
 	view.sound_cue.connect(func(kind: String): sound.play(kind))
 	var canvas = CanvasLayer.new()
@@ -225,7 +216,7 @@ func _refresh() -> void:
 	_clear(ui)
 	var screen = get_viewport().get_visible_rect().size
 	var in_expedition = screen_state == Screen.EXPEDITION
-	var world_visible = in_expedition and not modal_layer.has_node("StoryScreen")
+	var world_visible = in_expedition and combat == null and not modal_layer.has_node("StoryScreen")
 	view.visible = world_visible
 	view.set_process(world_visible)
 	_update_world_input()
@@ -235,11 +226,12 @@ func _refresh() -> void:
 		return
 	if screen_state == Screen.OPENING_STORY:
 		return
+	if combat != null:
+		_show_chess_view()
+		return
 	view.refresh(run, selected_id, selected_cell)
 	_header(screen)
-	if combat != null:
-		_battle_ui(screen)
-	elif run.data.status in ["won", "failed"]:
+	if run.data.status in ["won", "failed"]:
 		_summary(screen)
 		_footer(screen)
 	else:
@@ -364,7 +356,8 @@ func _start_new() -> void:
 		var supplies: Array[Dictionary] = []
 		for id in hero.inventory:
 			supplies.append({"kind": "item", "id": id, "count": hero.inventory[id]})
-		supplies.append({"kind": "gear", "id": hero.equipment.weapon, "count": 1})
+		for uid in run.gear_owned("actor", "hero"):
+			supplies.append({"kind": "gear", "id": uid, "count": 1})
 		_queue_story_rewards(_node_title(selected_cell), supplies)
 	run.save_game()
 	_refresh()
@@ -466,7 +459,7 @@ func _expedition_objective() -> String:
 		return "旅程已结束"
 	return [
 		"踏出旅程的第一步",
-		"帮助被亡灵困扰的地方",
+		"平定沿途的战斗遭遇",
 		"查清谁在延长战争",
 		"找到战神的驻地",
 		"击败战神卡德兰",
@@ -475,12 +468,12 @@ func _expedition_objective() -> String:
 
 func _crew_panel() -> void:
 	var box = _panel(ui, Rect2(20, 120, CREW_PANEL_WIDTH, 56))
-	if not crew_collapsed:
-		var panel: PanelContainer = box.get_parent()
-		panel.set_anchor_and_offset(SIDE_BOTTOM, 1.0, -20.0)
-	var heading = HBoxContainer.new()
+	box.get_parent().name = "ExpeditionControls"
+	var heading := HBoxContainer.new()
 	box.add_child(heading)
-	_text(heading, "远征队", 24, gold).vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	var title := _text(heading, "远征", 24, gold)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_button(heading, "展开" if crew_collapsed else "收起", func():
 		crew_collapsed = not crew_collapsed
 		_refresh())
@@ -488,19 +481,21 @@ func _crew_panel() -> void:
 		return
 	_text(box, "点相邻格预览 · 再点确认", 13, muted)
 	_crew_stamina(box)
-	var roster = _scroll_content(box)
-	roster.get_parent().horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	roster.add_theme_constant_override("separation", 6)
-	for id in run.joined_ids():
-		_crew_member(roster, id)
-	var cell: String = run.actor(selected_id).position
-	var codex_button = _button(box, "角色", _show_character_codex)
+	var actions := GridContainer.new()
+	actions.columns = 2
+	actions.add_theme_constant_override("h_separation", 6)
+	actions.add_theme_constant_override("v_separation", 6)
+	box.add_child(actions)
+	var codex_button := _button(actions, "角色", _show_character_codex)
 	if not character_codex_state.is_empty():
 		codex_button.add_theme_stylebox_override("normal", _style(Color("34483a"), gold, 6))
 		codex_button.add_theme_color_override("font_color", gold)
-	var action = _button(box, "行动", _cell_actions)
-	action.tooltip_text = _node_title(cell)
-	_button(box, "背包", _inventory_dialog.bind(selected_id))
+	var action := _button(actions, "行动", _cell_actions)
+	action.tooltip_text = _node_title(run.actor(selected_id).position)
+	_button(actions, "卡组", _deck_dialog)
+	_button(actions, "背包", _inventory_dialog.bind(selected_id))
+	for button in actions.get_children():
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 func _crew_stamina(parent: VBoxContainer) -> void:
 	var row = HBoxContainer.new()
@@ -521,106 +516,10 @@ func _crew_stamina(parent: VBoxContainer) -> void:
 		segment.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		segment.add_theme_stylebox_override("panel", bright if i < remaining else faded)
 		steps.add_child(segment)
-	_crew_meter_label(row, "精力")
-
-func _crew_member(parent: VBoxContainer, id: String) -> void:
-	var a = run.actor(id)
-	var button = _button(parent, "", _select_actor.bind(id))
-	button.name = "CrewMember_" + id
-	button.custom_minimum_size.y = 106
-	button.accessibility_name = a.name
-	if a.hp <= 0:
-		button.tooltip_text = "%s · 重伤" % a.name
-	if selected_id != id:
-		button.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
-
-	var content = HBoxContainer.new()
-	button.add_child(content)
-	_member_status(content, id, int(a.hp))
-	content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	content.offset_left = 5
-	content.offset_right = -5
-	content.offset_top = 3
-	content.offset_bottom = -3
-
-func _member_status(content: HBoxContainer, id: String, shown_hp: int) -> VBoxContainer:
-	var a = run.actor(id)
-	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	content.add_theme_constant_override("separation", 12)
-	var identity = VBoxContainer.new()
-	identity.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	identity.custom_minimum_size.x = 80
-	identity.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	identity.add_theme_constant_override("separation", 2)
-	content.add_child(identity)
-	var element: String = "gravity" if id == "hero" else a.element
-	var background: Color = CREW_PORTRAIT_BACKGROUNDS.get(element, CREW_PORTRAIT_BACKGROUNDS.normal)
-	var portrait = Panel.new()
-	portrait.name = "Portrait"
-	portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	portrait.custom_minimum_size.y = 72
-	portrait.add_theme_stylebox_override("panel", _style(background, background.lightened(0.30), 5))
-	identity.add_child(portrait)
-	var texture = _story_portrait(str(a.get("portrait", id)))
-	if texture != null:
-		var dimensions = Vector2(texture.get_size())
-		var width = dimensions.x * 0.54
-		var face = AtlasTexture.new()
-		face.atlas = texture
-		face.region = Rect2((dimensions.x - width) * 0.5, 0, width, minf(width, dimensions.y))
-		face.filter_clip = true
-		var image = TextureRect.new()
-		image.texture = face
-		image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-		image.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		portrait.add_child(image)
-		image.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		image.offset_left = 1
-		image.offset_right = -1
-		image.offset_top = 1
-		image.offset_bottom = -1
-
-	var caption = _text(identity, a.name, 12, ink if shown_hp > 0 else muted)
-	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	var meters = VBoxContainer.new()
-	meters.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	meters.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	meters.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	meters.add_theme_constant_override("separation", 5)
-	content.add_child(meters)
-	_crew_meter(meters, "HP", shown_hp, a.hp_max, Color("e16562"))
-	_crew_meter(meters, "MP", a.mp, a.mp_max, Color("65a6e6"))
-	_crew_meter(meters, "充能", a.energy, Catalog.ENERGY_MAX, Color("eea353"))
-	return meters
-
-func _crew_meter(parent: VBoxContainer, caption: String, amount: float, maximum: float, color: Color) -> void:
-	var row = HBoxContainer.new()
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	parent.add_child(row)
-	var bar = ProgressBar.new()
-	bar.accessibility_name = caption
-	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	bar.custom_minimum_size.y = 7
-	bar.max_value = maxf(1.0, maximum)
-	bar.value = amount
-	bar.show_percentage = false
-	bar.add_theme_stylebox_override("background", _bar_style(Color("3b524b")))
-	bar.add_theme_stylebox_override("fill", _bar_style(color))
-	row.add_child(bar)
-	var value_label = _crew_meter_label(row, "%d/%d" % [int(amount), int(maximum)])
-	value_label.custom_minimum_size.x = 58
-	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-
-func _crew_meter_label(parent: HBoxContainer, caption: String) -> Label:
-	var label = _text(parent, caption, 12)
-	label.autowrap_mode = TextServer.AUTOWRAP_OFF
-	label.custom_minimum_size.x = 32
-	label.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return label
+	var caption := _text(row, "精力", 13, muted)
+	caption.autowrap_mode = TextServer.AUTOWRAP_OFF
+	caption.size_flags_horizontal = Control.SIZE_SHRINK_END
+	caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 
 func _cell_actions() -> void:
 	var actor = run.actor(selected_id)
@@ -628,7 +527,7 @@ func _cell_actions() -> void:
 	var t = run.data.tiles[cell]
 	var node = run.node_at(cell)
 	var title = _node_title(cell)
-	var has_encounter = run.knows_encounter(cell)
+	var has_encounter: bool = run.knows_encounter(cell) or (run.data.pending_battle.get("position") == cell and not t.enemies.is_empty())
 	var dialog = _modal(title, 570, 580)
 	var box = _scroll_content(dialog)
 	_text(box, "%s · 坐标 %s" % [Catalog.terrain_name(t.terrain), cell], 14, muted)
@@ -643,23 +542,29 @@ func _cell_actions() -> void:
 			var elements: Array = info.elements.map(func(element): return Catalog.ELEMENT_NAMES.get(element, element))
 			_text(box, "遭遇拓片 · %s · %d 个敌人 · %s" % [str(key).trim_prefix("encounter:"), info.count, "、".join(elements)], 15, muted)
 	if not has_encounter and (t.site.is_empty() or (t.site == "boss" and not run.boss_known())) and not Nodes.story(node).is_empty():
-		_button(box, "查看节点剧情", _node_dialog)
+		if not _node_resolved(node, t):
+			for option in _node_actions(node):
+				_button(box, option.text, _node_choice.bind(option.id))
+		if node.kind != "supply":
+			_button(box, "查看节点剧情", _node_dialog)
 	if has_encounter:
-		_text(box, "决战 · 已平息 %d 处纷争" % run.data.peace.size() if t.enemies.has("war_god") else "驻守敌人", 18, Color("e4ab87"))
-		_text(box, "每场最多四名队员同时出战。", 14, muted)
-		for enemy in t.enemies:
-			_text(box, Catalog.ENEMIES[enemy].name + " · " + Catalog.ENEMIES[enemy].role, 14, muted)
-			if run.actor("grit").joined and run.actor("grit").hp > 0 and run.actor("grit").position == cell:
-				var definition = run.war_god_stats() if enemy == "war_god" else Catalog.ENEMIES[enemy]
-				_text(box, "砾牙辨识：HP %d · 攻击 %d · 速度 %d" % [definition.hp, definition.attack, definition.speed], 13, gold)
+		var kind := "精英险地" if node.get("kind") == "elite" else "普通遭遇"
+		_text(box, "决战 · 已平定 %d 处遭遇" % run.data.peace.size() if t.enemies.has("war_god") else kind, 18, Color("e4ab87"))
+		var commander: String = "war_god" if t.enemies.has("war_god") else t.enemies[0]
+		_text(box, "敌方主战者 · " + Catalog.ENEMIES[commander].name, 15, muted)
+		if run.actor("grit").joined and run.actor("grit").hp > 0 and run.actor("grit").position == cell:
+			_text(box, "砾牙辨识：" + Cards.stats(Chess.enemy_definition(run, commander, true)), 13, gold)
 		var requires_hero = t.enemies.has("war_god") and "hero" not in run.same_cell(cell, true)
 		if requires_hero:
 			_text(box, "旅人必须亲自迎战。", 15, muted)
-		_button(box, "查看遭遇剧情", _open_current_encounter, run.same_cell(cell, true).is_empty() or requires_hero)
+		_button(box, "查看决战剧情" if t.enemies.has("war_god") else "备战", _open_current_encounter, run.same_cell(cell, true).is_empty() or requires_hero)
 	if t.npc != "" and t.npc != selected_id and run.actor(t.npc).position == cell and t.enemies.is_empty():
 		var npc = run.actor(t.npc)
 		_text(box, npc.name + " · " + npc.title, 18)
-		_button(box, "交谈 / 个人故事", _talk.bind(t.npc))
+		if npc.joined:
+			_button(box, "交谈 / 个人故事", _talk.bind(t.npc))
+		else:
+			_button(box, "招募%s · %d 灯铢" % [npc.name, Cards.RECRUIT_PRICE], _recruit_dialog.bind(t.npc))
 	elif t.site == "start":
 		_button(box, "看看村庄", _site_impression)
 	for id in run.same_cell(cell):
@@ -695,8 +600,7 @@ func _site_impression() -> void:
 		{"结束交谈": _close_modal}, _node_tint())
 
 func _node_resolved(node: Dictionary, tile: Dictionary) -> bool:
-	return not node.result.is_empty() or (node.kind == "supply" and tile.quantity <= 0) \
-		or (node.kind in ["battle", "elite"] and tile.enemies.is_empty())
+	return not node.result.is_empty() or (node.kind in ["battle", "elite"] and tile.enemies.is_empty())
 
 func _node_tint() -> Color:
 	if run.data.weather == "rain":
@@ -705,18 +609,23 @@ func _node_tint() -> Color:
 
 func _node_description(node: Dictionary, tile: Dictionary, event: Dictionary) -> String:
 	if _node_resolved(node, tile):
-		var conclusion = Nodes.resolution(node)
-		if node.kind == "haunt":
-			return "送别时，%s伸出手，给亡魂指了条离开这里的路。\n\n%s" % [run.actor("hero").name, conclusion]
-		return conclusion
-	if node.get("investigated", false):
-		return str(event.investigation)
+		return Nodes.resolution(node)
 	return str(event.intro)
 
 func _node_option(id: String, label: String, spoken: bool = false) -> Dictionary:
 	return {"id": id, "text": label, "spoken": spoken}
 
-func _node_dialog(feedback: String = "", completion: Callable = Callable()) -> void:
+func _node_actions(node: Dictionary) -> Array:
+	match node.kind:
+		"trade":
+			return [_node_option("trade", "查看货物 · 持有 %d 灯铢" % run.data.lamp_coins)]
+		"supply":
+			return [_node_option("collect", "领取补给")]
+		"cache":
+			return [_node_option("search", "搜寻旧物")]
+	return []
+
+func _node_dialog() -> void:
 	var cell: String = run.actor(selected_id).position
 	var tile = run.data.tiles[cell]
 	var node = run.node_at(cell)
@@ -732,45 +641,9 @@ func _node_dialog(feedback: String = "", completion: Callable = Callable()) -> v
 	if speaker in run.same_cell(cell, true) and event.has("reaction"):
 		text += "\n%s说「%s」" % [run.actor(speaker).name, event.reaction]
 	var title = "%s · %s" % [_node_title(cell), event.title]
-	if completion.is_valid():
-		_show_story(title, "旁白", text, STORY_TERRAIN[tile.terrain], [], [],
-			func(_option: String): completion.call(), {}, _node_tint())
-		return
-	var options: Array = []
-	if not _node_resolved(node, tile):
-		match node.kind:
-			"trade":
-				options.append(_node_option("trade", "查看货物 · 持有 %d 灯铢" % run.data.lamp_coins))
-			"supply":
-				options.append(_node_option("collect", "取用%s ×%d" % [Catalog.item_name(tile.resource), tile.quantity]))
-			"rest":
-				options.append(_node_option("pack", "带走一份" + Catalog.item_name(node.item)))
-			"choice":
-				options.append(_node_option("work", "%s · 得 %d 灯铢" % [event.work, node.coins]))
-				options.append(_node_option("work_alternative", "%s · 得 %d 灯铢" % [event.alternative, node.coins]))
-			"haunt":
-				if not node.get("investigated", false):
-					options.append(_node_option("inspect", event.investigation_label))
-				elif "hero" in run.same_cell(cell, true):
-					options.append(_node_option("settle", event.work))
-					options.append(_node_option("settle_alternative", event.alternative))
-				else:
-					text += "\n已经问清了亡者牵挂的事，等旅人来了，再陪亡者告别。"
-			"cache":
-				options.append(_node_option("search", "搜寻旧物"))
-			"battle", "elite":
-				if run.knows_encounter(cell):
-					options.append(_node_option("fight", "选择阵容并交战"))
-	if not tile.npc.is_empty() and tile.npc != selected_id and run.actor(tile.npc).position == cell and tile.enemies.is_empty():
-		options.append(_node_option("talk", "和%s交谈" % run.actor(tile.npc).name))
+	var options := [] if _node_resolved(node, tile) else _node_actions(node)
 	options.append(_node_option("leave", "返回地图"))
-	if not feedback.is_empty():
-		_show_story(title, "旁白", text, STORY_TERRAIN[tile.terrain], [], [],
-			func(_option: String):
-				_show_story(title, "行动结果", feedback, STORY_TERRAIN[tile.terrain], [], options, _node_choice, {}, _node_tint()),
-			{}, _node_tint())
-	else:
-		_show_story(title, "旁白", text, STORY_TERRAIN[tile.terrain], [], options, _node_choice, {}, _node_tint())
+	_show_story(title, "旁白", text, STORY_TERRAIN[tile.terrain], [], options, _node_choice, {}, _node_tint())
 
 func _node_choice(option: String) -> void:
 	match option:
@@ -779,19 +652,14 @@ func _node_choice(option: String) -> void:
 				_close_modal()
 		"trade":
 			_shop_dialog()
-		"talk":
-			_talk(run.data.tiles[run.actor(selected_id).position].npc)
-		"fight":
-			_open_current_encounter(false)
 		_:
+			_close_modal()
 			var result = run.use_node(selected_id, option)
 			var cell: String = run.actor(selected_id).position
 			var has_items: bool = result.ok and _queue_story_rewards(_node_title(cell), result.get("items", []))
 			_run_action(result)
 			if has_items:
-				_node_dialog("", _show_pending_story_rewards)
-			else:
-				_node_dialog("" if result.ok and option == "inspect" else str(result.get("message", "")))
+				_show_pending_story_rewards()
 
 func _queue_story_rewards(source: String, items: Array) -> bool:
 	if items.is_empty():
@@ -853,21 +721,20 @@ func _reward_entries(items: Array) -> Array[Dictionary]:
 				entry.story = definition.get("story", "")
 			"relic":
 				var definition: Dictionary = Relics.DATA[id]
-				entry.merge({"title": definition.name, "category": item.get("status", "遗器"), "effect": definition.effect})
+				entry.merge({"title": definition.name, "category": item.get("status", "遗器"), "effect": Relics.current_effect(id)})
 				entry.story = definition.story
 			"gear":
 				var gear: Dictionary = run.data.gear_instances[id]
-				var definition: Dictionary = Gear.DATA[gear.definition_id]
-				var stats := PackedStringArray()
-				for stat in definition.stats:
-					stats.append("%s +%d" % [stat_names[stat], Gear.bonus(gear, stat)])
-				if not definition.effect.is_empty():
-					stats.append(definition.effect)
-				entry.merge({"title": Gear.label(gear), "category": "装备", "effect": "\n".join(stats), "level": int(gear.enhance_level)})
-				entry.icon = gear.definition_id
-				entry.story = definition.story
+				var card := Gear.card(gear)
+				entry.merge({"title": card.name, "category": "装备牌", "effect": card.trait, "level": card.level})
+				entry.icon = card.icon
+				entry.story = card.story
+			"spell":
+				var card: Dictionary = Cards.ACTIONS[id]
+				entry.merge({"title": card.name, "category": "法术牌谱", "effect": card.trait + " 购买后永久解锁到本次远征的卡牌收藏。"})
+				entry.icon = card.icon
 			"coins":
-				entry.merge({"title": "灯铢", "category": "货币", "effect": "可在商摊购买道具、装备和遗器。"})
+				entry.merge({"title": "灯铢", "category": "货币", "effect": "可用于招募伙伴、突破和商店交易。"})
 		entries.append(entry)
 	return entries
 
@@ -883,6 +750,8 @@ func _shop_dialog(feedback: String = "", resume: Dictionary = {}) -> void:
 		var item := shop.selected
 		if item.kind == "gear":
 			return run.gear_trade(trader_id, item.id, shop.buying, shop.voucher)
+		if item.kind == "spell":
+			return run.buy_spell(trader_id, item.id)
 		return run.trade(trader_id, item.id, shop.buying, shop.voucher, shop.quantity))
 	var restock := _item_command(run.refresh_shop.bind(trader_id))
 	shop.trade_requested.connect(func():
@@ -891,7 +760,7 @@ func _shop_dialog(feedback: String = "", resume: Dictionary = {}) -> void:
 	shop.refresh_requested.connect(func():
 		if shop.is_inside_tree() and shop.buying and not shop.refresh.disabled:
 			_shop_action(restock, shop.selection()))
-	shop.return_requested.connect(_node_dialog)
+	shop.return_requested.connect(_cell_actions)
 
 func _shop_action(action: Callable, resume: Dictionary) -> void:
 	sound.play("click")
@@ -915,6 +784,9 @@ func _shop_offers(trader_id: String, buying: bool) -> Array[Dictionary]:
 	for id in relics:
 		if int(relics[id]) > 0:
 			items.append({"kind": "relic", "id": id, "count": int(relics[id])})
+	if buying:
+		for spell in run.spell_shop_offers(trader.position):
+			items.append({"kind": "spell", "id": spell, "count": 1})
 	var entries := _reward_entries(items)
 	for entry in entries:
 		var id: String = entry.id
@@ -928,9 +800,11 @@ func _shop_offers(trader_id: String, buying: bool) -> Array[Dictionary]:
 				entry.base = Gear.price(instance)
 				entry.owned = 0 if buying else 1
 				entry.title = Gear.DATA[instance.definition_id].name
-				entry.equipped = not buying and id in trader.equipment.values()
 				var grade: String = Gear.QUALITY_NAMES[Gear.QUALITIES.find(instance.quality)]
-				entry.grade = "%s +%d%s" % [grade, int(instance.enhance_level), " · 已装备" if entry.equipped else ""]
+				entry.grade = "%s +%d" % [grade, int(instance.enhance_level)]
+			"spell":
+				entry.base = run.spell_shop_price()
+				entry.owned = 0
 			"relic":
 				entry.base = Relics.DATA[id].price
 				entry.owned = int(run.data.relic_inventory.get(id, 0))
@@ -942,11 +816,6 @@ func _item_command(action: Callable) -> Callable:
 	item_operation_serial += 1
 	var id = "%d:%d" % [Time.get_ticks_usec(), item_operation_serial]
 	return run.commit_item_operation.bind(id, int(run.data.item_revision), action)
-
-func _vouchers(channel: String) -> Array:
-	return run.data.relic_inventory.keys().filter(func(id):
-		var entry = Relics.DATA[id]
-		return entry.hook == "transaction_use" and entry.params.channel == channel)
 
 func _footer(screen: Vector2) -> void:
 	var box = _panel(ui, Rect2(20, screen.y - 140, screen.x - 40, 122))
@@ -1004,7 +873,8 @@ func _move_selected() -> void:
 			travel_clock = previous_clock
 		selected_id = "hero"
 		selected_cell = destination
-		if first_visit and not Nodes.story(run.node_at(destination)).is_empty():
+		var resident: Dictionary = run.actor(run.data.tiles[destination].npc)
+		if first_visit and not resident.is_empty() and not resident.joined and resident.position == destination:
 			run.data.pending_arrival = {"actor": "hero", "cell": destination}
 	_run_action(result)
 	if not result.ok:
@@ -1050,13 +920,15 @@ func _show_arrival() -> void:
 
 func _show_arrival_node() -> void:
 	if not run.data.has("pending_arrival"):
-		_show_npc_encounter(selected_id)
 		return
 	var arrival: Dictionary = run.data.pending_arrival
 	run.data.erase("pending_arrival")
 	run.save_game()
 	if selected_id == arrival.actor and run.actor(selected_id).position == arrival.cell:
-		_node_dialog()
+		var resident: String = run.data.tiles[arrival.cell].npc
+		var person: Dictionary = run.actor(resident)
+		if not person.is_empty() and not person.joined and person.position == arrival.cell and run.data.tiles[arrival.cell].enemies.is_empty():
+			_recruit_dialog(resident)
 
 func _run_action(result: Dictionary) -> void:
 	toast_text = "已完成。" if result.ok else str(result.get("message", "无法执行。"))
@@ -1074,7 +946,7 @@ func _modal(title: String, width: float = 650, height: float = 520) -> VBoxConta
 	move_preview.hide()
 	_clear(modal_layer)
 	ui.show()
-	view.visible = screen_state == Screen.EXPEDITION
+	view.visible = screen_state == Screen.EXPEDITION and combat == null
 	view.set_world_input_enabled(false)
 	var backdrop = ColorRect.new()
 	backdrop.color = Color(0.025, 0.07, 0.065, 0.82)
@@ -1091,16 +963,15 @@ func _close_modal() -> void:
 	_clear(modal_layer)
 	ui.show()
 	var in_expedition = screen_state == Screen.EXPEDITION
-	view.visible = in_expedition
-	view.set_process(in_expedition)
+	view.visible = in_expedition and combat == null
+	view.set_process(view.visible)
 	_update_world_input()
 
 func _update_world_input() -> void:
 	ui.process_mode = Node.PROCESS_MODE_DISABLED if map_traveling else Node.PROCESS_MODE_INHERIT
-	var can_target = combat != null and combat.outcome.is_empty()
-	var can_explore = not view.battle_mode and run.data.status == "exploring"
+	var can_explore = combat == null and run.data.status == "exploring"
 	view.set_world_input_enabled(not map_traveling and screen_state == Screen.EXPEDITION and view.visible
-		and modal_layer.get_child_count() == 0 and (can_target or can_explore))
+		and modal_layer.get_child_count() == 0 and can_explore)
 	if day_transition_pending and can_explore and view.is_processing_unhandled_input():
 		# Closing one modal may open another before the map is shown.
 		_show_day_transition.call_deferred()
@@ -1220,8 +1091,6 @@ func _inventory_consumables(page: InventoryPage, id: String, selection: String) 
 		var definition: Dictionary = Catalog.ITEMS.get(item, {})
 		_inventory_heading(content, Catalog.item_name(item), item)
 		var purpose := str(definition.get("description", "暂无用途说明。"))
-		if item == "salve" and run.has_relic("herbal_case"):
-			purpose += " 青枝药匣使恢复量提高 25%。"
 		_text(content, purpose, 16)
 		if definition.has("story"):
 			_text(content, definition.story, 15, muted)
@@ -1270,9 +1139,9 @@ func _inventory_gear(page: InventoryPage, id: String, selection: String, feedbac
 				continue
 			if set_filter.selected > 0 and definition.set_id != Gear.SETS.keys()[set_filter.selected - 1]:
 				continue
-			var equipped: bool = uid in run.actor(id).equipment.values()
+			var in_deck: bool = "gear:" + str(uid) in run.card_deck()
 			entries.append({"id": uid, "title": Gear.label(item), "icon": item.definition_id, "level": int(item.enhance_level),
-				"caption": definition.name, "badge": "已装备" if equipped else ""})
+				"caption": definition.name, "badge": "已编入卡组" if in_deck else ""})
 		page.set_items(entries, selected)
 	filter.item_selected.connect(func(_index: int): refresh_grid.call(page.selected_id))
 	set_filter.item_selected.connect(func(_index: int): refresh_grid.call(page.selected_id))
@@ -1285,55 +1154,24 @@ func _gear_detail(content: VBoxContainer, id: String, uid: String, feedback: Str
 	_inventory_heading(content, Gear.label(item), item.definition_id, int(item.enhance_level))
 	if not feedback.is_empty():
 		_text(content, feedback, 16, gold)
-	var current_uid: String = a.equipment[definition.slot]
-	var stat_labels = {"attack": "攻击", "defense": "防御", "speed": "速度"}
-	for stat in definition.stats:
-		var current_value = 0 if current_uid.is_empty() else Gear.bonus(run.data.gear_instances[current_uid], stat)
-		_text(content, "%s +%d · 当前同槽 +%d" % [stat_labels[stat], Gear.bonus(item, stat), current_value], 17, gold)
-	_text(content, definition.effect, 16)
-	if not definition.set_id.is_empty():
-		var pieces: int = run.set_count(id, definition.set_id)
-		var suite = Gear.SETS[definition.set_id]
-		_text(content, "%s · %d / 3" % [suite.name, pieces], 18, gold)
-		if not suite.two.is_empty():
-			_text(content, ("已激活 · " if pieces >= 2 else "未激活 · ") + suite.two, 16)
-		if not suite.three.is_empty():
-			_text(content, ("已激活 · " if pieces >= 3 else "未激活 · ") + suite.three, 16)
+	_text(content, Gear.card(item).trait, 17, gold)
+	_text(content, "在卡组编辑中编入，战斗时打出。每枚棋子每个装备槽只能装备一件。", 15, muted)
 	_button(content, "阅读装备故事", func():
 		_show_story(definition.name, "器物故事", definition.story, _story_scene_at(a.position),
 			[], [], func(_option: String): _inventory_dialog(id, 1, uid), {}))
-	var equip_action = _item_command(run.equip.bind(id, uid))
-	_button(content, "卸下" if current_uid == uid else "装备", func():
-		var result = equip_action.call()
-		_run_action(result)
-		_inventory_dialog(id, 1, uid, result.get("message", "")))
-	for other in run.same_cell(a.position):
-		if other == id or current_uid == uid:
-			continue
-		var transfer_action = _item_command(run.gear_transfer.bind(id, other, uid))
-		_button(content, "交给 " + run.actor(other).name, func():
-			var result = transfer_action.call()
-			_run_action(result)
-			_inventory_dialog(id, 1, uid, result.get("message", "")))
 	_text(content, "持有 %d 灯铢" % run.data.lamp_coins, 16, gold)
-	for voucher in [""] + _vouchers("enhancement_fee"):
-		var quote = run.enhancement_quote(id, uid, voucher)
-		if not quote.ok:
-			if voucher.is_empty():
-				_text(content, quote.message, 15, muted)
-			continue
-		var stat: String = definition.stats.keys()[0]
-		if voucher.is_empty():
-			_text(content, "强化后%s +%d" % [stat_labels[stat], Gear.bonus(item, stat, int(item.enhance_level) + 1)], 15, muted)
-		var enhance_action = _item_command(run.enhance.bind(id, uid, voucher))
-		var enhance := _button(content, "强化至 +%d · %d 灯铢%s" % [
-			int(item.enhance_level) + 1, quote.price,
-			" · " + Relics.DATA[voucher].name if not voucher.is_empty() else ""], func():
-			var result = enhance_action.call()
-			_run_action(result)
-			_inventory_dialog(id, 1, uid, result.get("message", "")), run.data.lamp_coins < quote.price)
-		enhance.tooltip_text = enhance.text
-		enhance.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	var quote: Dictionary = run.enhancement_quote(id, uid)
+	if not quote.ok:
+		_text(content, quote.message, 15, muted)
+		return
+	var preview: Dictionary = item.duplicate()
+	preview.enhance_level += 1
+	_text(content, "强化后：" + Gear.card(preview).trait, 15, muted)
+	_button(content, "强化至 +%d · %d 灯铢" % [int(preview.enhance_level), quote.price], func():
+		var result: Dictionary = run.enhance_card(id, uid)
+		_run_action(result)
+		_inventory_dialog(id, 1, uid, result.get("message", "")), run.data.lamp_coins < quote.price)
+
 
 func _inventory_relics(page: InventoryPage, id: String, selection: String, feedback: String) -> void:
 	var entries: Array[Dictionary] = []
@@ -1363,10 +1201,7 @@ func _relic_detail(content: VBoxContainer, id: String, relic: String, feedback: 
 	_text(content, kind + (" · 共鸣中" if relic in run.data.relic_attunement else ""), 15, muted)
 	if entry.type == "P":
 		_text(content, "全队共鸣 · %d / 6" % run.data.relic_attunement.size(), 15, muted)
-	_text(content, entry.effect, 17)
-	_text(content, "主要来源 · " + _relic_source(entry.source), 15, muted)
-	if run.has_relic(relic):
-		_relic_information(content, id, relic)
+	_text(content, Relics.current_effect(relic), 17)
 	_button(content, "阅读遗器故事", func():
 		_show_story(entry.name, "器物故事", entry.story, _story_scene_at(a.position),
 			[], [], func(_option: String): _inventory_dialog(id, 2, relic), {}))
@@ -1378,96 +1213,14 @@ func _relic_detail(content: VBoxContainer, id: String, relic: String, feedback: 
 				var result = execute.call()
 				_run_action(result)
 				_inventory_dialog(id, 2, relic, result.get("message", "")))
-		elif entry.hook == "transaction_use":
-			_text(content, "在交易或强化时选择使用此凭券。", 16, muted)
+		elif entry.type == "C":
+			_text(content, "在开战前的卡组页面携带；每场最多携带一件。", 16, muted)
 		else:
-			_relic_use_buttons(content, id, relic)
-
-func _relic_information(content: VBoxContainer, actor_id: String, relic: String) -> void:
-	var a = run.actor(actor_id)
-	var origin: String = a.position
-	var entry = Relics.DATA[relic]
-	match relic:
-		"survey_tally":
-			var visits: int = run.data.visited.size()
-			var upcoming: Array = [20, 60, 100].filter(func(value): return value > visits)
-			_text(content, "已经走过 %d 格 · %s" % [visits, "里程碑已全部达成" if upcoming.is_empty() else "下一个 %d 格" % upcoming[0]], 16, gold)
-		"market_window":
-			for cell in run.data.explored:
-				var shop = run.node_at(cell)
-				if shop.get("kind") != "trade":
-					continue
-				var labels: Array[String] = []
-				for item in shop.stock:
-					if shop.stock[item] > 0:
-						labels.append("%s %d 灯铢" % [Catalog.item_name(item), run.item_quote(Nodes.PRICES[item], "shop_buy").price])
-				for uid in run.gear_owned("shop", cell):
-					var gear = run.data.gear_instances[uid]
-					labels.append("%s %d 灯铢" % [Gear.label(gear), run.item_quote(Gear.price(gear), "shop_buy", uid).price])
-				for id in shop.relic_stock:
-					if shop.relic_stock[id] > 0:
-						labels.append("%s %d 灯铢" % [Relics.DATA[id].name, run.item_quote(Relics.DATA[id].price, "shop_buy").price])
-				_text(content, "%s · %s" % [cell, "、".join(labels)], 15, muted)
-		"caution_compass":
-			var candidates: Array = run.data.explored.keys().filter(func(cell):
-				return not run.data.tiles[cell].hidden and run.node_at(cell).get("kind") == "elite" and not run.data.tiles[cell].enemies.is_empty() \
-					and Hex.distance(Hex.coord(origin), Hex.coord(cell)) <= entry.params.radius)
-			candidates.sort_custom(func(left, right):
-				var ld = Hex.distance(Hex.coord(origin), Hex.coord(left))
-				var rd = Hex.distance(Hex.coord(origin), Hex.coord(right))
-				return left < right if ld == rd else ld < rd)
-			if candidates.is_empty():
-				_text(content, "附近还没发现精英战斗地点。", 16, muted)
-			else:
-				var cell: String = candidates[0]
-				var offset = Hex.coord(cell) - Hex.coord(origin)
-				_text(content, "最近精英方向 %+d,%+d · 相距 %d 格" % [offset.x, offset.y, Hex.distance(Hex.coord(origin), Hex.coord(cell))], 16, gold)
-		"terrain_caliper":
-			for cell in run.data.explored:
-				if cell != origin and Hex.is_land(run.data.tiles, cell) and Hex.distance(Hex.coord(origin), Hex.coord(cell)) <= entry.params.radius:
-					var terrain: String = run.data.tiles[cell].terrain
-					_text(content, "%s · %s" % [cell, Catalog.terrain_name(terrain)], 15, muted)
-		"cloud_almanac":
-			var forecast: Array = run.weather_forecast(2)
-			_text(content, "明天预计%s · 后天预计%s" % ["有雨" if forecast[0] == "rain" else "无雨", "有雨" if forecast[1] == "rain" else "无雨"], 16, gold)
-		"honest_ledger":
-			var node = run.node_at(origin)
-			if node.get("kind") == "choice":
-				_text(content, "当地委托 · " + ("已领取" if not node.result.is_empty() else "可处理"), 16, gold)
-		"witness_slate":
-			for record in run.data.map_intel.get("observed_enemy_actions", []):
-				_text(content, "%s → %s · %s · HP −%d · 护盾 −%d" % [record.name, record.target,
-					Catalog.ELEMENT_NAMES.get(record.element, record.element), record.damage, record.absorbed], 15, muted)
-
-func _relic_source(source: String) -> String:
-	if source.begins_with("recruit:"):
-		return "指定伙伴首次同行"
-	return {"shop": "商店", "commission": "委托", "field_cache": "藏物点",
-		"exploration_milestone": "探索里程碑", "spirit_farewell": "亡灵送别"}.get(source, "探索")
-
-func _relic_use_buttons(content: VBoxContainer, id: String, relic: String) -> void:
-	var entry = Relics.DATA[relic]
-	var targets = [""]
-	if entry.params.get("targets") == "selected_other_healthy_joined_same_cell":
-		targets = run.same_cell(run.actor(id).position, true)
-		targets.erase(id)
-	elif entry.hook in ["encounter_info_use", "route_use"]:
-		targets = run.data.explored.keys().filter(func(cell): return Hex.is_land(run.data.tiles, cell) and cell != run.actor(id).position)
-		targets.sort()
-		if entry.hook == "encounter_info_use":
-			var nearby = Hex.neighbors(run.actor(id).position, run.data.tiles)
-			targets = targets.filter(func(cell): return cell in nearby and run.knows_encounter(cell))
-	if targets.is_empty():
-		_text(content, "当前没有可用目标。", 16, muted)
-	for target in targets:
-		var label = "使用"
-		if not target.is_empty():
-			label += " · " + (run.actor(target).name if run.data.actors.has(target) else Catalog.terrain_name(run.data.tiles[target].terrain) + " " + target)
-		var execute = _item_command(run.use_relic.bind(id, relic, target))
-		_button(content, label, func():
-			var result = execute.call()
-			_run_action(result)
-			_inventory_dialog(id, 2, relic, result.get("message", "")))
+			var execute = _item_command(run.use_relic.bind(id, relic))
+			_button(content, "启用生命之种", func():
+				var result = execute.call()
+				_run_action(result)
+				_inventory_dialog(id, 2, relic, result.get("message", "")))
 
 func _transfer_dialog(owner: String, item: String) -> void:
 	var box = _modal("同地交接 · " + Catalog.item_name(item), 650, 540)
@@ -1487,17 +1240,13 @@ func _transfer_dialog(owner: String, item: String) -> void:
 func _item_dialog(user_id: String, item_id: String = "") -> void:
 	var from_backpack = not item_id.is_empty()
 	var box = _modal("使用道具 · " + run.actor(user_id).name, 650, 460)
-	_text(box, "战斗中使用道具不占正常行动。", 16, muted)
 	if from_backpack:
 		_text(box, "要把背包里的「%s」给谁用？只能选在场的人。" % Catalog.item_name(item_id), 16, gold)
 	var targets: Array = []
-	if combat != null:
-		targets = combat.active.duplicate()
-	else:
-		for id in run.data.actors:
-			var a = run.actor(id)
-			if a.position == run.actor(user_id).position and (a.joined or run.data.story.get(id, {}).get("met", false)):
-				targets.append(id)
+	for id in run.data.actors:
+		var a = run.actor(id)
+		if a.position == run.actor(user_id).position and (a.joined or run.data.story.get(id, {}).get("met", false)):
+			targets.append(id)
 	var select = OptionButton.new()
 	for id in targets:
 		select.add_item("%s · HP %d/%d · MP %d/%d" % [run.actor(id).name, run.actor(id).hp, run.actor(id).hp_max, run.actor(id).mp, run.actor(id).mp_max])
@@ -1512,14 +1261,12 @@ func _item_dialog(user_id: String, item_id: String = "") -> void:
 		var button_text = "确认使用 %s ×1" % name if from_backpack else "%s ×%d" % [name, quantity]
 		_button(box, button_text, func():
 			var target = targets[select.selected]
-			var result = combat.use_item(item, target) if combat != null else run.use_item(user_id, target, item)
+			var result = run.use_item(user_id, target, item)
 			if not result.ok:
 				feedback.text = result.message
 				feedback.show()
 				return
 			_run_action(result)
-			if combat != null:
-				_after_combat_step()
 			if from_backpack:
 				_inventory_dialog(user_id, 0, item_id)
 			else:
@@ -1531,336 +1278,81 @@ func _item_dialog(user_id: String, item_id: String = "") -> void:
 
 func _open_current_encounter(show_intro: bool = true) -> void:
 	var cell: String = run.actor(selected_id).position
-	run.data.pending_battle = {"position": cell, "ambush": false, "origin": cell, "npc": ""}
-	run.save_game()
+	if run.data.pending_battle.is_empty():
+		run.data.pending_battle = {"position": cell, "ambush": false, "origin": cell, "npc": ""}
+		run.save_game()
 	if show_intro:
 		_show_encounter_intro()
 	else:
-		_formation_dialog()
+		_deck_dialog(true)
 
 func _show_encounter_intro() -> void:
 	var encounter: Dictionary = run.data.pending_battle
-	if not encounter.npc.is_empty():
-		_formation_dialog()
-		return
 	var cell: String = encounter.position
-	var tile: Dictionary = run.data.tiles[cell]
-	var node = run.node_at(cell)
-	var title = _node_title(cell)
-	var body: String
-	var portraits: Array = [_story_portrait(selected_id, "serious")]
-	if tile.enemies.has("war_god"):
-		title += " · 战鼓"
-		body = "鼓声从营里传来。你在路上听过同样的鼓点，每响一下，那些想逃走的士兵就握紧了手里的武器。现在鼓就在眼前。卡德兰挡在通往鼓台的路上，伸手取下了自己的兵器。"
-		portraits.append(_story_portrait("war_god", "serious"))
-	else:
-		var event = Nodes.story(node)
-		if node.get("kind") in ["battle", "elite"] and not event.is_empty():
-			title += " · " + str(event.title)
-			body = str(event.intro)
-		else:
-			var enemies = "、".join(tile.enemies.map(func(id): return Catalog.ENEMIES[id].name))
-			body = "%s挡住了去路。你停下脚步，握紧了武器。" % enemies
-		if encounter.ambush:
-			body += "\n\n敌人从遮蔽物后抢先扑了出来。"
-	_show_story(title, "旁白", body, _story_scene_at(cell), portraits,
-		[_node_option("formation", "选择出战阵容")], func(_option: String): _formation_dialog(), {}, _node_tint())
-
-func _formation_dialog() -> void:
-	var encounter = run.data.pending_battle
-	var box = _modal("选择出战阵容 · 最多四人", 700, 620)
-	_text(box, "最多四名队员同时出战，其他能行动的队员可以做候补。", 17, muted)
-	var chosen: Array = []
-	var lineup = _scroll_content(box)
-	for id in run.same_cell(encounter.position, true):
-		var toggle = CheckBox.new()
-		toggle.text = "%s · HP %d/%d" % [run.actor(id).name, run.actor(id).hp, run.actor(id).hp_max]
-		if chosen.size() < 4:
-			chosen.append(id)
-			toggle.button_pressed = true
-		toggle.toggled.connect(func(value: bool):
-			if value:
-				if chosen.size() < 4:
-					chosen.append(id)
-				else:
-					toggle.set_pressed_no_signal(false)
-			else:
-				chosen.erase(id))
-		lineup.add_child(toggle)
-	_button(box, "开始战斗", func():
-		var battle = Combat.new()
-		var result = battle.begin(run, encounter, chosen)
-		if result.ok:
-			_close_modal()
-			combat = battle
-			toast_text = ""
-			selected_target = "enemy_0"
-			view.begin_battle(run, combat)
-			battle_timer = 0.8
-			_refresh()
-		else:
-			toast_text = result.message
-			_text(box, result.message, 16, gold))
-	# An entered encounter must be resolved; cancellation of known movement occurs before entry.
-	_text(box, "已经遇到敌人了，开打后可以选择撤退。", 14, muted)
-
-func _battle_ui(screen: Vector2) -> void:
-	view.refresh_battle(run, combat)
-	view.set_battle_target(selected_target)
-	var battle_bottom = screen.y - 20
-	var side_height = battle_bottom - 120
-	var left_outer = _panel(ui, Rect2(20, 120, CREW_PANEL_WIDTH, side_height))
-	_text(left_outer, "出战角色", 24, gold)
-	var left = _scroll_content(left_outer)
-	left.get_parent().horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	left.add_theme_constant_override("separation", 6)
-	var acting_id = view.presentation_actor(combat.current)
-	for id in combat.active:
-		_battle_member(left, id, id == acting_id)
-	var enemy_panel_x = screen.x - 330
-	var right_outer = _panel(ui, Rect2(enemy_panel_x, 120, 310, side_height))
-	_text(right_outer, "敌方阵容", 24, gold)
-	var right = _scroll_content(right_outer)
-	right.add_theme_constant_override("separation", 9)
-	var counts = {}
-	for enemy in combat.enemies.values():
-		counts[enemy.name] = int(counts.get(enemy.name, 0)) + 1
-	var display_names = {}
-	var numbers = {}
-	for id in combat.enemies:
-		var e = combat.enemies[id]
-		numbers[e.name] = int(numbers.get(e.name, 0)) + 1
-		var name: String = e.name + (" %d号" % numbers[e.name] if counts[e.name] > 1 else "")
-		display_names[id] = name
-		_enemy_card(right, id, name)
-	var timeline: Array[String] = []
-	for entry in combat.timeline(6):
-		timeline.append(display_names.get(entry.id, combat.unit(entry.id).name))
-	if not timeline.is_empty():
-		right_outer.add_child(HSeparator.new())
-		_text(right_outer, "行动顺序\n" + " → ".join(timeline), 14, gold)
-	var is_friendly = combat.current != "" and not combat.enemies.has(combat.current) and not combat.madness.has(combat.current) and combat.outcome == "" and battle_timer <= 0 and not view.is_animating()
-	var quick_actions = HBoxContainer.new()
-	quick_actions.add_theme_constant_override("separation", 8)
-	ui.add_child(quick_actions)
-	var auto = _button(quick_actions, "自动战斗", func(): combat.auto_mode = not combat.auto_mode; _refresh())
-	auto.toggle_mode = true
-	auto.set_pressed_no_signal(combat.auto_mode)
-	auto.add_theme_stylebox_override("hover_pressed", auto.get_theme_stylebox("pressed"))
-	auto.tooltip_text = "开启后，队员会自己决定怎么打。"
-	var items = _button(quick_actions, "道具", func(): _item_dialog(combat.current), not is_friendly)
-	items.tooltip_text = "使用当前角色背包中的恢复道具。\n可给在场队友使用，不占正常行动。"
-	quick_actions.position = Vector2(enemy_panel_x - quick_actions.get_combined_minimum_size().x - 12, 120)
-
-	var commands_x = CREW_PANEL_WIDTH + 40.0
-	var center = _panel(ui, Rect2(commands_x, battle_bottom - 155, enemy_panel_x - commands_x - 20.0, 155))
-	center.get_parent().grow_vertical = Control.GROW_DIRECTION_BEGIN
-	_text(center, view.presentation_title((combat.unit(combat.current).name + " 的行动") if combat.current != "" else "战斗结算"), 20, gold)
-	var commands = HBoxContainer.new()
-	center.add_child(commands)
-	var actor_id = str(combat.current) if is_friendly else ""
-	var attack = _button(commands, "普攻", func(): _combat_action("attack"), not is_friendly)
-	attack.tooltip_text = "普通攻击\n" + _combat_skill_hint("attack", actor_id)
-	var skill_id = str(combat.unit(combat.current).get("skill", "attack")) if combat.current in combat.active else "attack"
-	var skill = _button(commands, Catalog.SKILLS[skill_id].name, func(): _combat_action(skill_id), not is_friendly)
-	skill.tooltip_text = Catalog.SKILLS[skill_id].name + "\n" + _combat_skill_hint(skill_id, actor_id)
-	var guard = _button(commands, "防守", func(): _combat_action("guard"), not is_friendly)
-	guard.tooltip_text = "防守\n下次正常行动前受到的伤害降低，并获得 10% 充能。"
-	if is_friendly and not combat.reserves().is_empty():
-		var swap = _button(commands, "换人", _swap_dialog)
-		swap.tooltip_text = "让候补换下当前队员，占用这次正常行动。"
-	var retreat_hint = "撤退会返回出发地。出过战的队员各损失生命上限的 10%，敌人会恢复。"
-	var retreat = _button(commands, "撤退", func(): _confirm("撤退？", retreat_hint, func(): _run_action(combat.retreat()); _finish_battle()), combat.river or combat.madness.has(combat.current))
-	retreat.tooltip_text = retreat_hint
-	var field = combat.field_view()
-	var context = "场地：" + Catalog.terrain_name(field.terrain)
-	var field_names = {"frozen": "冰面", "charged": "导电", "wind_barrier": "风障", "root_cover": "根掩"}
-	for state in field_names:
-		if field.fields.has(state):
-			context += " · %s %d 行动" % [field_names[state], field.fields[state]]
-	if combat.madness.has(combat.current):
-		context += " · 当前角色陷入疯狂，会自行攻击"
-	if field.burning:
-		context += " · 燃烧"
-		if run.has_relic("field_dial"):
-			context += "（持续至战斗结束，双方下一次灼烧 %.1f）" % maxf(0.0, combat.fire_tick - combat.clock)
-	if field.wet:
-		context += " · 潮湿 %d 行动" % int(field.fields.get("wet", 0))
-	if is_friendly:
-		var suites: Array[String] = []
-		for id in Gear.SETS:
-			var pieces: int = run.set_count(actor_id, id)
-			if pieces >= 2:
-				suites.append("%s %d 件" % [Gear.SETS[id].name, pieces])
-		if not suites.is_empty():
-			context += "\n生效套装 · " + "、".join(suites)
-	if field.get("river", false):
-		context += " · 冥河正在削弱战神"
-	if is_friendly:
-		context += "\n" + _combat_skill_hint(skill_id, actor_id)
-	_text(center, context, 12, muted)
-	if not toast_text.is_empty():
-		_text(center, toast_text, 13, gold)
-
-func _battle_member(parent: VBoxContainer, id: String, acting: bool) -> void:
-	var a = run.actor(id)
-	var shown_hp = view.display_hp(id, int(a.hp))
-	var shown_shield = view.display_shield(id, int(a.shield))
-	var status: Array[String] = []
-	if acting:
-		status.append("行动中")
-	if shown_hp <= 0:
-		status.append("重伤")
-	if combat.madness.has(id):
-		status.append("疯狂")
-	if shown_hp > 0 and combat.haste_turns.has(id):
-		status.append("提速")
-
-	var panel = PanelContainer.new()
-	panel.name = "BattleMember_" + id
-	var style = _style(Color("29413c"), gold if acting else Color("536456"), 6)
-	style.content_margin_left = 5
-	style.content_margin_right = 5
-	style.content_margin_top = 4
-	style.content_margin_bottom = 4
-	panel.add_theme_stylebox_override("panel", style)
-	parent.add_child(panel)
-	var card = VBoxContainer.new()
-	card.add_theme_constant_override("separation", 4)
-	panel.add_child(card)
-	var content = HBoxContainer.new()
-	card.add_child(content)
-	var meters = _member_status(content, id, shown_hp)
-	meters.add_theme_constant_override("separation", 3)
-	_battle_status_row(meters, id, " · ".join(status), shown_shield)
-	var skill_name: String = Catalog.SKILLS[a.ultimate].name
-	var ultimate = _button(card, "终结技 · " + skill_name, _ultimate.bind(id),
-		a.energy < Catalog.ENERGY_MAX or a.hp <= 0 or combat.madness.has(id))
-	ultimate.tooltip_text = "%s\n%s\n充能达到 100%% 时可释放，不占正常行动。" % [skill_name, Catalog.skill_description(a.ultimate)]
-
-func _battle_status_row(parent: VBoxContainer, id: String, status: String, shield: int) -> void:
-	var row = HBoxContainer.new()
-	row.name = "BattleStatus_" + id
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	parent.add_child(row)
-	var label = _text(row, status, 11, muted)
-	label.autowrap_mode = TextServer.AUTOWRAP_OFF
-	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-
-	# Keep the same amount of space when the shield is depleted.
-	var slot = Control.new()
-	slot.custom_minimum_size = SHIELD_BADGE_SIZE
-	slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_child(slot)
-	if shield <= 0:
+	if "war_god" not in run.data.tiles[cell].enemies:
+		_deck_dialog(true)
 		return
-	var badge = TextureRect.new()
-	badge.name = "ShieldBadge_" + id
-	badge.accessibility_name = "护盾 %d" % shield
-	badge.texture = SHIELD_ICON
-	badge.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	badge.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	slot.add_child(badge)
-	badge.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var body := "鼓声从营里传来。你在路上听过同样的鼓点，每响一下，那些想逃走的士兵就握紧了手里的武器。现在鼓就在眼前。卡德兰挡在通往鼓台的路上，伸手取下了自己的兵器。"
+	var portraits := [_story_portrait("hero", "serious"), _story_portrait("war_god", "serious")]
+	_show_story(_node_title(cell) + " · 战鼓", "旁白", body, _story_scene_at(cell), portraits,
+		[_node_option("deck", "编辑卡组与开战")], func(_option: String): _deck_dialog(true), {}, _node_tint())
 
-	var amount = _text(badge, str(shield), 12, Color.WHITE)
-	amount.name = "Amount"
-	amount.add_theme_color_override("font_outline_color", Color("231f1b"))
-	amount.add_theme_constant_override("outline_size", 2)
-	amount.autowrap_mode = TextServer.AUTOWRAP_OFF
-	amount.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	amount.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	amount.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	amount.offset_bottom = -3
-	var font = amount.get_theme_font("font")
-	var font_size = amount.get_theme_font_size("font_size")
-	while font_size > 1 and font.get_string_size(amount.text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > SHIELD_BADGE_SIZE.x - 7.0:
-		font_size -= 1
-	amount.add_theme_font_size_override("font_size", font_size)
-
-func _enemy_card(parent: VBoxContainer, id: String, title: String) -> void:
-	var enemy = combat.enemies[id]
-	var selected = selected_target == id and enemy.hp > 0
-	var shown_hp = view.display_hp(id, int(enemy.hp))
-	var panel = PanelContainer.new()
-	panel.name = "EnemyCard_" + id
-	panel.gui_input.connect(func(event: InputEvent):
-		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-			panel.accept_event()
-			_select_battle_target(id))
-	panel.add_theme_stylebox_override("panel", _style(Color("31463d") if selected else Color("203b35"),
-		gold if selected else Color("50675c"), 8))
-	parent.add_child(panel)
-	var card = VBoxContainer.new()
-	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card.add_theme_constant_override("separation", 4)
-	panel.add_child(card)
-	_button(card, ("◆ " if selected else "") + title, _select_battle_target.bind(id), enemy.hp <= 0)
-	var status = "已击败" if shown_hp <= 0 else "蓄力中！" if enemy.charged else "等待行动"
-	if shown_hp > 0 and enemy.slow > 0:
-		status += " · 减速"
-	_text(card, "HP %d/%d · %s\n%s" % [shown_hp, enemy.hp_max, status, enemy.role], 14, muted)
-	_enemy_hp_bar(card, shown_hp, enemy.hp_max)
-
-func _select_battle_target(id: String) -> void:
-	if combat == null or combat.outcome != "" or id == selected_target or id not in combat.alive_enemies():
+func _deck_dialog(encounter: bool = false) -> void:
+	var pending: Dictionary = run.data.pending_battle
+	if encounter and pending.is_empty():
 		return
-	selected_target = id
-	_refresh()
-
-func _combat_skill_hint(skill_id: String, actor_id: String) -> String:
-	var hint = Catalog.skill_description(skill_id)
-	if not actor_id.is_empty():
-		var price: int = combat.skill_cost(actor_id, skill_id)
-		if price != int(Catalog.SKILLS[skill_id].mp):
-			hint = hint.replace("%d MP" % Catalog.SKILLS[skill_id].mp, "%d MP" % price)
-	if not actor_id.is_empty() and selected_target in combat.alive_enemies() and Catalog.SKILLS[skill_id].target == "enemy":
-		hint += " · 预计基础伤害 %d（护盾和防守另计）" % combat.damage_preview(actor_id, selected_target, skill_id)
-	return hint
-
-func _combat_action(skill_id: String) -> void:
-	if skill_id != "guard" and Catalog.SKILLS[skill_id].target == "ally":
-		var box = _modal("选择技能目标", 600, 510)
-		for id in combat.active:
-			_button(box, run.actor(id).name + " · %d HP" % run.actor(id).hp, func(): _close_modal(); _perform_combat(skill_id, id))
-		_button(box, "取消", _close_modal)
-	else:
-		_perform_combat(skill_id, selected_target)
-
-func _perform_combat(skill_id: String, target: String) -> void:
-	var result = combat.act(skill_id, target)
-	toast_text = "" if result.ok else result.message
-	_after_combat_step()
-
-func _ultimate(id: String) -> void:
-	var result = combat.request_ultimate(id, selected_target)
-	if result.ok:
-		if battle_timer > 0 or view.is_animating():
-			toast_text = "等眼前的动作结束，就会放出终结技。"
-			_refresh()
+	var box := _modal("", 1110, 740)
+	var editor := DeckEditor.new()
+	box.add_child(editor)
+	var opponent := ""
+	if encounter:
+		var enemies: Array = run.data.tiles[pending.position].enemies
+		if not pending.npc.is_empty():
+			opponent = run.actor(pending.npc).name
+		elif not enemies.is_empty():
+			opponent = Catalog.ENEMIES["war_god" if "war_god" in enemies else enemies[0]].name
+			if "war_god" not in enemies and run.node_at(pending.position).get("kind") == "elite":
+				opponent += " · 精英险地"
+		if pending.ambush:
+			opponent += " · 伏击先手"
+	editor.setup(run.data.actors, run.card_deck(), encounter, (box.get_parent() as Control).size.x, opponent, run)
+	editor.completed.connect(func(deck: Array):
+		var saved: Dictionary = run.save_card_deck(deck)
+		if not saved.ok:
+			editor.show_error(saved.message)
 			return
-		toast_text = ""
-		combat.resolve_queued()
-	else:
-		toast_text = result.message
-	_after_combat_step()
+		if encounter:
+			var model := Chess.new()
+			var started := model.begin(run, pending, deck)
+			if not started.ok:
+				editor.show_error(started.message)
+				return
+			_close_modal()
+			combat = model
+			battle_timer = 0.65
+			toast_text = ""
+			_refresh()
+		else:
+			_close_modal()
+			_refresh())
+	editor.cancelled.connect(func():
+		if encounter:
+			_cell_actions()
+		else:
+			_close_modal())
 
-func _swap_dialog() -> void:
-	var box = _modal("换入同地候补", 600, 500)
-	for id in combat.reserves():
-		_button(box, run.actor(id).name + " · HP %d" % run.actor(id).hp, func(): _close_modal(); _run_action(combat.swap(id)); _after_combat_step())
-	_button(box, "取消", _close_modal)
-
-func _after_combat_step() -> void:
-	var presentation_events = combat.events.duplicate(true)
-	combat.events.clear()
-	battle_timer = 0.08
-	if not combat.alive_enemies().has(selected_target) and not combat.alive_enemies().is_empty():
-		selected_target = combat.alive_enemies()[0]
-	view.animate_events(presentation_events)
-	_refresh()
+func _show_chess_view() -> void:
+	chess_view = ChessView.new()
+	ui.add_child(chess_view)
+	chess_view.setup(combat, _node_title(combat.position), _story_texture(_story_scene_at(combat.position)))
+	chess_view.acted.connect(func():
+		sound.play("click")
+		battle_timer = 0.55)
+	chess_view.retreat_requested.connect(func():
+		_confirm("撤退？", "队伍返回出发地，旅人会受伤。", func():
+			if combat != null and combat.retreat():
+				_finish_battle()))
+	chess_view.menu_requested.connect(_to_menu)
 
 func _finish_battle() -> void:
 	if combat == null or combat.outcome == "":
@@ -1872,7 +1364,7 @@ func _finish_battle() -> void:
 		sound.play("victory")
 		_victory_dialog()
 		return
-	view.end_battle()
+	_close_modal()
 	_refresh()
 	if run.data.status == "failed":
 		_ending_story()
@@ -1885,7 +1377,7 @@ func _victory_dialog() -> void:
 	box.get_parent().name = "VictoryScreen"
 	ui.hide()
 	var content = _scroll_content(box)
-	_text(content, "已击败 %d 名敌人" % int(result.enemies), 19, muted)
+	_text(content, "击倒主战者 · " + str(result.opponent) if result.has("opponent") else "已击败 %d 名敌人" % int(result.enemies), 19, muted)
 	var items: Array[Dictionary] = []
 	if not result.salve_receiver.is_empty():
 		items.append({"kind": "item", "id": "salve", "count": 1})
@@ -1908,7 +1400,7 @@ func _victory_dialog() -> void:
 	for id in result.members:
 		var actor = run.actor(id)
 		var recovered = " · 倒下后已恢复至 1 HP" if id in result.revived else ""
-		_text(content, "%s · HP %d/%d · MP %d/%d%s" % [actor.name, actor.hp, actor.hp_max, actor.mp, actor.mp_max, recovered], 16)
+		_text(content, "%s · HP %d/%d%s" % [actor.name, actor.hp, actor.hp_max, recovered], 16)
 	var save_error = _text(box, "", 15, gold)
 	save_error.hide()
 	var next = _button(box, "继续远征", func():
@@ -1922,8 +1414,6 @@ func _victory_dialog() -> void:
 			save_error.text = saved.message
 			save_error.show()
 			return
-		if view.battle_mode:
-			view.end_battle()
 		_close_modal()
 		_refresh()
 		if run.data.status == "won":
@@ -1933,28 +1423,19 @@ func _victory_dialog() -> void:
 	next.grab_focus()
 
 func _process(delta: float) -> void:
-	if combat == null:
+	if combat == null or modal_layer.get_child_count() > 0:
 		return
-	if combat.outcome != "":
-		if not view.is_animating(): _finish_battle()
-		return
-	if modal_layer.get_child_count() > 0 or view.is_animating():
-		return
-	if combat.reveal_pending:
-		_final_battle_page(0)
-		return
-	var was_playing = battle_timer > 0
 	battle_timer -= delta
-	if battle_timer <= 0 and not combat.queue.is_empty():
-		toast_text = ""
-		combat.resolve_queued()
-		_after_combat_step()
+	if battle_timer > 0:
 		return
-	if battle_timer <= 0 and (combat.enemies.has(combat.current) or combat.madness.has(combat.current) or combat.auto_mode):
-		combat.step_auto()
-		_after_combat_step()
-	elif was_playing and battle_timer <= 0:
-		_refresh()
+	if not combat.outcome.is_empty():
+		_finish_battle()
+	elif combat.reveal_pending:
+		_final_battle_page(0)
+	elif combat.turn == Chess.ENEMY:
+		combat.enemy_turn()
+		chess_view.render()
+		battle_timer = 0.46
 
 func _chapter_pages() -> Array:
 	return [
@@ -2003,22 +1484,48 @@ func _final_battle_page(index: int) -> void:
 				_close_modal()
 				_refresh(), {})
 
-func _show_npc_encounter(visitor: String) -> void:
-	var cell: String = run.actor(visitor).position
-	var id: String = run.data.tiles[cell].npc
-	var npc = run.actor(id)
-	if npc.is_empty() or npc.joined or npc.position != cell:
+func _recruit_dialog(id: String, feedback: String = "") -> void:
+	var person: Dictionary = run.actor(id)
+	if person.is_empty() or person.joined:
 		return
-	var intro = narrative.encounter_intro(visitor, id)
-	if not intro.ok or run.data.story[id].met:
-		return
-	if selected_id != visitor:
-		selected_id = visitor
-		view.focus_cell(cell)
+	var quote: Dictionary = run.recruit_quote(id)
+	var box := _modal("招募伙伴", 570, 485)
+	box.get_parent().name = "CompanionRecruitment"
+	var summary := HBoxContainer.new()
+	box.add_child(summary)
+	var card := Cards.definition(id)
+	CardUI.art(summary, card, Vector2(132, 135))
+	var description := VBoxContainer.new()
+	description.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	summary.add_child(description)
+	_text(description, person.name, 25, gold)
+	_text(description, person.title + " · " + Cards.stats(card), 16, muted)
+	_text(description, card.trait, 16)
+	var talent := Cards.breakthrough_talent(id)
+	_text(box, "第三次突破 · " + talent.name, 17, gold)
+	_text(box, talent.text, 16)
+	_text(box, "远征队持有 %d 灯铢" % run.data.lamp_coins, 17, muted)
+	if not quote.ok or not feedback.is_empty():
+		_text(box, str(quote.get("message", feedback)), 16, gold)
+	var buy := _button(box, "招募 · %d 灯铢" % Cards.RECRUIT_PRICE, func():
+		var result: Dictionary = run.recruit_companion(id)
+		if not result.ok:
+			_recruit_dialog(id, result.message)
+			return
+		_close_modal()
+		toast_text = "%s入队，伙伴牌已解锁。" % person.name
 		_refresh()
-	_node_dialog()
+		if run.data.has("pending_story_rewards"):
+			_show_pending_story_rewards(), not quote.ok)
+	buy.name = "ConfirmCompanionRecruitment"
+	if person.hp <= 0:
+		_button(box, "打开补给", _item_dialog.bind("hero"))
+	_button(box, "关闭", _close_modal)
 
 func _talk(id: String) -> void:
+	if not run.actor(id).get("joined", false):
+		_recruit_dialog(id)
+		return
 	var intro = narrative.encounter_intro(selected_id, id)
 	if not intro.ok:
 		_notice(intro.message)
@@ -2026,6 +1533,9 @@ func _talk(id: String) -> void:
 	_begin_dialogue(id)
 
 func _begin_dialogue(id: String) -> void:
+	if not run.actor(id).get("joined", false):
+		_recruit_dialog(id)
+		return
 	dialogue_subject = id
 	_render_dialogue()
 
@@ -2397,7 +1907,6 @@ func _story_portrait(id: String, pose: String = "") -> Texture2D:
 	return load(path) if ResourceLoader.exists(path) else null
 
 func _render_dialogue(response: String = "", record_past: bool = false) -> void:
-	var was_met: bool = run.data.story.get(dialogue_subject, {}).get("met", false)
 	var d = narrative.dialogue(selected_id, dialogue_subject)
 	if not d.ok:
 		_notice(d.message)
@@ -2415,12 +1924,8 @@ func _render_dialogue(response: String = "", record_past: bool = false) -> void:
 		var on_read = Callable()
 		if record_past:
 			on_read = _record_character_dialogue.bind(dialogue_subject, "codex_past_read", true)
-		elif response.is_empty() and not person.joined and not run.data.story[dialogue_subject].has("codex_first_meeting"):
-			on_read = _record_character_dialogue.bind(dialogue_subject, "codex_first_meeting", text)
 		_show_story(d.title, speaker, text, scene, portraits, d.options, _story_choice,
 			{"结束交谈": _close_modal}, Color.WHITE, 0, {}, on_read)
-	if not was_met:
-		run.save_game()
 
 func _record_character_dialogue(id: String, key: String, value: Variant) -> void:
 	var record: Dictionary = run.data.story[id]
@@ -2441,32 +1946,11 @@ func _personal_quest() -> void:
 		_story_choice, actions)
 
 func _story_choice(option_id: String) -> void:
-	if option_id == "duel":
-		var person = run.actor(dialogue_subject)
-		var scene = _story_scene_at(person.position)
-		_show_story(person.name, person.name, "真要交手？双方都可能受伤。", scene, [_story_portrait(dialogue_subject, "battle")],
-			[_node_option("start_duel", "我想清楚了，来吧。", true), _node_option("back", "我收回刚才的话，今天先不打。", true)],
-			func(choice: String):
-				if choice == "start_duel":
-					_story_choice(choice)
-				else:
-					_render_dialogue(), {"结束交谈": _close_modal})
-		return
-	var result = narrative.choose(selected_id, dialogue_subject, "duel" if option_id == "start_duel" else option_id)
+	var result = narrative.choose(selected_id, dialogue_subject, option_id)
 	if not result.ok:
 		_notice(result.message, _render_dialogue)
 		return
-	var gift: String = result.get("relic", "")
-	if option_id == "join" and not gift.is_empty():
-		var person = run.actor(dialogue_subject)
-		_queue_story_rewards(_node_title(person.position), [{"kind": "relic", "id": gift, "count": 1}])
-		run.save_game()
-		_refresh()
-		_show_story(person.name, person.name, result.response, _story_scene_at(person.position),
-			[_story_portrait(selected_id), _story_portrait(dialogue_subject, "friendly")], [],
-			func(_option: String): _show_pending_story_rewards(), {})
-		return
-	if option_id in ["join", "start_duel", "personal_a", "personal_b"]:
+	if option_id in ["personal_a", "personal_b"]:
 		run.save_game()
 	var response: String = result.get("response", "")
 	if response.is_empty() and _show_relic_intro(_render_dialogue):
@@ -2476,8 +1960,6 @@ func _story_choice(option_id: String) -> void:
 		_refresh()
 	elif result.get("quest", false):
 		_personal_quest()
-	elif result.get("battle", false):
-		_formation_dialog()
 	elif result.has("rescue"):
 		_item_dialog(selected_id)
 	else:
@@ -2492,7 +1974,7 @@ func _show_relic_intro(after: Callable = Callable()) -> bool:
 	var scene = _story_scene_at(intro.position)
 	var portraits = [_story_portrait(intro.finder), _story_portrait(intro.npc) if not intro.npc.is_empty() else null]
 	var effect_page = intro.stage == 1
-	var body: String = definition.effect if effect_page else definition.story
+	var body: String = Relics.current_effect(intro.id) if effect_page else definition.story
 	if not effect_page and not intro.lead.is_empty():
 		body = intro.lead + "\n\n" + body
 	var speaker = ("已共鸣" if run.has_relic(intro.id) else "遗器效果") if effect_page else "旁白"
@@ -2557,14 +2039,13 @@ func _to_menu() -> void:
 	if combat != null:
 		_confirm("返回菜单？", "进度会留在开战前。下次继续远征时，会从头打这一场。", func():
 			combat = null
-			view.end_battle()
 			_show_opening(Screen.MENU))
 	else:
 		run.save_game()
 		_show_opening(Screen.MENU)
 
 func _guide() -> void:
-	_notice("点相邻格预览，再点一次确认。伙伴跟随旅人一起移动，每走五格自动进入第二天。\n\n点「行动」可以查看脚下的地点。疗伤和回魔需要消耗补给，灯铢由全队共享。\n\n最多四人同时出战。换上候补会用掉这次正常行动，终结技充能满了就能放。从沿途的故事和遭遇里找线索，找到并击败战神。")
+	_notice("点相邻格预览，再点一次确认。伙伴跟随旅人一起移动，每走五格自动进入第二天。\n\n点「行动」可以查看脚下的地点。疗伤和回魔需要消耗补给，灯铢由全队共享。\n\n在「卡组」里选满 12 张牌。对战开局抽 3 张，之后每回合抽 1 张，只能走子、部署或用牌一次。攻击先扣护甲，击倒才占格。击倒对方主战者获胜。")
 
 func _settings_dialog() -> void:
 	var box = _modal("设置与操作", 650, 430)
@@ -2578,7 +2059,7 @@ func _settings_dialog() -> void:
 	slider.value = sound.volume
 	slider.value_changed.connect(func(value: float): sound.set_volume(value))
 	box.add_child(slider)
-	_text(box, "按住左键拖动地图 · WASD 平移 · 滚轮缩放\n点地图切换小队，左侧可勾选同格成员同行。\n战场右上角可切换自动战斗和使用道具。", 18, muted)
+	_text(box, "按住左键拖动地图 · WASD 平移 · 滚轮缩放\n伙伴跟随旅人移动。\n对战时点棋子或手牌，再选高亮的格子。", 18, muted)
 	_button(box, "查看完整操作指南", _guide)
 	_button(box, "制作与许可", _credits_dialog)
 	if screen_state == Screen.EXPEDITION and combat == null and run.data.status == "exploring":
