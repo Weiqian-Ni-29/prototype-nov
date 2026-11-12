@@ -499,50 +499,16 @@ func _overview(id: String) -> void:
 	game._text(details, "%sHP %d/%d · MP %d/%d" % [condition, actor.hp, actor.hp_max, actor.mp, actor.mp_max], 16)
 
 func _equipment(id: String) -> void:
-	var actor: Dictionary = game.run.actor(id)
-	if not actor.joined:
+	if not game.run.actor(id).joined:
 		game._text(details, "尚未加入远征队。", 16, game.muted)
 		return
-	for slot in Gear.SLOTS:
-		var uid: String = actor.equipment.get(slot, "")
-		var item: Dictionary = game.run.data.gear_instances.get(uid, {})
-		var card = PanelContainer.new()
-		card.add_theme_stylebox_override("panel", game._style(Color("203a34"), Color("4c6051"), 6))
-		details.add_child(card)
-		var content = VBoxContainer.new()
-		card.add_child(content)
-		var row = HBoxContainer.new()
-		content.add_child(row)
-		var icon = _texture(_symbol(Gear.SLOTS.find(slot)), Vector2(48, 48))
-		row.add_child(icon)
-		var labels = VBoxContainer.new()
-		labels.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(labels)
-		game._text(labels, SLOT_NAMES[slot], 13, game.muted)
-		if item.is_empty():
-			game._text(labels, "未装备", 17)
-			continue
-		var definition: Dictionary = Gear.DATA[item.definition_id]
-		game._text(labels, definition.name, 18, game.gold)
-		var quality: String = Gear.QUALITY_NAMES[Gear.QUALITIES.find(item.quality)]
-		var summary: Array[String] = ["%s +%d" % [quality, item.enhance_level]]
-		for stat in definition.stats:
-			summary.append("%s +%d" % [STAT_NAMES[stat], Gear.bonus(item, stat)])
-		game._text(labels, " · ".join(summary), 14)
-		var expanded = VBoxContainer.new()
-		content.add_child(expanded)
-		expanded.hide()
-		game._text(expanded, definition.effect, 15)
-		if not definition.set_id.is_empty():
-			var set_info: Dictionary = Gear.SETS[definition.set_id]
-			var count: int = game.run.set_count(id, definition.set_id)
-			game._text(labels, "%s · %d / 3" % [set_info.name, count], 14, game.muted)
-			if not set_info.two.is_empty():
-				game._text(expanded, ("已激活 · " if count >= 2 else "未激活 · ") + set_info.two, 15)
-			if not set_info.three.is_empty():
-				game._text(expanded, ("已激活 · " if count >= 3 else "未激活 · ") + set_info.three, 15)
-		game._button(row, "详情", func(): expanded.visible = not expanded.visible)
-	var manage: Button = game._button(footer, "管理装备", game._inventory_dialog.bind(id, 1), game.run.data.status != "exploring")
+	game._text(details, "装备编入全队卡组，开战后可打给任意友方棋子。", 16)
+	for uid in game.run.gear_owned("actor", id):
+		var item: Dictionary = game.run.data.gear_instances[uid]
+		var card := Gear.card(item)
+		game._text(details, card.name, 18, game.gold)
+		game._text(details, card.trait, 15)
+	var manage: Button = game._button(footer, "管理装备牌", game._inventory_dialog.bind(id, 1), game.run.data.status != "exploring")
 	manage.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 func _piece(id: String) -> void:

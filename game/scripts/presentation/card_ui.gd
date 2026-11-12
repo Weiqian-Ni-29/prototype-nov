@@ -82,7 +82,7 @@ static func art(parent: Node, entry: Dictionary, minimum: Vector2) -> void:
 		return
 	if texture == null:
 		texture = SHIELD if icon == "shield" else InventoryPage.icon(icon)
-	var image := InventoryPage.item_image(texture)
+	var image := InventoryPage.item_image(texture, int(entry.get("level", 0)))
 	image.custom_minimum_size = minimum
 	parent.add_child(image)
 

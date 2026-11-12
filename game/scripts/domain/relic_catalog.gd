@@ -1,5 +1,7 @@
 extends RefCounted
 
+const ChessRelics = preload("res://scripts/domain/chess_relics.gd")
+
 const DATA = {
 	"telescope": {"name": "望远镜", "type": "P", "price": 100, "source": "field_cache", "hook": "map_vision", "params": {"radius": 2, "mode": "at_least", "limit": "none"}, "effect": "共鸣时，每名健康队员都能看见自己周围两圈的地块。原本能看得更远的队员保留原视野，剧情隐藏的地块仍不会显示。", "story": "守路人把最后一片好镜片留给了接班的人。远处的桥还在不在，用它看一眼就知道。"},
 	"trail_boots": {"name": "轻行靴", "type": "P", "price": 100, "source": "shop", "hook": "retired", "params": {}, "effect": "已退出远征，可在商摊出售。", "story": "一个常赶路的鞋匠给鞋底刻了几道浅槽。他说鞋轻一点，人就能多背点东西。"},
@@ -114,11 +116,7 @@ static func is_active(id: String) -> bool:
 	return DATA.has(id) and DATA[id].hook != "retired"
 
 static func current_effect(id: String) -> String:
-	if id == "lamp_badge":
-		return "共鸣时，己方棋子入场获得生命上限 12% 的护甲，四舍五入。"
-	if str(DATA[id].hook).begins_with("combat_"):
-		return "这件遗器的对战效果尚未适配战棋。"
-	return DATA[id].effect
+	return ChessRelics.effect(id) if is_active(id) else DATA.get(id, {}).get("effect", "")
 
 static func exploration_sites(tiles: Dictionary, seed_value: int) -> Dictionary:
 	var sites = {}

@@ -181,7 +181,7 @@ func check_companion_growth() -> void:
 	var run := Run.new()
 	run.save_path = "user://test-companion-growth.json"
 	run.new_run(41, "wayfarer")
-	expect(not "lorne" in Cards.collection(run.data.actors) and Cards.valid_deck(run.card_deck(), run.data.actors, true),
+	expect(not "lorne" in Cards.collection(run.data.actors) and Cards.valid_deck(run.card_deck(), run.data.actors, true, run.data),
 		"Starter support makes a complete deck and named cards require recruitment")
 	expect(not run.recruit_companion("lorne").ok and run.data.lamp_coins == 8, "Recruitment requires the local companion")
 	var cell: String = run.actor("lorne").position
@@ -222,7 +222,7 @@ func check_companion_growth() -> void:
 	battle.board[9] = battle.board[10]
 	battle.board[10] = {}
 	battle.hands[Chess.PLAYER] = ["lorne"]
-	expect(battle.play(0, 10) and battle.board[10].attack == base.attack + 1 and battle.board[10].hp == base.hp + 3 + Cards.SEED_BONUS
+	expect(battle.play(0, 10) and battle.board[10].attack == base.attack + 1 and battle.board[10].hp == base.hp + 3
 		and battle.moves(10).get(1) == "attack", "The breakthrough card deploys with its improved stats and three-square range")
 	battle.board[4] = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
 	expect(not battle.moves(10).has(1), "A blocker still stops a three-square shot")
@@ -239,8 +239,14 @@ func check_battle_income() -> void:
 		expect(battle.run.data.lamp_coins == before + coins, "Reopening settlement does not pay twice")
 
 func click(node: Button) -> void:
-	expect(node != null and not node.disabled, "Visible enabled button")
+	expect(node != null and not node.disabled, "Visible enabled button: " + (str(node.name) if node != null else "<missing>"))
 	if node != null and not node.disabled:
+		var parent := node.get_parent()
+		while parent != null:
+			if parent is ScrollContainer:
+				parent.ensure_control_visible(node)
+			parent = parent.get_parent()
+		await process_frame
 		var point := node.get_global_rect().get_center()
 		for pressed in [true, false]:
 			var event := InputEventMouseButton.new()
@@ -274,7 +280,11 @@ func check_ui() -> void:
 	expect(editor.grid.get_child_count() == 1 and editor.selected == "support_medic", "Search finds the starter healing card by effect")
 	editor.search.clear()
 	editor.search.text_changed.emit("")
-	await click(editor.find_child("Remove_pike", true, false))
+	var equipment: String = game.run.card_deck().filter(func(id): return id.begins_with("gear:"))[0]
+	await click(editor.find_child("Remove_" + equipment.replace(":", "_"), true, false))
+	editor.search.text = "唤雨"
+	editor.search.text_changed.emit(editor.search.text)
+	await process_frame
 	await click(editor.find_child("Collection_rain", true, false))
 	await click(editor.find_child("AddDeckCard", true, false))
 	await click(editor.find_child("ConfirmCardDeck", true, false))
