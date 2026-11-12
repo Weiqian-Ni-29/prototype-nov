@@ -8,6 +8,7 @@ const COLS = 3
 const ROWS = 4
 const PLAYER = 0
 const ENEMY = 1
+const COMMANDER_DEFEAT_SCORE = 1000000
 
 var run: RefCounted
 var pending: Dictionary
@@ -153,13 +154,16 @@ func attack_power(piece: Dictionary) -> int:
 	return maxi(0, int(piece.attack) + int(Cards.ACTIONS.get(piece.weapon, {}).get("attack", 0))
 		+ int(climate.get(piece.element, 0)) - (1 if weather == "river" and piece.side == ENEMY else 0))
 
+func _attack_range(piece: Dictionary) -> int:
+	return maxi(int(piece.get("range", piece.get("move", 1))), int(Cards.ACTIONS.get(piece.weapon, {}).get("range", 0)))
+
 func moves(from: int) -> Dictionary:
 	var options := {}
 	if from < 0 or from >= board.size() or board[from].is_empty():
 		return options
 	var actor: Dictionary = board[from]
 	var walking := int(actor.get("move", 1))
-	var range_attack := maxi(int(actor.get("range", walking)), int(Cards.ACTIONS.get(actor.weapon, {}).get("range", 0)))
+	var range_attack := _attack_range(actor)
 	for target in board.size():
 		var other: Dictionary = board[target]
 		if target == from or other.get("side", -1) == actor.side:
@@ -239,67 +243,126 @@ func enemy_turn() -> void:
 		if _check_outcome():
 			return
 	enemy_has_played = true
-	var leader := board.find(commanders[PLAYER])
-	var best_attack: Array = []
-	var attack_score := -1
-	var best_move: Array = []
-	var move_score := -100
-	for square in board.size():
-		var piece: Dictionary = board[square]
-		if piece.get("side", -1) != ENEMY:
-			continue
-		var options := moves(square)
-		for target in options:
-			if options[target] == "attack":
-				var damage := attack_power(piece)
-				var lethal: bool = damage >= board[target].hp + board[target].armor
-				var score := damage + (20 if lethal else 0) + (12 if target == leader else 0)
-				if score > attack_score:
-					attack_score = score
-					best_attack = [square, target]
-			else:
-				var score := _distance(square, leader) - _distance(target, leader)
-				if score > move_score:
-					move_score = score
-					best_move = [square, target]
-	if not best_attack.is_empty():
-		_move_piece(best_attack[0], best_attack[1])
-	elif not _enemy_play() and not best_move.is_empty():
-		_move_piece(best_move[0], best_move[1])
+	var action := _choose_enemy_action()
+	if action.has("from"):
+		_move_piece(action.from, action.target)
+	elif action.has("card_index"):
+		_play_card(ENEMY, action.card_index, action.target)
 	if _check_outcome():
 		return
 	enemy_drew = false
 	_start_player_turn()
 
-func _enemy_play() -> bool:
-	for i in hands[ENEMY].size():
-		var card := definition(hands[ENEMY][i])
-		if card.kind != "partner":
+func _choose_enemy_action() -> Dictionary:
+	var options: Array[Dictionary] = []
+	for square in board.size():
+		if board[square].get("side", -1) == ENEMY:
+			for target in moves(square):
+				options.append({"from": square, "target": target})
+	var seen_cards := {}
+	for index in hands[ENEMY].size():
+		var id: String = hands[ENEMY][index]
+		if seen_cards.has(id):
 			continue
-		var targets := card_targets(ENEMY, i)
-		for square in [4, 3, 5, 1, 0, 2]:
-			if square in targets:
-				_play_card(ENEMY, i, square)
-				return true
-	var leader := board.find(commanders[ENEMY])
-	for i in hands[ENEMY].size():
-		var card := definition(hands[ENEMY][i])
-		if (card.kind == "weapon" or card.kind == "defense" and commanders[ENEMY].armor < 3) and leader in card_targets(ENEMY, i):
-			_play_card(ENEMY, i, leader)
-			return true
-	return false
+		seen_cards[id] = true
+		var card := definition(id)
+		for target in card_targets(ENEMY, index):
+			options.append({"card_index": index, "id": id, "card": card, "target": target})
+
+	var best := {}
+	var best_reply_score := -COMMANDER_DEFEAT_SCORE - 1
+	var best_position_score := -COMMANDER_DEFEAT_SCORE - 1
+	var player_draws_fatigue: bool = player_has_played and piles[PLAYER].is_empty()
+	for option in options:
+		var preview := _copy_public_position()
+		if option.has("from"):
+			preview._move_piece(option.from, option.target)
+		else:
+			preview._apply_card(ENEMY, option.id, option.card, option.target)
+		if preview.commanders[PLAYER].hp <= 0:
+			return option
+		if player_has_played:
+			preview._advance_weather()
+			if player_draws_fatigue:
+				preview._fatigue(PLAYER)
+
+		var position_score: int = preview._position_score()
+		# The opponent can only lower this score. Skip a branch once it cannot beat best.
+		var minimum_reply_score := best_reply_score + (0 if position_score > best_position_score else 1)
+		if position_score < minimum_reply_score:
+			continue
+		var reply_score: int = preview._score_player_reply(position_score, minimum_reply_score)
+		if reply_score > best_reply_score or (reply_score == best_reply_score and position_score > best_position_score):
+			best = option
+			best_reply_score = reply_score
+			best_position_score = position_score
+	return best
+
+func _copy_public_position() -> RefCounted:
+	# The preview owns its board and has no expedition, hand, or deck data.
+	var preview: RefCounted = get_script().new()
+	preview.board = board.duplicate(true)
+	for commander in commanders:
+		preview.commanders.append(preview.board[board.find(commander)])
+	preview.weather = weather
+	preview.weather_rounds = weather_rounds
+	preview.fatigue = fatigue.duplicate()
+	preview.final_battle = final_battle
+	preview.river = river
+	preview.uid_serial = uid_serial
+	return preview
+
+func _score_player_reply(position_score: int, minimum_score: int) -> int:
+	if position_score == COMMANDER_DEFEAT_SCORE:
+		return position_score
+	# An unknown card play may leave the board intact. Evaluate the visible moves and attacks.
+	var worst := position_score
+	for square in board.size():
+		if board[square].get("side", -1) != PLAYER:
+			continue
+		for target in moves(square):
+			var reply := _copy_public_position()
+			reply._move_piece(square, target)
+			worst = mini(worst, reply._position_score())
+			if worst == -COMMANDER_DEFEAT_SCORE or worst < minimum_score:
+				return worst
+	return worst
+
+func _position_score() -> int:
+	if commanders[PLAYER].hp <= 0:
+		return COMMANDER_DEFEAT_SCORE
+	if commanders[ENEMY].hp <= 0:
+		return -COMMANDER_DEFEAT_SCORE
+	var leader_squares := [board.find(commanders[PLAYER]), board.find(commanders[ENEMY])]
+	var score := 0
+	for square in board.size():
+		var piece: Dictionary = board[square]
+		if piece.is_empty():
+			continue
+		var opponent: int = leader_squares[1 - int(piece.side)]
+		var distance_to_attack := maxi(0, _distance(square, opponent) - _attack_range(piece))
+		var value := attack_power(piece) * 2 + (2 if square % COLS == 1 else 0)
+		if piece.leader:
+			value += int(piece.hp) * 6 + mini(int(piece.armor), 6) * 3 - distance_to_attack
+		else:
+			value += 12 + int(piece.hp) * 2 + mini(int(piece.armor), 6) * 2 - distance_to_attack * 2
+		score += value if piece.side == ENEMY else -value
+	return score
 
 func _start_player_turn() -> void:
 	turn = PLAYER
 	if not player_has_played:
 		return
 	round_number += 1
+	_advance_weather()
+	_draw(PLAYER)
+	_check_outcome()
+
+func _advance_weather() -> void:
 	if weather_rounds > 0:
 		weather_rounds -= 1
 		if weather_rounds == 0:
 			weather = ""
-	_draw(PLAYER)
-	_check_outcome()
 
 func _draw(side: int, count: int = 1) -> void:
 	var drawn := 0
@@ -355,11 +418,14 @@ func _move_piece(from: int, target: int) -> void:
 func _play_card(side: int, index: int, target: int) -> void:
 	var id: String = hands[side].pop_at(index)
 	var card := definition(id)
+	_apply_card(side, id, card, target)
+	if side == PLAYER and card.kind == "partner" and run.actor(id).get("joined", false) and id not in participants:
+		participants.append(id)
+
+func _apply_card(side: int, id: String, card: Dictionary, target: int) -> void:
 	match card.kind:
 		"partner":
 			board[target] = _piece(card, side)
-			if side == PLAYER and run.actor(id).get("joined", false) and id not in participants:
-				participants.append(id)
 			_log("%s部署到%s。" % [card.name, square_name(target)])
 			_heal_adjacent(target)
 		"spell":

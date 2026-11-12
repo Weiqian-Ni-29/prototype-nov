@@ -103,6 +103,79 @@ func check_fatigue() -> void:
 	battle._check_outcome()
 	expect(battle.outcome == "defeat" and battle.run.data.status == "failed", "Fatigue can defeat the commander before another action")
 
+func ranged_threat_fixture(card_id: String) -> RefCounted:
+	var battle = fixture()
+	battle.commanders[Chess.ENEMY].hp = 3
+	battle.commanders[Chess.ENEMY].armor = 0
+	battle.board[7] = battle._piece(Cards.definition("lorne"), Chess.PLAYER)
+	battle.board[7].element = "fire"
+	battle.board[6] = battle._piece(Cards.definition("eve"), Chess.PLAYER)
+	battle.board[6].hp = 1
+	for square in [0, 2, 3, 5]:
+		battle.board[square] = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
+		battle.board[square].move = 0
+	battle.turn = Chess.ENEMY
+	battle.player_has_played = true
+	battle.weather = "rain"
+	battle.weather_rounds = 1
+	battle.hands[Chess.ENEMY] = [card_id]
+	return battle
+
+func check_enemy_strategy() -> void:
+	var battle = ranged_threat_fixture("foe:boar")
+	var board_before := JSON.stringify(battle.board)
+	var run_before := JSON.stringify(battle.run.data)
+	var save_before := FileAccess.get_file_as_string(battle.run.save_path)
+	var action: Dictionary = battle._choose_enemy_action()
+	expect(action.get("card_index") == 0 and action.get("target") == 4,
+		"Enemy deploys into the firing lane instead of taking a kill when rain is about to expire")
+	expect(JSON.stringify(battle.board) == board_before and JSON.stringify(battle.run.data) == run_before
+		and FileAccess.get_file_as_string(battle.run.save_path) == save_before and battle.hands[Chess.ENEMY] == ["foe:boar"],
+		"Trial actions leave the real board, cards, expedition and save untouched")
+	battle.hands[Chess.PLAYER] = ["sun", "blade", "pike"]
+	battle.piles[Chess.PLAYER].reverse()
+	expect(battle._choose_enemy_action() == action, "The same public position produces the same action with different hidden cards")
+	battle.enemy_turn()
+	expect(battle.turn == Chess.PLAYER and battle.weather.is_empty() and battle.hands[Chess.ENEMY].is_empty()
+		and battle.board[4].get("side") == Chess.ENEMY and not battle.moves(7).has(1) and battle.board[6].hp == 1,
+		"The real turn commits the single blocking play and preserves the other pieces")
+
+	battle = ranged_threat_fixture("coat")
+	battle.enemy_turn()
+	expect(battle.commanders[Chess.ENEMY].armor == 3 and battle.board[6].hp == 1
+		and battle.moves(7).has(1) and battle.attack_power(battle.board[7]) == 3,
+		"Enemy equips armor when it must survive an open firing lane")
+
+	battle = fixture()
+	battle.board[4] = battle._piece(Cards.definition("eve"), Chess.PLAYER)
+	battle.board[4].hp = 1
+	battle.board[4].attack = 1
+	battle.board[11] = battle.board[10]
+	battle.board[10] = battle._piece(Cards.definition("lorne"), Chess.PLAYER)
+	battle.commanders[Chess.ENEMY].hp = 2
+	battle.commanders[Chess.ENEMY].armor = 0
+	battle.hands[Chess.ENEMY] = []
+	battle.turn = Chess.ENEMY
+	battle.enemy_turn()
+	expect(battle.board[4].get("name") == "伊芙" and battle.board.find(battle.commanders[Chess.ENEMY]) != 4,
+		"Commander declines the capture that would step into a lethal two-square attack")
+
+	battle = fixture()
+	battle.board[4] = battle.board[1]
+	battle.board[1] = {}
+	battle.board[7] = battle.board[10]
+	battle.board[10] = {}
+	battle.commanders[Chess.PLAYER].hp = 3
+	battle.commanders[Chess.PLAYER].armor = 0
+	battle.board[3] = battle._piece(Cards.definition("eve"), Chess.PLAYER)
+	battle.board[3].hp = 1
+	battle.board[0] = battle._piece(battle.definition("foe:furnace"), Chess.ENEMY)
+	battle.board[0].attack = 20
+	battle.turn = Chess.ENEMY
+	battle.enemy_turn()
+	expect(battle.outcome == "defeat" and battle.board[7].get("leader", false) and battle.board[3].hp == 1,
+		"Enemy takes the immediate commander win over a higher-damage attack on a partner")
+
 func click(node: Button) -> void:
 	expect(node != null and not node.disabled, "Visible enabled button")
 	if node != null and not node.disabled:
@@ -179,6 +252,7 @@ func check_ui() -> void:
 func execute() -> void:
 	check_rules()
 	check_fatigue()
+	check_enemy_strategy()
 	await check_ui()
 	print("CHESS BATTLE: %d checks, %d failures" % [checks, failures])
 	quit(0 if failures == 0 else 1)
