@@ -3,7 +3,7 @@ extends RefCounted
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
-const ItemEffects = preload("res://scripts/domain/battle_items.gd")
+const ItemEffects = preload("res://tests/legacy/realtime_battle_items.gd")
 var items = ItemEffects.new()
 var run: RefCounted
 var position = ""

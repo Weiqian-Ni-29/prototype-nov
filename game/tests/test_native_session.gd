@@ -1,7 +1,7 @@
 extends SceneTree
-## Rendered manual-to-auto session through Main._process, then a real victory and NPC injury/rescue.
+## Rendered card editor, chess turns and settlement, then NPC injury/rescue.
 const Main = preload("res://scenes/main.tscn")
-const Combat = preload("res://scripts/domain/battle.gd")
+const Chess = preload("res://scripts/domain/chess_battle.gd")
 var game: Node
 var checks = 0
 var failures = 0
@@ -22,23 +22,42 @@ func execute() -> void:
 		r.actor(id).position = p
 		r.join_companion(id)
 	r.data.tiles[p].enemies = ["boar", "archer", "boar"]
-	var b = Combat.new()
-	expect(b.begin(r,{"position":p,"origin":p,"npc":"","movers":[],"ambush":false},["hero","cen","eve","grit"]).ok,"Native session begins with real combat values")
-	game.combat = b
-	game.view.begin_battle(r,b)
-	game._refresh()
+	game._open_current_encounter(false)
+	game._deck_dialog(true)
+	var editor = game.modal_layer.find_child("CardDeckEditor", true, false)
+	expect(editor != null, "Encounter opens the native illustrated deck editor")
 	await process_frame
 	await RenderingServer.frame_post_draw
-	root.get_texture().get_image().save_png("user://battle-enemy-cards.png")
-	b.auto_mode = true
-	var started = Time.get_ticks_msec()
-	var observed_animation = false
-	while game.combat!=null and Time.get_ticks_msec()-started<80000:
-		await process_frame
-		observed_animation = observed_animation or game.view.is_animating()
+	root.get_texture().get_image().save_png("user://chess-deck-editor.png")
+	editor.find_child("ConfirmCardDeck", true, false).pressed.emit()
+	var b = game.combat
+	var chess = game.chess_view
+	expect(b != null and chess != null, "Native session starts through the deck editor")
+	await process_frame
+	await process_frame
+	expect(chess.animating.size() == 3, "Opening hand uses the native draw tween")
+	await create_timer(0.6).timeout
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("user://chess-opening.png")
+	chess.cells[10].pressed.emit()
+	chess.cells[7].pressed.emit()
+	await create_timer(0.65).timeout
+	expect(b.round_number == 2 and b.turn == Chess.PLAYER and b.hands[Chess.PLAYER].size() == 4,
+		"Native move lets the opponent respond and draws the next card")
+	await create_timer(0.4).timeout
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("user://chess-round-two.png")
+	# Stage the last attack after exercising the normal opening and turn loop.
+	b.board[4] = b.board[7]
+	b.board[7] = {}
+	b.commanders[Chess.ENEMY].hp = 1
+	b.commanders[Chess.ENEMY].armor = 0
+	chess.render()
+	chess.cells[4].pressed.emit()
+	chess.cells[1].pressed.emit()
+	await create_timer(0.65).timeout
 	expect(game.combat == null and b.outcome == "victory" and game.modal_layer.has_node("VictoryScreen"),
-		"Auto victory drains visual events and opens the victory screen")
-	expect(observed_animation and game.view.battle_mode and not game.view.is_animating(), "The completed battlefield remains behind the victory screen")
+		"The last chess attack opens the victory screen")
 	expect(r.data.tiles[p].enemies.is_empty() and not r.data.rewards.is_empty(),"Victory settles once with actual rewards")
 	var checkpoint = JSON.parse_string(FileAccess.get_file_as_string(r.save_path))
 	expect(checkpoint is Dictionary and checkpoint.get("pending_battle", {"missing": true}).is_empty()

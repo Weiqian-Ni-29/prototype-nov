@@ -2,7 +2,7 @@ extends SceneTree
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Run = preload("res://scripts/domain/expedition.gd")
-const Combat = preload("res://scripts/domain/battle.gd")
+const Combat = preload("res://tests/legacy/realtime_battle.gd")
 var checks = 0
 var failures: Array[String] = []
 

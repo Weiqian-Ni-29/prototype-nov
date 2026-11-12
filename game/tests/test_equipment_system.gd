@@ -4,7 +4,7 @@ const Run = preload("res://scripts/domain/expedition.gd")
 const Items = preload("res://scripts/domain/expedition_items.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
-const Battle = preload("res://scripts/domain/battle.gd")
+const Battle = preload("res://tests/legacy/realtime_battle.gd")
 const Main = preload("res://scenes/main.tscn")
 
 var checks = 0

@@ -4,7 +4,7 @@ const Catalog = preload("res://scripts/domain/catalog.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
-const Combat = preload("res://scripts/domain/battle.gd")
+const Chess = preload("res://scripts/domain/chess_battle.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const InventoryPage = preload("res://scripts/presentation/inventory_page.gd")
@@ -387,7 +387,7 @@ func check_arrival_after_victory() -> void:
 	var introduction = await read_to_choices(func(): return game.combat == null and run.data.pending_battle == pending)
 	expect(compact(introduction).contains(compact(event.intro)) and introduction.contains("抢先扑了出来"),
 		"Resuming an encounter presents its complete node introduction and ambush before formation")
-	await click("选择出战阵容")
+	await click("编辑卡组与开战")
 	expect(not game.modal_layer.has_node("StoryScreen") and run.data.pending_battle == pending,
 		"Confirming the introduction preserves the encounter and opens formation")
 	await press("开始战斗")
@@ -419,8 +419,8 @@ func check_manual_encounter_intro() -> void:
 	var introduction = await read_to_choices()
 	expect(compact(introduction).contains(compact(event.intro)) and find_button(game.modal_layer, "开始战斗") == null,
 		"Opening a known elite encounter from the action menu reads its story first")
-	await click("选择出战阵容")
-	expect(find_button(game.modal_layer, "开始战斗") != null, "The elite introduction opens formation")
+	await click("编辑卡组与开战")
+	expect(find_button(game.modal_layer, "开始战斗") != null, "The elite introduction opens the deck editor")
 
 func check_haunt_dialogue() -> void:
 	game._start_new()
@@ -639,8 +639,8 @@ func check_character_codex() -> void:
 	var traveler_background = background.texture
 	expect(traveler_background != null and background.get_global_rect().is_equal_approx(background.get_parent().get_global_rect()),
 		"The known character backdrop covers the portrait frame")
-	await click("技能")
-	expect(contains_text(codex, "重力魔法"), "The traveler profile uses the current skills")
+	await click("棋子")
+	expect(contains_text(codex, "重力属性") and contains_text(codex, "横竖斜走一格"), "The traveler profile shows the commander rules")
 	await click("战斗")
 	expect(game.character_codex_state.pose == "battle", "Battle pose changes the displayed art")
 	var portrait = codex.find_child("CodexPortrait", true, false) as TextureButton
@@ -688,8 +688,8 @@ func check_character_codex() -> void:
 	expect(run.join_companion("lorne", "hero").ok, "Fixture recruits the known companion")
 	await click("角色")
 	await click("洛恩")
-	await click("技能")
-	expect(contains_text(game.modal_layer, "巡路连射") and game.selected_id == "hero", "Recruitment exposes the skills without switching the map actor")
+	await click("棋子")
+	expect(contains_text(game.modal_layer, "攻击两格") and game.selected_id == "hero", "The profile explains the companion card without switching the map actor")
 	await click("×")
 	run.data.flags.hero_identity_revealed = true
 	await click("角色")
@@ -1148,12 +1148,12 @@ func check_final_reveal() -> void:
 	for stage in range(1, 5):
 		run.finish_chapter(stage)
 	run.actor("hero").position = run.data.boss
-	var battle = Combat.new()
+	var battle = Chess.new()
 	var encounter = {"position": run.data.boss, "origin": run.data.boss, "movers": [], "npc": "", "ambush": false}
-	expect(battle.begin(run, encounter, ["hero"]).ok, "Final revelation fixture begins at the actual boss")
+	expect(battle.begin(run, encounter, run.card_deck()).ok, "Final revelation fixture begins at the actual boss")
 	game.combat = battle
-	battle.unit("enemy_0").hp = 1
-	battle.check_end()
+	battle.commanders[Chess.ENEMY].hp = 1
+	battle._check_outcome()
 	expect(battle.reveal_pending and not battle.river, "The old strike opens the memory before awakening")
 	game._final_battle_page(0)
 	var complete = ""

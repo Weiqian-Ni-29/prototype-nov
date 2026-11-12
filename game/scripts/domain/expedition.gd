@@ -7,6 +7,7 @@ const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Items = preload("res://scripts/domain/expedition_items.gd")
+const Cards = preload("res://scripts/domain/card_catalog.gd")
 const SAVE_VERSION = 5
 const STEPS_PER_DAY = 5
 signal changed
@@ -944,6 +945,23 @@ func _map_action(id: String) -> Dictionary:
 		return fail("该角色无法行动。")
 	return success()
 
+func card_deck() -> Array:
+	var deck: Array = data.get("card_deck", Cards.DEFAULT_DECK)
+	return deck.duplicate()
+
+func save_card_deck(deck: Array) -> Dictionary:
+	if data.status != "exploring" or not Cards.valid_deck(deck, data.actors):
+		return fail("这套牌组无法保存。")
+	var previous: Variant = data.get("card_deck")
+	data.card_deck = deck.duplicate()
+	var saved := save_game()
+	if not saved.ok:
+		if previous == null:
+			data.erase("card_deck")
+		else:
+			data.card_deck = previous
+	return saved
+
 func save_game(path: String = "") -> Dictionary:
 	if path.is_empty():
 		path = save_path
@@ -1086,6 +1104,8 @@ func _validate_save(loaded: Dictionary) -> String:
 		return "日期或随机状态无效"
 	if int(loaded.version) == SAVE_VERSION and (not _whole_number(loaded.get("steps_today")) or loaded.steps_today < 0 or loaded.steps_today >= STEPS_PER_DAY):
 		return "当日步数无效"
+	if loaded.has("card_deck") and not Cards.valid_deck(loaded.card_deck, loaded.actors):
+		return "卡组记录无效"
 	if loaded.has("choices") and not loaded.choices is Array:
 		return "选择记录无效"
 	if loaded.has("lamp_coins") and (not _whole_number(loaded.lamp_coins) or loaded.lamp_coins < 0):

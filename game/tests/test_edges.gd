@@ -1,7 +1,7 @@
 extends SceneTree
 ## Adversarial state fixtures; these are not claimed as full player journeys.
 const Run = preload("res://scripts/domain/expedition.gd")
-const Combat = preload("res://scripts/domain/battle.gd")
+const Combat = preload("res://tests/legacy/realtime_battle.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")

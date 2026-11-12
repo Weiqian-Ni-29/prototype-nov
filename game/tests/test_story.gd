@@ -1,6 +1,6 @@
 extends SceneTree
 const Run = preload("res://scripts/domain/expedition.gd")
-const Combat = preload("res://scripts/domain/battle.gd")
+const Combat = preload("res://tests/legacy/realtime_battle.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
 const LegacyOutcomes = preload("res://scripts/domain/legacy_companion_outcomes.gd")

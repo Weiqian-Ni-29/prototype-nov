@@ -1,7 +1,7 @@
 extends SceneTree
 ## Optional licensed comparison, loaded from a supplied local archive extraction, never shipped.
 const Main = preload("res://scenes/main.tscn")
-const Combat = preload("res://scripts/domain/battle.gd")
+const Combat = preload("res://tests/legacy/realtime_battle.gd")
 var source = ""
 func _initialize() -> void:
 	for arg in OS.get_cmdline_user_args():
@@ -28,9 +28,8 @@ func execute() -> void:
 	r.data.tiles[p].enemies = ["boar","archer","spider","swarm"]
 	var b = Combat.new()
 	b.begin(r,{"position":p,"origin":p,"movers":[],"npc":"","ambush":false},["hero","cen","eve","grit"])
-	game.combat = b
 	game.view.begin_battle(r,b)
-	game._refresh()
+	game.ui.hide()
 	var animators: Array[AnimationPlayer] = []
 	for pair in [["hero","Knight"],["cen","Rogue"],["eve","Mage"]]:
 		var doc = GLTFDocument.new()

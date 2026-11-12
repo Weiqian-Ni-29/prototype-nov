@@ -1,11 +1,13 @@
 extends PanelContainer
 
 const Catalog = preload("res://scripts/domain/catalog.gd")
+const Cards = preload("res://scripts/domain/card_catalog.gd")
+const Chess = preload("res://scripts/domain/chess_battle.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const SYMBOLS = preload("res://assets/ui/codex-symbols.svg")
 const POSES = {"": "常规", "serious": "严肃", "friendly": "友善", "grief": "悲伤", "anger": "愤怒", "surprise": "惊讶", "battle": "战斗"}
 const FILTERS = ["全部", "已入队", "见过未加入"]
-const TABS = ["概览", "装备", "技能", "故事"]
+const TABS = ["概览", "装备", "棋子", "故事"]
 const GRID_COLUMNS = 5
 const SLOT_NAMES = {"weapon": "武器", "armor": "护甲", "accessory": "饰品"}
 const STAT_NAMES = {"attack": "攻击", "defense": "防御", "speed": "速度"}
@@ -468,7 +470,7 @@ func _set_tab(index: int) -> void:
 	match index:
 		0: _overview(id)
 		1: _equipment(id)
-		2: _skills(id)
+		2: _piece(id)
 		3: _stories(id)
 
 func _overview(id: String) -> void:
@@ -494,8 +496,7 @@ func _overview(id: String) -> void:
 		return
 	game._text(details, "当前状态", 19, game.gold)
 	var condition = "重伤 · " if actor.hp <= 0 else ""
-	game._text(details, "%sHP %d/%d · MP %d/%d\n充能 %d%%" % [condition, actor.hp, actor.hp_max, actor.mp, actor.mp_max, actor.energy], 16)
-	game._text(details, "攻击 %d · 防御 %d · 速度 %d" % [game.run.stat(id, "attack"), game.run.stat(id, "defense"), game.run.stat(id, "speed")], 16)
+	game._text(details, "%sHP %d/%d · MP %d/%d" % [condition, actor.hp, actor.hp_max, actor.mp, actor.mp_max], 16)
 
 func _equipment(id: String) -> void:
 	var actor: Dictionary = game.run.actor(id)
@@ -544,21 +545,18 @@ func _equipment(id: String) -> void:
 	var manage: Button = game._button(footer, "管理装备", game._inventory_dialog.bind(id, 1), game.run.data.status != "exploring")
 	manage.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-func _skills(id: String) -> void:
-	var actor: Dictionary = game.run.actor(id)
-	if not actor.joined:
-		game._text(details, "入队后可查看这位角色的技能。", 16, game.muted)
+func _piece(id: String) -> void:
+	if id != "hero" and id not in Cards.collection(game.run.data.actors):
+		game._text(details, "招募后解锁这位伙伴的卡牌。", 16, game.muted)
 		return
-	for skill in [["普通攻击", "attack"], ["主动技能", actor.skill], ["终结技", actor.ultimate]]:
-		var heading_text: String = skill[0] if skill[1] == "attack" else skill[0] + " · " + Catalog.SKILLS[skill[1]].name
-		game._text(details, heading_text, 18, game.gold)
-		var description = Catalog.skill_description(skill[1])
-		if skill[0] == "终结技":
-			description += "。充能到 100% 后可释放。"
-		game._text(details, description, 16)
-	var passive = Catalog.passive_description(id)
-	game._text(details, "专长", 18, game.gold)
-	game._text(details, "暂无额外专长。" if passive.is_empty() else passive, 16)
+	var piece := Chess.commander_definition(game.run) if id == "hero" else Cards.definition(id)
+	game._text(details, "主战者 · 开局登场" if id == "hero" else "伙伴 · 部署至己方半场", 18, game.gold)
+	game._text(details, Cards.stats(piece), 16)
+	game._text(details, piece.trait, 16)
+	if id == "cen":
+		game._text(details, "森林采集时多拿一份。", 16)
+	elif id == "grit":
+		game._text(details, "可辨识已发现敌方主战者的属性。", 16)
 
 func _stories(id: String) -> void:
 	var records: Array = game.narrative.character_records(id)

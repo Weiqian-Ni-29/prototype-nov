@@ -1,7 +1,7 @@
 extends SceneTree
 const Run = preload("res://scripts/domain/expedition.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
-const BattleRules = preload("res://scripts/domain/battle.gd")
+const BattleRules = preload("res://tests/legacy/realtime_battle.gd")
 
 func _initialize() -> void:
 	call_deferred("execute")

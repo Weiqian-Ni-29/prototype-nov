@@ -3,7 +3,8 @@ extends SceneTree
 const Main = preload("res://scenes/main.tscn")
 const Game = preload("res://scripts/main.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")
-const Combat = preload("res://scripts/domain/battle.gd")
+const Combat = preload("res://tests/legacy/realtime_battle.gd")
+const Chess = preload("res://scripts/domain/chess_battle.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
@@ -551,19 +552,19 @@ func capture_finale() -> void:
 		run.finish_chapter(chapter)
 	hero.position = run.data.boss
 	run.reveal(hero.position)
-	var battle = Combat.new()
-	var encounter = {"position": hero.position, "origin": hero.position, "movers": [], "npc": "", "ambush": false}
-	expect(battle.begin(run, encounter, ["hero"]).ok, "Finale starts the actual boss battle")
+	var battle := Chess.new()
+	var encounter = {"position": hero.position, "origin": hero.position, "npc": "", "ambush": false}
+	expect(battle.begin(run, encounter, run.card_deck()).ok, "Finale starts the actual boss battle")
 	game.combat = battle
-	game.view.begin_battle(run, battle)
-	battle.current = "hero"
-	battle.unit("enemy_0").hp = 1
-	game._perform_combat("gravity", "enemy_0")
-	while game.view.is_animating():
-		await process_frame
+	game._refresh()
+	battle.board[4] = battle.board[10]
+	battle.board[10] = {}
+	battle.commanders[Chess.ENEMY].hp = 1
+	battle.commanders[Chess.ENEMY].armor = 0
+	battle.move(4, 1)
 	game._process(0.1)
 	expect(game.modal_layer.has_node("StoryScreen") and battle.reveal_pending and not battle.river,
-		"The old strike triggers the flashback before the river")
+		"A lethal attack triggers the flashback before the river")
 	await capture("story-final-memory")
 	await advance_until_text("都留在我身后")
 	await capture("story-final-before-river")
@@ -571,11 +572,10 @@ func capture_finale() -> void:
 	await capture("story-final-river")
 	await finish_linear_story()
 	await process_frame
-	expect(battle.river and hero.name == "伊文洛" and game.view.battle_root.get_meta("environment_signature").ends_with(":true"),
+	expect(battle.river and hero.name == "伊文洛" and battle.weather == "river",
 		"Leaving the flashback brings the river into the actual combat view")
 	await capture("battle-final-river")
 	game.combat = null
-	game.view.end_battle()
 
 func execute() -> void:
 	DirAccess.make_dir_recursive_absolute(destination)
@@ -680,10 +680,8 @@ func execute() -> void:
 			battle._apply_field_effect("ignite")
 		elif biome == "swamp":
 			battle._apply_field_effect("wet")
-		game.combat = battle
-		game.battle_timer = 0
 		game.view.begin_battle(run, battle)
-		game._refresh()
+		game.ui.hide()
 		await create_timer(0.6).timeout
 		expect(game.view.battle_dolls.size() == 8, "Four friends and four distinct foes rendered")
 		expect(game.view.battle_dolls.grit.skeleton.get_bone_count() >= 23 and game.view.battle_dolls.grit.rigged.animator != null, "Dragon in human form has a full imported rig and animation player")
@@ -691,7 +689,7 @@ func execute() -> void:
 		await capture("battle-" + biome)
 		if biome == "plains":
 			battle.step_auto()
-			game._refresh()
+			game.view.refresh_battle(run, battle)
 			await capture("battle-friendly-decision")
 		var caster = game.view.battle_dolls.ember
 		caster.play_action("cast")
@@ -703,13 +701,13 @@ func execute() -> void:
 			await capture("animation-cast-forest")
 			battle._apply_field_effect("wet")
 			game.view.sync_event_environment({"environment_after": battle.field_view()})
-			game._refresh()
+			game.view.refresh_battle(run, battle)
 			expect(game.view.battle_root.get_meta("environment_signature") == "forest:true:true:false", "Fire and wetness render together")
 			await create_timer(0.6).timeout
 			await capture("battle-forest-wet")
 			expect(battle.retreat().ok, "Leave burning battle")
-		game.combat = null
 		game.view.end_battle()
+		game.ui.show()
 		if biome == "forest":
 			game._refresh()
 			await capture("map-forest-after-battle")

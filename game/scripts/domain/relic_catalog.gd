@@ -113,6 +113,13 @@ const SITES = {
 static func is_active(id: String) -> bool:
 	return DATA.has(id) and DATA[id].hook != "retired"
 
+static func current_effect(id: String) -> String:
+	if id == "lamp_badge":
+		return "共鸣时，己方棋子入场获得生命上限 12% 的护甲，四舍五入。"
+	if str(DATA[id].hook).begins_with("combat_"):
+		return "这件遗器的对战效果尚未适配战棋。"
+	return DATA[id].effect
+
 static func exploration_sites(tiles: Dictionary, seed_value: int) -> Dictionary:
 	var sites = {}
 	for relic in SITES:
