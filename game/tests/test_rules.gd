@@ -85,6 +85,7 @@ func execute() -> void:
 	var r = fresh()
 	expect(r.data.explored.size() == 7, "Initial one-ring view")
 	var destination = Hex.neighbors(r.actor("hero").position, r.data.tiles)[0]
+	r.data.tiles[destination].enemies.clear()
 	expect(r.has_visited(r.data.start) and not r.has_visited(destination), "Sight does not count as visiting a tile")
 	var original_terrain = r.data.tiles[destination].terrain
 	r.data.tiles[destination].terrain = "lake"

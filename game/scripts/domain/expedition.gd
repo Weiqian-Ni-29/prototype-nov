@@ -8,7 +8,7 @@ const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Items = preload("res://scripts/domain/expedition_items.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
-const SAVE_VERSION = 5
+const SAVE_VERSION = 6
 const STEPS_PER_DAY = 5
 signal changed
 var data: Dictionary = {}
@@ -251,6 +251,7 @@ func _initialize_nodes() -> void:
 	data.merge({"lamp_coins": Nodes.STARTING_COINS})
 	if not data.has("nodes"):
 		data.nodes = Nodes.generate(data.tiles, int(data.seed), relic_sites, data.rewards, {})
+	Nodes.replace_retired_nodes(data)
 	location_names.clear()
 	var by_title: Dictionary = {}
 	var cells = data.nodes.keys()
@@ -379,21 +380,6 @@ func use_node(id: String, option: String) -> Dictionary:
 	var node = node_at(cell)
 	if node.is_empty() or not node.result.is_empty():
 		return fail("这里的事件已经处理完毕。")
-	var event = Nodes.story(node)
-	if option in ["settle", "settle_alternative"]:
-		if "hero" not in same_cell(cell, true):
-			return fail("等旅人到场，再一起处理这里的事。")
-		if not node.get("investigated", false):
-			return fail("先问清亡者为什么留在这里，别急着劝他离开。")
-	if option in ["work_alternative", "settle_alternative"] and not event.has("alternative"):
-		return fail("这里没有这种处理方式。")
-	if node.kind == "haunt" and option == "inspect":
-		if node.get("investigated", false):
-			return fail("这里已经问清经过。")
-		node["investigated"] = true
-		note("问清经过：" + str(event.title))
-		changed.emit()
-		return {"ok": true, "message": event.investigation}
 	var message = ""
 	var gear_reward = false
 	var items: Array[Dictionary] = []
@@ -422,31 +408,12 @@ func use_node(id: String, option: String) -> Dictionary:
 			if not relic.is_empty():
 				items.append({"kind": "relic", "id": relic, "count": 1})
 				message += " 发现遗器「%s」。" % Relics.DATA[relic].name
-		["choice", "work"], ["choice", "work_alternative"]:
-			var coins = reward_coins("commission", int(node.coins))
-			data.lamp_coins += coins
-			if coins > 0:
-				items.append({"kind": "coins", "id": "lamp_coin", "count": coins})
-			var relic = roll_relic("commission:" + cell, Relics.DATA.keys(), 0.25, id, cell)
-			if not relic.is_empty():
-				items.append({"kind": "relic", "id": relic, "count": 1})
-			message = "%s 完成委托，得到 %d 灯铢。" % [visitor.name, coins]
-		["haunt", "settle"], ["haunt", "settle_alternative"]:
-			message = "你送别了这里的亡者。"
-			var relic = roll_relic("spirit_farewell:" + cell, Relics.DATA.keys(), 0.50, id, cell)
-			if not relic.is_empty():
-				items.append({"kind": "relic", "id": relic, "count": 1})
-			var key = "farewell_receipt:day:%d" % data.day
-			if has_relic("farewell_receipt") and not data.item_effect_counts.has(key) and _restore_map(id, "mp", 6):
-				data.item_effect_counts[key] = 1
 		_:
 			return fail("这里现在做不了这件事。")
 	if option == "search":
 		_after_cache(id, gear_reward)
 	node.result = option
 	data.item_revision += 1
-	if cell != data.boss and option in ["work", "work_alternative", "settle", "settle_alternative"]:
-		data.peace[cell] = true
 	note(message)
 	changed.emit()
 	return {"ok": true, "message": message, "items": items}
@@ -757,13 +724,15 @@ func move(destination: String) -> Dictionary:
 				for member in joined_ids():
 					_restore_map(member, "mp", floori(actor(member).mp_max * 0.15))
 	var t = data.tiles[destination]
+	if not t.npc.is_empty() and actor(t.npc).position == destination:
+		data.story[t.npc].met = true
 	var encounter = not t.enemies.is_empty()
 	if encounter:
 		var surprise = not preview.encounter
 		var ambush = t.hidden and surprise
 		t.discovered_enemy = true
 		data.pending_battle = {"position": destination, "ambush": ambush, "surprise": surprise, "origin": preview.source, "npc": ""}
-		note("隐蔽处的敌人发动伏击！" if ambush else "抵达遭遇地点，请选择出战角色。")
+		note("隐蔽处的敌人发动伏击！" if ambush else "抵达遭遇地点，可以准备卡组迎战。")
 	else:
 		note("抵达%s。" % Catalog.terrain_name(t.terrain))
 	changed.emit()
@@ -794,8 +763,75 @@ func join_companion(id: String, recruiter_id: String = "") -> Dictionary:
 		if Relics.is_active(relic) and Relics.DATA[relic].source == source:
 			gift = claim_relic_reward(source, relic, id, a.position)
 			break
-	changed.emit()
 	return {"ok": true, "relic": gift}
+
+func recruit_quote(id: String) -> Dictionary:
+	var check := _node_access("hero")
+	if not check.ok:
+		return check
+	var person := actor(id)
+	if id == "hero" or person.is_empty() or person.position != actor("hero").position:
+		return fail("到达伙伴所在地点后可以招募。")
+	if person.joined:
+		return fail("这位伙伴已经入队。")
+	if person.hp <= 0:
+		return fail("这位伙伴重伤了，需要先救治。")
+	if data.has("pending_story_rewards") or data.has("pending_victory"):
+		return fail("请先领取本次奖励。")
+	if data.lamp_coins < Cards.RECRUIT_PRICE:
+		return fail("还差 %d 灯铢。" % (Cards.RECRUIT_PRICE - int(data.lamp_coins)))
+	return {"ok": true, "price": Cards.RECRUIT_PRICE}
+
+func recruit_companion(id: String) -> Dictionary:
+	var quote := recruit_quote(id)
+	if not quote.ok:
+		return quote
+	var previous := data.duplicate(true)
+	data.lamp_coins -= quote.price
+	var result := join_companion(id, "hero")
+	if not result.ok:
+		data = previous
+		return result
+	if not result.relic.is_empty():
+		data.pending_story_rewards = {"source": "招募 · " + actor(id).name,
+			"items": [{"kind": "relic", "id": result.relic, "count": 1}]}
+	return _save_companion_purchase(previous)
+
+func breakthrough_quote(id: String) -> Dictionary:
+	var check := _node_access("hero")
+	if not check.ok:
+		return check
+	var person := actor(id)
+	if id == "hero" or person.is_empty() or not person.joined:
+		return fail("招募伙伴后可以突破。")
+	var rank := int(person.get("breakthrough", 0))
+	if rank >= Cards.BREAKTHROUGH_PRICES.size():
+		return fail("已完成三次突破。")
+	var price: int = Cards.BREAKTHROUGH_PRICES[rank]
+	if data.lamp_coins < price:
+		return fail("还差 %d 灯铢。" % (price - int(data.lamp_coins)))
+	return {"ok": true, "price": price, "rank": rank}
+
+func breakthrough_companion(id: String, expected_rank: int) -> Dictionary:
+	var quote := breakthrough_quote(id)
+	if not quote.ok:
+		return quote
+	if quote.rank != expected_rank:
+		return fail("突破等级已变化。")
+	var previous := data.duplicate(true)
+	data.lamp_coins -= quote.price
+	actor(id).breakthrough = quote.rank + 1
+	note("%s 完成第 %d 次突破。" % [actor(id).name, quote.rank + 1])
+	return _save_companion_purchase(previous)
+
+func _save_companion_purchase(previous: Dictionary) -> Dictionary:
+	data.item_revision += 1
+	var saved := save_game()
+	if not saved.ok:
+		data = previous
+		return saved
+	changed.emit()
+	return saved
 
 func transfer(from_id: String, to_id: String, item: String, amount: int) -> Dictionary:
 	if data.status != "exploring":
@@ -992,10 +1028,12 @@ func load_game(path: String = "") -> Dictionary:
 	if json.parse(FileAccess.get_file_as_string(path)) != OK or not json.data is Dictionary:
 		return fail("存档损坏了，原来的文件还在。")
 	var loaded: Dictionary = json.data
-	if not _whole_number(loaded.get("version", -1)) or int(loaded.version) not in [3, 4, SAVE_VERSION] or not loaded.has_all(["actors", "tiles", "rng_state", "day", "explored", "status"]):
+	if not _whole_number(loaded.get("version", -1)) or int(loaded.version) not in [3, 4, 5, SAVE_VERSION] or not loaded.has_all(["actors", "tiles", "rng_state", "day", "explored", "status"]):
 		return fail("存档版本不兼容，或者进度记录不完整。")
 	if int(loaded.version) >= 4 and (not loaded.get("relic_seen") is Dictionary or not loaded.get("nodes") is Dictionary):
 		return fail("遗器发现记录无效。")
+	if int(loaded.version) < SAVE_VERSION and loaded.get("card_deck") is Array and loaded.actors is Dictionary:
+		loaded.card_deck = Cards.migrate_deck(loaded.card_deck, loaded.actors)
 	var invalid = _validate_save(loaded)
 	if invalid != "":
 		return fail("存档内容无效：" + invalid + "。旧文件没有被覆盖。")
@@ -1005,12 +1043,16 @@ func load_game(path: String = "") -> Dictionary:
 			loaded.nodes = Nodes.generate(loaded.tiles, int(loaded.seed), sites, loaded.rewards, loaded.get("relic_checks", {}))
 			loaded.merge({"lamp_coins": Nodes.STARTING_COINS})
 		Items.migrate(loaded)
-	if int(loaded.version) < SAVE_VERSION:
+	if int(loaded.version) < 5:
 		_migrate_travel(loaded)
 	if not Items.validate(loaded):
 		return fail("存档中的装备或遗器记录无效。")
 	Nodes.replace_legacy_clues(loaded.nodes, loaded.tiles, int(loaded.seed))
 	loaded.erase("leads")
+	if int(loaded.version) < SAVE_VERSION and not str(loaded.pending_battle.get("npc", "")).is_empty():
+		loaded.pending_battle = {}
+	if int(loaded.version) < SAVE_VERSION:
+		loaded.version = SAVE_VERSION
 	data = loaded
 	_remove_legacy_map_effects()
 	for id in data.actors:
@@ -1026,7 +1068,7 @@ func load_game(path: String = "") -> Dictionary:
 	return success()
 
 func _migrate_travel(loaded: Dictionary) -> void:
-	loaded.version = SAVE_VERSION
+	loaded.version = 5
 	loaded.steps_today = 0
 	for member in loaded.actors.values():
 		for key in ["ap", "ap_max", "ap_initialized_day"]:
@@ -1102,7 +1144,7 @@ func _validate_save(loaded: Dictionary) -> String:
 		return "剧情进度无效"
 	if not loaded.log is Array or not _whole_number(loaded.day) or int(loaded.day) < 1 or not str(loaded.rng_state).is_valid_int():
 		return "日期或随机状态无效"
-	if int(loaded.version) == SAVE_VERSION and (not _whole_number(loaded.get("steps_today")) or loaded.steps_today < 0 or loaded.steps_today >= STEPS_PER_DAY):
+	if int(loaded.version) >= 5 and (not _whole_number(loaded.get("steps_today")) or loaded.steps_today < 0 or loaded.steps_today >= STEPS_PER_DAY):
 		return "当日步数无效"
 	if loaded.has("card_deck") and not Cards.valid_deck(loaded.card_deck, loaded.actors):
 		return "卡组记录无效"
@@ -1205,8 +1247,11 @@ func _validate_save(loaded: Dictionary) -> String:
 			return "角色标识无效"
 		if not Hex.is_land(loaded.tiles, a.position) or not a.inventory is Dictionary or not a.equipment is Dictionary:
 			return "角色位置或背包无效"
-		if int(loaded.version) == SAVE_VERSION and a.joined and a.position != loaded.actors.hero.position:
+		if int(loaded.version) >= 5 and a.joined and a.position != loaded.actors.hero.position:
 			return "队员与旅人不在同一地块"
+		var rank: Variant = a.get("breakthrough", 0)
+		if not _whole_number(rank) or rank < 0 or rank > Cards.BREAKTHROUGH_PRICES.size() or (rank > 0 and (id == "hero" or not a.joined)):
+			return "伙伴突破记录无效"
 		if not Catalog.SKILLS.has(a.skill) or not Catalog.SKILLS.has(a.ultimate):
 			return "角色技能无效"
 		for resource in ["hp", "mp"]:
@@ -1255,13 +1300,16 @@ func _valid_nodes(loaded: Dictionary) -> bool:
 		if not node.kind is String or not node.event is String or not node.result is String:
 			return false
 		if node.kind == "clue":
+			if int(loaded.version) >= SAVE_VERSION:
+				return false
 			var biome: String = loaded.tiles[cell].base_terrain
 			if node.event not in [biome + "_clue_1", biome + "_clue_2"] or node.result not in ["", "record"] or node.has("investigated"):
 				return false
 			continue
-		if not Nodes.LABELS.has(node.kind):
-			return false
-		if node.kind != "story" and Nodes.story(node).is_empty():
+		if node.kind in Nodes.RETIRED_KINDS:
+			if int(loaded.version) >= SAVE_VERSION or node.event not in Nodes.legacy_event_ids(node.kind, loaded.tiles[cell].base_terrain):
+				return false
+		elif not Nodes.LABELS.has(node.kind) or (node.kind != "story" and Nodes.story(node).is_empty()):
 			return false
 		if node.has("investigated") and (node.kind != "haunt" or not node.investigated is bool):
 			return false

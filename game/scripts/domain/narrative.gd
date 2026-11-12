@@ -60,34 +60,6 @@ const BACKGROUNDS = {
 	"snowforge": "断山后，城主只准自家人先走矿道。我打开军械库，把里面的兵器拿出去，换那些被困的人先下山。旧部替我撬锁，工匠替我运铁。城邦少了兵器，说我是弃城的军官；现在有人愿意跟着我，他们又怕我回去跟他们抢位子。我不打算跪着求他们改口。",
 }
 
-const COMPANION_LINES = {
-	"cen": "别走正中间，贴着这边。路一堵，跑在后头的人最难出来。你要往哪儿去？",
-	"lorne": "先歇歇。我刚从前头回来，哪条路能走，哪座关口只收钱不放人，都打听过了。你要找地方，还是找人？",
-	"eve": "先坐下，让我看看你有没有受伤。别急着报名字，治伤用不着那个。",
-	"grit": "别碰那些弩牙。是我从黑旗的弩上拆下来的，我还要拿它找用这架弩的人。你见过北边来的弩手吗？",
-	"ember": "来取暖，还是来雇我？烤一顿饭和烧一座城，可不是同一个价。先说你要什么。",
-	"tide": "前面低处的泥还没干，别踩。水退了不等于路能走。你从哪边来的，那边的船还肯载人吗？",
-	"frost_archer": "求粮的往那边排。想进弓队？先把拉弓的手给我看看。也不是来当弓手的？那你找我有什么事？",
-	"storm_caller": "退后点，我还没试完这一道雷。放心，我看着呢。上回劈歪了，是那根铁链先断的。",
-	"wind_runner": "你看前头那条岔路，我刚跑过。两边都能走，不过左边有人盘问，右边只有泥。要不要猜猜我走哪边？",
-	"stone_guard": "别踩那块松了的石头。站稳了再说，我可不想一边听你说话，一边往沟里捞你。",
-	"ironforge": "找我修东西？先拿出来看看。要是只想问路，路在那边，别耽误我干活。",
-	"granite": "先说你来干什么。这里没有议会的人，但也别以为谁来开口，我都得答应。",
-	"mistleaf": "先别靠过来，我在听后面有没有脚步。好了，说吧。你刚走过的那条路，还有别人吗？",
-	"willow": "坐吧，酒还没喝完。林里林外我都认识些人。你先说要去哪儿，路好不好走，咱们慢慢谈。",
-	"ashhorn": "看见运粮车了吗？当兵的盯着车，军官盯着当兵的，比看旗有意思。你来找我，想谈哪一种买卖？",
-	"oathguard": "有什么事，说清楚。守多久，护到哪里，拿什么付。只说帮个忙，我可没法答应。",
-	"highdrake": "你是从山下来的？哪儿又落石了，直接告诉我。我会去看，用不着先求长老点头。",
-	"cloudscale": "刚才没吓着你吧？我飞得太低，影子一下就从你头顶过去了。找船还是找路？河上我比两岸巡兵熟。",
-	"longroad": "路上的店我熟。哪家肯赊饭，哪座关口收钱不办事，我都能讲给你听。先坐吧。你鞋都快磨破了，话倒还有一肚子。",
-	"fieldmedic": "手要是发抖，就把武器放下。别跟我说还能打，我问的是你哪里不舒服。",
-	"siltguard": "水声太响，站近点说。你来找我，是为了河道，还是城里那帮人？",
-	"seasons": "我在听田里的歌。你也会唱的话，就唱两句。要是来求我的，先想好了再开口。丰收可不是你说要，我就给。",
-	"earth_god": "站一会儿。脚下的声音还没停。你们只要想从一座山上过去，就觉得山该给你们让路。",
-	"sky_god": "有话就说，别拿旗杆挡着我看云。我肯停在这里，不是等谁来发令。",
-	"snowforge": "这块石头能坐，歇够了再赶路。你刚从关口过来？那里的兵有没有拦着不让人走？",
-}
-
 # Only the traveler receives these hints. The identity remains unknown until the final battle.
 const HERO_LINES = {
 	"ember": "你刚才那样抬手，我在冥界见人做过。也可能是我看错了。等你自己想起什么，再来谈。",
@@ -337,10 +309,9 @@ func character_records(id: String) -> Array[Dictionary]:
 				"body": "旅人想起了自己的名字。伊文洛是负责引渡亡魂的死神。当年卡德兰袭击了他，直到决战时，他才重新记起自己是谁。"})
 		return records
 	var record: Dictionary = run.data.story.get(id, {})
-	if not record.get("met", false) and not run.actor(id).get("joined", false):
+	if not run.actor(id).get("joined", false):
 		return []
-	var first_meeting = str(record.get("codex_first_meeting", "在这次远征途中见过这位伙伴。"))
-	var records: Array[Dictionary] = [{"title": "初次见面", "body": first_meeting}]
+	var records: Array[Dictionary] = []
 	var chosen = _personal_choice(id)
 	if record.get("codex_past_read", false) and (chosen.is_empty() or chosen.begins_with("journey_")):
 		records.append({"title": "过去的事", "body": BACKGROUNDS[id]})
@@ -393,21 +364,20 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 	if not intro.ok:
 		return intro
 	var person = run.actor(subject)
-	run.data.story[subject].met = true
+	if not person.joined:
+		return {"ok": false, "message": "招募后可以和这位伙伴聊聊。"}
 	var identity: String = person.get("race", "旅人")
 	if Catalog.COMPANIONS[subject].race == "神":
 		identity = Catalog.COMPANIONS[subject].title + "的化身"
 	var title = "%s · %s" % [person.name, identity]
 	var speaker: String = person.name
-	var body: String = COMPANION_LINES[subject]
-	var node = run.node_at(person.position)
+	var body: String = CHARACTER_BEHAVIOR[subject][2]
 	var choices: Array = []
 	if person.hp <= 0:
 		speaker = run.actor(visitor).name
 		body = "还有呼吸。伤得这么重，得先止血。"
 		choices.append(_choice("rescue", "我来找药，你撑住。"))
-	elif person.joined:
-		body = CHARACTER_BEHAVIOR[subject][2]
+	else:
 		if _personal_context(visitor, subject).ok:
 			var chosen = _personal_choice(subject)
 			choices.append(_choice("quest", "上回定下的事，我想再听你说说。" if not chosen.is_empty() else "接下来你想做什么？说说看，我能帮哪一头。"))
@@ -416,14 +386,8 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 				choices.append(_choice("past", "你以前走过什么样的路？愿意的话，讲给我听。"))
 			if visitor == "hero" and HERO_LINES.has(subject):
 				choices.append(_choice("echo", "你认得我吗？我想不起以前的事了。"))
-	else:
-		choices.append(_choice("join", "我想请你跟我一起上路。"))
-		if not node.result.is_empty():
-			choices.append(_choice("discuss", "我想听听你怎么看这里发生的事。"))
-		if subject in ["granite", "ashhorn", "oathguard", "highdrake", "siltguard", "snowforge"] and not run.data.story[subject].get("duel", false):
-			choices.append(_choice("duel", "我想跟你试几招，看看彼此的本事。"))
-	choices.append(_choice("leave", "我先去看看路，回头再聊。" if person.joined else "那就聊到这儿吧，我先走了。"))
-	var pose = "friendly" if person.joined or not node.result.is_empty() else "serious" if node.get("kind") == "haunt" or person.hp <= 0 else ""
+	choices.append(_choice("leave", "我先去看看路，回头再聊。"))
+	var pose := "grief" if person.hp <= 0 else "friendly"
 	return {"ok": true, "title": title, "speaker": speaker, "text": body, "options": choices, "pose": pose}
 
 func choose(visitor: String, subject: String, option_id: String) -> Dictionary:
@@ -441,18 +405,6 @@ func choose(visitor: String, subject: String, option_id: String) -> Dictionary:
 			return {"ok": true, "response": BACKGROUNDS[subject]}
 		"echo":
 			return {"ok": true, "response": HERO_LINES[subject]}
-		"join":
-			var result = run.join_companion(subject, visitor)
-			if result.ok:
-				result.response = CHARACTER_BEHAVIOR[subject][1]
-			return result
-		"duel":
-			var cell: String = run.actor(visitor).position
-			run.data.story[subject].duel = true
-			run.data.pending_battle = {"position": cell, "origin": cell, "npc": subject, "ambush": false}
-			return {"ok": true, "battle": true}
-		"discuss":
-			return {"ok": true, "response": CHARACTER_BEHAVIOR[subject][3]}
 		"rescue":
 			return {"ok": true, "rescue": true}
 	return {"ok": true, "close": true}

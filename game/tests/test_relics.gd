@@ -117,15 +117,6 @@ func check_victory_receipt(save_path: String) -> void:
 		expect(game.run.relic_intro().is_empty(), "Acknowledging victory clears the earned relic introduction")
 	game.queue_free()
 
-func click_story() -> void:
-	for pressed in [true, false]:
-		var input = InputEventMouseButton.new()
-		input.button_index = MOUSE_BUTTON_LEFT
-		input.pressed = pressed
-		input.position = root.get_visible_rect().size * Vector2(0.76, 0.30)
-		root.push_input(input, true)
-	await process_frame
-
 func check_exploration() -> void:
 	var game = Main.instantiate()
 	root.add_child(game)
@@ -168,7 +159,7 @@ func check_exploration() -> void:
 			button.pressed.emit()
 			break
 	var intro = run.relic_intro()
-	expect(run.has_relic("telescope") and intro.get("id") == "telescope" and game.modal_layer.has_node("StoryScreen"), "Investigating an eligible tile opens the relic story")
+	expect(run.has_relic("telescope") and intro.get("id") == "telescope" and game.modal_layer.has_node("StoryRewards"), "Investigating an eligible tile opens the item receipt directly")
 	if intro.is_empty():
 		game.queue_free()
 		return
@@ -176,11 +167,6 @@ func check_exploration() -> void:
 	var sight_is_hidden = new_sight.all(func(id):
 		return run.data.explored.has(id) and not run.has_visited(id) and not game.view.tile_nodes.has(id))
 	expect(not new_sight.is_empty() and sight_is_hidden, "Telescope adds shared sight, deferring map presentation until after the story")
-	for page in range(16):
-		if not game.modal_layer.has_node("StoryScreen"):
-			break
-		await click_story()
-	expect(game.modal_layer.has_node("StoryRewards"), "The cache conclusion opens its item receipt")
 	game._continue_run()
 	expect(run.relic_intro().get("id") == "telescope" and game.modal_layer.has_node("StoryRewards"),
 		"Continue resumes the saved cache receipt with the same relic")

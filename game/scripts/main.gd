@@ -4,6 +4,7 @@ const Catalog = preload("res://scripts/domain/catalog.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Chess = preload("res://scripts/domain/chess_battle.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
+const CardUI = preload("res://scripts/presentation/card_ui.gd")
 const ChessView = preload("res://scripts/presentation/chess_battle_view.gd")
 const DeckEditor = preload("res://scripts/presentation/card_deck_editor.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
@@ -25,20 +26,10 @@ const Sound = preload("res://scripts/presentation/sound.gd")
 enum Screen { MENU, OPENING_STORY, EXPEDITION }
 const OBJECTIVE_ICON = preload("res://assets/ui/expedition-objective.svg")
 const LAMP_COIN_ICON = preload("res://assets/ui/lamp-coin.svg")
-const CREW_PANEL_WIDTH = 288
+const CREW_PANEL_WIDTH = 230
 const STORY_TERRAIN = {
 	"plains": "road", "forest": "woodland", "mountain": "highland", "ruins": "ruins",
 	"desert": "drylands", "swamp": "wetlands",
-}
-const CREW_PORTRAIT_BACKGROUNDS = {
-	"gravity": Color("17161e"),
-	"fire": Color("773831"),
-	"water": Color("24536e"),
-	"wind": Color("376452"),
-	"ice": Color("496978"),
-	"lightning": Color("513b69"),
-	"earth": Color("5e482f"),
-	"normal": Color("3d4741"),
 }
 var run = Run.new()
 var view: Node3D
@@ -467,7 +458,7 @@ func _expedition_objective() -> String:
 		return "旅程已结束"
 	return [
 		"踏出旅程的第一步",
-		"帮助被亡灵困扰的地方",
+		"平定沿途的战斗遭遇",
 		"查清谁在延长战争",
 		"找到战神的驻地",
 		"击败战神卡德兰",
@@ -476,12 +467,12 @@ func _expedition_objective() -> String:
 
 func _crew_panel() -> void:
 	var box = _panel(ui, Rect2(20, 120, CREW_PANEL_WIDTH, 56))
-	if not crew_collapsed:
-		var panel: PanelContainer = box.get_parent()
-		panel.set_anchor_and_offset(SIDE_BOTTOM, 1.0, -20.0)
-	var heading = HBoxContainer.new()
+	box.get_parent().name = "ExpeditionControls"
+	var heading := HBoxContainer.new()
 	box.add_child(heading)
-	_text(heading, "远征队", 24, gold).vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	var title := _text(heading, "远征", 24, gold)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_button(heading, "展开" if crew_collapsed else "收起", func():
 		crew_collapsed = not crew_collapsed
 		_refresh())
@@ -489,20 +480,21 @@ func _crew_panel() -> void:
 		return
 	_text(box, "点相邻格预览 · 再点确认", 13, muted)
 	_crew_stamina(box)
-	var roster = _scroll_content(box)
-	roster.get_parent().horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	roster.add_theme_constant_override("separation", 6)
-	for id in run.joined_ids():
-		_crew_member(roster, id)
-	var cell: String = run.actor(selected_id).position
-	var codex_button = _button(box, "角色", _show_character_codex)
+	var actions := GridContainer.new()
+	actions.columns = 2
+	actions.add_theme_constant_override("h_separation", 6)
+	actions.add_theme_constant_override("v_separation", 6)
+	box.add_child(actions)
+	var codex_button := _button(actions, "角色", _show_character_codex)
 	if not character_codex_state.is_empty():
 		codex_button.add_theme_stylebox_override("normal", _style(Color("34483a"), gold, 6))
 		codex_button.add_theme_color_override("font_color", gold)
-	var action = _button(box, "行动", _cell_actions)
-	action.tooltip_text = _node_title(cell)
-	_button(box, "卡组", _deck_dialog)
-	_button(box, "背包", _inventory_dialog.bind(selected_id))
+	var action := _button(actions, "行动", _cell_actions)
+	action.tooltip_text = _node_title(run.actor(selected_id).position)
+	_button(actions, "卡组", _deck_dialog)
+	_button(actions, "背包", _inventory_dialog.bind(selected_id))
+	for button in actions.get_children():
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 func _crew_stamina(parent: VBoxContainer) -> void:
 	var row = HBoxContainer.new()
@@ -523,106 +515,9 @@ func _crew_stamina(parent: VBoxContainer) -> void:
 		segment.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		segment.add_theme_stylebox_override("panel", bright if i < remaining else faded)
 		steps.add_child(segment)
-	_crew_meter_label(row, "精力")
-
-func _crew_member(parent: VBoxContainer, id: String) -> void:
-	var a = run.actor(id)
-	var button = _button(parent, "", _select_actor.bind(id))
-	button.name = "CrewMember_" + id
-	button.custom_minimum_size.y = 106
-	button.accessibility_name = a.name
-	if a.hp <= 0:
-		button.tooltip_text = "%s · 重伤" % a.name
-	if selected_id != id:
-		button.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
-
-	var content = HBoxContainer.new()
-	button.add_child(content)
-	_member_status(content, id, int(a.hp))
-	content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	content.offset_left = 5
-	content.offset_right = -5
-	content.offset_top = 3
-	content.offset_bottom = -3
-
-func _member_status(content: HBoxContainer, id: String, shown_hp: int) -> VBoxContainer:
-	var a = run.actor(id)
-	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	content.add_theme_constant_override("separation", 12)
-	var identity = VBoxContainer.new()
-	identity.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	identity.custom_minimum_size.x = 80
-	identity.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	identity.add_theme_constant_override("separation", 2)
-	content.add_child(identity)
-	var element: String = "gravity" if id == "hero" else a.element
-	var background: Color = CREW_PORTRAIT_BACKGROUNDS.get(element, CREW_PORTRAIT_BACKGROUNDS.normal)
-	var portrait = Panel.new()
-	portrait.name = "Portrait"
-	portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	portrait.custom_minimum_size.y = 72
-	portrait.add_theme_stylebox_override("panel", _style(background, background.lightened(0.30), 5))
-	identity.add_child(portrait)
-	var texture = _story_portrait(str(a.get("portrait", id)))
-	if texture != null:
-		var dimensions = Vector2(texture.get_size())
-		var width = dimensions.x * 0.54
-		var face = AtlasTexture.new()
-		face.atlas = texture
-		face.region = Rect2((dimensions.x - width) * 0.5, 0, width, minf(width, dimensions.y))
-		face.filter_clip = true
-		var image = TextureRect.new()
-		image.texture = face
-		image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-		image.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		portrait.add_child(image)
-		image.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		image.offset_left = 1
-		image.offset_right = -1
-		image.offset_top = 1
-		image.offset_bottom = -1
-
-	var caption = _text(identity, a.name, 12, ink if shown_hp > 0 else muted)
-	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	var meters = VBoxContainer.new()
-	meters.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	meters.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	meters.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	meters.add_theme_constant_override("separation", 5)
-	content.add_child(meters)
-	_crew_meter(meters, "HP", shown_hp, a.hp_max, Color("e16562"))
-	_crew_meter(meters, "MP", a.mp, a.mp_max, Color("65a6e6"))
-	_crew_meter(meters, "充能", a.energy, Catalog.ENERGY_MAX, Color("eea353"))
-	return meters
-
-func _crew_meter(parent: VBoxContainer, caption: String, amount: float, maximum: float, color: Color) -> void:
-	var row = HBoxContainer.new()
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	parent.add_child(row)
-	var bar = ProgressBar.new()
-	bar.accessibility_name = caption
-	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	bar.custom_minimum_size.y = 7
-	bar.max_value = maxf(1.0, maximum)
-	bar.value = amount
-	bar.show_percentage = false
-	bar.add_theme_stylebox_override("background", _bar_style(Color("3b524b")))
-	bar.add_theme_stylebox_override("fill", _bar_style(color))
-	row.add_child(bar)
-	var value_label = _crew_meter_label(row, "%d/%d" % [int(amount), int(maximum)])
-	value_label.custom_minimum_size.x = 58
-	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-
-func _crew_meter_label(parent: HBoxContainer, caption: String) -> Label:
-	var label = _text(parent, caption, 12)
-	label.autowrap_mode = TextServer.AUTOWRAP_OFF
-	label.custom_minimum_size.x = 32
-	label.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return label
+	var caption := _text(row, "精力", 13, muted)
+	caption.size_flags_horizontal = Control.SIZE_SHRINK_END
+	caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 
 func _cell_actions() -> void:
 	var actor = run.actor(selected_id)
@@ -630,7 +525,7 @@ func _cell_actions() -> void:
 	var t = run.data.tiles[cell]
 	var node = run.node_at(cell)
 	var title = _node_title(cell)
-	var has_encounter = run.knows_encounter(cell)
+	var has_encounter: bool = run.knows_encounter(cell) or (run.data.pending_battle.get("position") == cell and not t.enemies.is_empty())
 	var dialog = _modal(title, 570, 580)
 	var box = _scroll_content(dialog)
 	_text(box, "%s · 坐标 %s" % [Catalog.terrain_name(t.terrain), cell], 14, muted)
@@ -645,9 +540,12 @@ func _cell_actions() -> void:
 			var elements: Array = info.elements.map(func(element): return Catalog.ELEMENT_NAMES.get(element, element))
 			_text(box, "遭遇拓片 · %s · %d 个敌人 · %s" % [str(key).trim_prefix("encounter:"), info.count, "、".join(elements)], 15, muted)
 	if not has_encounter and (t.site.is_empty() or (t.site == "boss" and not run.boss_known())) and not Nodes.story(node).is_empty():
+		if not _node_resolved(node, t):
+			for option in _node_actions(node, t):
+				_button(box, option.text, _node_choice.bind(option.id))
 		_button(box, "查看节点剧情", _node_dialog)
 	if has_encounter:
-		_text(box, "决战 · 已平息 %d 处纷争" % run.data.peace.size() if t.enemies.has("war_god") else "驻守敌人", 18, Color("e4ab87"))
+		_text(box, "决战 · 已平定 %d 处遭遇" % run.data.peace.size() if t.enemies.has("war_god") else "驻守敌人", 18, Color("e4ab87"))
 		var commander: String = "war_god" if t.enemies.has("war_god") else t.enemies[0]
 		_text(box, "敌方主战者 · " + Catalog.ENEMIES[commander].name, 15, muted)
 		if run.actor("grit").joined and run.actor("grit").hp > 0 and run.actor("grit").position == cell:
@@ -655,11 +553,14 @@ func _cell_actions() -> void:
 		var requires_hero = t.enemies.has("war_god") and "hero" not in run.same_cell(cell, true)
 		if requires_hero:
 			_text(box, "旅人必须亲自迎战。", 15, muted)
-		_button(box, "查看遭遇剧情", _open_current_encounter, run.same_cell(cell, true).is_empty() or requires_hero)
+		_button(box, "查看决战剧情" if t.enemies.has("war_god") else "备战", _open_current_encounter, run.same_cell(cell, true).is_empty() or requires_hero)
 	if t.npc != "" and t.npc != selected_id and run.actor(t.npc).position == cell and t.enemies.is_empty():
 		var npc = run.actor(t.npc)
 		_text(box, npc.name + " · " + npc.title, 18)
-		_button(box, "交谈 / 个人故事", _talk.bind(t.npc))
+		if npc.joined:
+			_button(box, "交谈 / 个人故事", _talk.bind(t.npc))
+		else:
+			_button(box, "招募%s · %d 灯铢" % [npc.name, Cards.RECRUIT_PRICE], _recruit_dialog.bind(t.npc))
 	elif t.site == "start":
 		_button(box, "看看村庄", _site_impression)
 	for id in run.same_cell(cell):
@@ -705,18 +606,25 @@ func _node_tint() -> Color:
 
 func _node_description(node: Dictionary, tile: Dictionary, event: Dictionary) -> String:
 	if _node_resolved(node, tile):
-		var conclusion = Nodes.resolution(node)
-		if node.kind == "haunt":
-			return "送别时，%s伸出手，给亡魂指了条离开这里的路。\n\n%s" % [run.actor("hero").name, conclusion]
-		return conclusion
-	if node.get("investigated", false):
-		return str(event.investigation)
+		return Nodes.resolution(node)
 	return str(event.intro)
 
 func _node_option(id: String, label: String, spoken: bool = false) -> Dictionary:
 	return {"id": id, "text": label, "spoken": spoken}
 
-func _node_dialog(feedback: String = "", completion: Callable = Callable()) -> void:
+func _node_actions(node: Dictionary, tile: Dictionary) -> Array:
+	match node.kind:
+		"trade":
+			return [_node_option("trade", "查看货物 · 持有 %d 灯铢" % run.data.lamp_coins)]
+		"supply":
+			return [_node_option("collect", "取用%s ×%d" % [Catalog.item_name(tile.resource), tile.quantity])]
+		"rest":
+			return [_node_option("pack", "带走一份" + Catalog.item_name(node.item))]
+		"cache":
+			return [_node_option("search", "搜寻旧物")]
+	return []
+
+func _node_dialog() -> void:
 	var cell: String = run.actor(selected_id).position
 	var tile = run.data.tiles[cell]
 	var node = run.node_at(cell)
@@ -732,45 +640,9 @@ func _node_dialog(feedback: String = "", completion: Callable = Callable()) -> v
 	if speaker in run.same_cell(cell, true) and event.has("reaction"):
 		text += "\n%s说「%s」" % [run.actor(speaker).name, event.reaction]
 	var title = "%s · %s" % [_node_title(cell), event.title]
-	if completion.is_valid():
-		_show_story(title, "旁白", text, STORY_TERRAIN[tile.terrain], [], [],
-			func(_option: String): completion.call(), {}, _node_tint())
-		return
-	var options: Array = []
-	if not _node_resolved(node, tile):
-		match node.kind:
-			"trade":
-				options.append(_node_option("trade", "查看货物 · 持有 %d 灯铢" % run.data.lamp_coins))
-			"supply":
-				options.append(_node_option("collect", "取用%s ×%d" % [Catalog.item_name(tile.resource), tile.quantity]))
-			"rest":
-				options.append(_node_option("pack", "带走一份" + Catalog.item_name(node.item)))
-			"choice":
-				options.append(_node_option("work", "%s · 得 %d 灯铢" % [event.work, node.coins]))
-				options.append(_node_option("work_alternative", "%s · 得 %d 灯铢" % [event.alternative, node.coins]))
-			"haunt":
-				if not node.get("investigated", false):
-					options.append(_node_option("inspect", event.investigation_label))
-				elif "hero" in run.same_cell(cell, true):
-					options.append(_node_option("settle", event.work))
-					options.append(_node_option("settle_alternative", event.alternative))
-				else:
-					text += "\n已经问清了亡者牵挂的事，等旅人来了，再陪亡者告别。"
-			"cache":
-				options.append(_node_option("search", "搜寻旧物"))
-			"battle", "elite":
-				if run.knows_encounter(cell):
-					options.append(_node_option("fight", "编辑卡组并交战"))
-	if not tile.npc.is_empty() and tile.npc != selected_id and run.actor(tile.npc).position == cell and tile.enemies.is_empty():
-		options.append(_node_option("talk", "和%s交谈" % run.actor(tile.npc).name))
+	var options := [] if _node_resolved(node, tile) else _node_actions(node, tile)
 	options.append(_node_option("leave", "返回地图"))
-	if not feedback.is_empty():
-		_show_story(title, "旁白", text, STORY_TERRAIN[tile.terrain], [], [],
-			func(_option: String):
-				_show_story(title, "行动结果", feedback, STORY_TERRAIN[tile.terrain], [], options, _node_choice, {}, _node_tint()),
-			{}, _node_tint())
-	else:
-		_show_story(title, "旁白", text, STORY_TERRAIN[tile.terrain], [], options, _node_choice, {}, _node_tint())
+	_show_story(title, "旁白", text, STORY_TERRAIN[tile.terrain], [], options, _node_choice, {}, _node_tint())
 
 func _node_choice(option: String) -> void:
 	match option:
@@ -779,19 +651,14 @@ func _node_choice(option: String) -> void:
 				_close_modal()
 		"trade":
 			_shop_dialog()
-		"talk":
-			_talk(run.data.tiles[run.actor(selected_id).position].npc)
-		"fight":
-			_open_current_encounter(false)
 		_:
+			_close_modal()
 			var result = run.use_node(selected_id, option)
 			var cell: String = run.actor(selected_id).position
 			var has_items: bool = result.ok and _queue_story_rewards(_node_title(cell), result.get("items", []))
 			_run_action(result)
 			if has_items:
-				_node_dialog("", _show_pending_story_rewards)
-			else:
-				_node_dialog("" if result.ok and option == "inspect" else str(result.get("message", "")))
+				_show_pending_story_rewards()
 
 func _queue_story_rewards(source: String, items: Array) -> bool:
 	if items.is_empty():
@@ -891,7 +758,7 @@ func _shop_dialog(feedback: String = "", resume: Dictionary = {}) -> void:
 	shop.refresh_requested.connect(func():
 		if shop.is_inside_tree() and shop.buying and not shop.refresh.disabled:
 			_shop_action(restock, shop.selection()))
-	shop.return_requested.connect(_node_dialog)
+	shop.return_requested.connect(_cell_actions)
 
 func _shop_action(action: Callable, resume: Dictionary) -> void:
 	sound.play("click")
@@ -1004,7 +871,8 @@ func _move_selected() -> void:
 			travel_clock = previous_clock
 		selected_id = "hero"
 		selected_cell = destination
-		if first_visit and not Nodes.story(run.node_at(destination)).is_empty():
+		var resident: Dictionary = run.actor(run.data.tiles[destination].npc)
+		if first_visit and not resident.is_empty() and not resident.joined and resident.position == destination:
 			run.data.pending_arrival = {"actor": "hero", "cell": destination}
 	_run_action(result)
 	if not result.ok:
@@ -1050,13 +918,15 @@ func _show_arrival() -> void:
 
 func _show_arrival_node() -> void:
 	if not run.data.has("pending_arrival"):
-		_show_npc_encounter(selected_id)
 		return
 	var arrival: Dictionary = run.data.pending_arrival
 	run.data.erase("pending_arrival")
 	run.save_game()
 	if selected_id == arrival.actor and run.actor(selected_id).position == arrival.cell:
-		_node_dialog()
+		var resident: String = run.data.tiles[arrival.cell].npc
+		var person: Dictionary = run.actor(resident)
+		if not person.is_empty() and not person.joined and person.position == arrival.cell and run.data.tiles[arrival.cell].enemies.is_empty():
+			_recruit_dialog(resident)
 
 func _run_action(result: Dictionary) -> void:
 	toast_text = "已完成。" if result.ok else str(result.get("message", "无法执行。"))
@@ -1524,8 +1394,9 @@ func _item_dialog(user_id: String, item_id: String = "") -> void:
 
 func _open_current_encounter(show_intro: bool = true) -> void:
 	var cell: String = run.actor(selected_id).position
-	run.data.pending_battle = {"position": cell, "ambush": false, "origin": cell, "npc": ""}
-	run.save_game()
+	if run.data.pending_battle.is_empty():
+		run.data.pending_battle = {"position": cell, "ambush": false, "origin": cell, "npc": ""}
+		run.save_game()
 	if show_intro:
 		_show_encounter_intro()
 	else:
@@ -1533,33 +1404,13 @@ func _open_current_encounter(show_intro: bool = true) -> void:
 
 func _show_encounter_intro() -> void:
 	var encounter: Dictionary = run.data.pending_battle
-	if not encounter.npc.is_empty():
-		var opponent: Dictionary = run.actor(encounter.npc)
-		_show_story("切磋 · " + opponent.name, opponent.name, "把牌组准备好，我们就开始吧。", _story_scene_at(encounter.position),
-			[_story_portrait(encounter.npc, "serious")], [_node_option("deck", "编辑卡组与开战")],
-			func(_option: String): _deck_dialog(true), {})
-		return
 	var cell: String = encounter.position
-	var tile: Dictionary = run.data.tiles[cell]
-	var node = run.node_at(cell)
-	var title = _node_title(cell)
-	var body: String
-	var portraits: Array = [_story_portrait(selected_id, "serious")]
-	if tile.enemies.has("war_god"):
-		title += " · 战鼓"
-		body = "鼓声从营里传来。你在路上听过同样的鼓点，每响一下，那些想逃走的士兵就握紧了手里的武器。现在鼓就在眼前。卡德兰挡在通往鼓台的路上，伸手取下了自己的兵器。"
-		portraits.append(_story_portrait("war_god", "serious"))
-	else:
-		var event = Nodes.story(node)
-		if node.get("kind") in ["battle", "elite"] and not event.is_empty():
-			title += " · " + str(event.title)
-			body = str(event.intro)
-		else:
-			var enemies = "、".join(tile.enemies.map(func(id): return Catalog.ENEMIES[id].name))
-			body = "%s挡住了去路。你停下脚步，握紧了武器。" % enemies
-		if encounter.ambush:
-			body += "\n\n敌人从遮蔽物后抢先扑了出来。"
-	_show_story(title, "旁白", body, _story_scene_at(cell), portraits,
+	if "war_god" not in run.data.tiles[cell].enemies:
+		_deck_dialog(true)
+		return
+	var body := "鼓声从营里传来。你在路上听过同样的鼓点，每响一下，那些想逃走的士兵就握紧了手里的武器。现在鼓就在眼前。卡德兰挡在通往鼓台的路上，伸手取下了自己的兵器。"
+	var portraits := [_story_portrait("hero", "serious"), _story_portrait("war_god", "serious")]
+	_show_story(_node_title(cell) + " · 战鼓", "旁白", body, _story_scene_at(cell), portraits,
 		[_node_option("deck", "编辑卡组与开战")], func(_option: String): _deck_dialog(true), {}, _node_tint())
 
 func _deck_dialog(encounter: bool = false) -> void:
@@ -1576,6 +1427,8 @@ func _deck_dialog(encounter: bool = false) -> void:
 			opponent = run.actor(pending.npc).name
 		elif not enemies.is_empty():
 			opponent = Catalog.ENEMIES["war_god" if "war_god" in enemies else enemies[0]].name
+		if pending.ambush:
+			opponent += " · 伏击先手"
 	editor.setup(run.data.actors, run.card_deck(), encounter, (box.get_parent() as Control).size.x, opponent)
 	editor.completed.connect(func(deck: Array):
 		var saved: Dictionary = run.save_card_deck(deck)
@@ -1598,7 +1451,7 @@ func _deck_dialog(encounter: bool = false) -> void:
 			_refresh())
 	editor.cancelled.connect(func():
 		if encounter:
-			_show_encounter_intro()
+			_cell_actions()
 		else:
 			_close_modal())
 
@@ -1745,22 +1598,48 @@ func _final_battle_page(index: int) -> void:
 				_close_modal()
 				_refresh(), {})
 
-func _show_npc_encounter(visitor: String) -> void:
-	var cell: String = run.actor(visitor).position
-	var id: String = run.data.tiles[cell].npc
-	var npc = run.actor(id)
-	if npc.is_empty() or npc.joined or npc.position != cell:
+func _recruit_dialog(id: String, feedback: String = "") -> void:
+	var person: Dictionary = run.actor(id)
+	if person.is_empty() or person.joined:
 		return
-	var intro = narrative.encounter_intro(visitor, id)
-	if not intro.ok or run.data.story[id].met:
-		return
-	if selected_id != visitor:
-		selected_id = visitor
-		view.focus_cell(cell)
+	var quote: Dictionary = run.recruit_quote(id)
+	var box := _modal("招募伙伴", 570, 485)
+	box.get_parent().name = "CompanionRecruitment"
+	var summary := HBoxContainer.new()
+	box.add_child(summary)
+	var card := Cards.definition(id)
+	CardUI.art(summary, card, Vector2(132, 135))
+	var description := VBoxContainer.new()
+	description.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	summary.add_child(description)
+	_text(description, person.name, 25, gold)
+	_text(description, person.title + " · " + Cards.stats(card), 16, muted)
+	_text(description, card.trait, 16)
+	var talent := Cards.breakthrough_talent(id)
+	_text(box, "第三次突破 · " + talent.name, 17, gold)
+	_text(box, talent.text, 16)
+	_text(box, "远征队持有 %d 灯铢" % run.data.lamp_coins, 17, muted)
+	if not quote.ok or not feedback.is_empty():
+		_text(box, str(quote.get("message", feedback)), 16, gold)
+	var buy := _button(box, "招募 · %d 灯铢" % Cards.RECRUIT_PRICE, func():
+		var result: Dictionary = run.recruit_companion(id)
+		if not result.ok:
+			_recruit_dialog(id, result.message)
+			return
+		_close_modal()
+		toast_text = "%s入队，伙伴牌已解锁。" % person.name
 		_refresh()
-	_node_dialog()
+		if run.data.has("pending_story_rewards"):
+			_show_pending_story_rewards(), not quote.ok)
+	buy.name = "ConfirmCompanionRecruitment"
+	if person.hp <= 0:
+		_button(box, "打开补给", _item_dialog.bind("hero"))
+	_button(box, "关闭", _close_modal)
 
 func _talk(id: String) -> void:
+	if not run.actor(id).get("joined", false):
+		_recruit_dialog(id)
+		return
 	var intro = narrative.encounter_intro(selected_id, id)
 	if not intro.ok:
 		_notice(intro.message)
@@ -1768,6 +1647,9 @@ func _talk(id: String) -> void:
 	_begin_dialogue(id)
 
 func _begin_dialogue(id: String) -> void:
+	if not run.actor(id).get("joined", false):
+		_recruit_dialog(id)
+		return
 	dialogue_subject = id
 	_render_dialogue()
 
@@ -2139,7 +2021,6 @@ func _story_portrait(id: String, pose: String = "") -> Texture2D:
 	return load(path) if ResourceLoader.exists(path) else null
 
 func _render_dialogue(response: String = "", record_past: bool = false) -> void:
-	var was_met: bool = run.data.story.get(dialogue_subject, {}).get("met", false)
 	var d = narrative.dialogue(selected_id, dialogue_subject)
 	if not d.ok:
 		_notice(d.message)
@@ -2157,12 +2038,8 @@ func _render_dialogue(response: String = "", record_past: bool = false) -> void:
 		var on_read = Callable()
 		if record_past:
 			on_read = _record_character_dialogue.bind(dialogue_subject, "codex_past_read", true)
-		elif response.is_empty() and not person.joined and not run.data.story[dialogue_subject].has("codex_first_meeting"):
-			on_read = _record_character_dialogue.bind(dialogue_subject, "codex_first_meeting", text)
 		_show_story(d.title, speaker, text, scene, portraits, d.options, _story_choice,
 			{"结束交谈": _close_modal}, Color.WHITE, 0, {}, on_read)
-	if not was_met:
-		run.save_game()
 
 func _record_character_dialogue(id: String, key: String, value: Variant) -> void:
 	var record: Dictionary = run.data.story[id]
@@ -2183,32 +2060,11 @@ func _personal_quest() -> void:
 		_story_choice, actions)
 
 func _story_choice(option_id: String) -> void:
-	if option_id == "duel":
-		var person = run.actor(dialogue_subject)
-		var scene = _story_scene_at(person.position)
-		_show_story(person.name, person.name, "真要交手？双方都可能受伤。", scene, [_story_portrait(dialogue_subject, "battle")],
-			[_node_option("start_duel", "我想清楚了，来吧。", true), _node_option("back", "我收回刚才的话，今天先不打。", true)],
-			func(choice: String):
-				if choice == "start_duel":
-					_story_choice(choice)
-				else:
-					_render_dialogue(), {"结束交谈": _close_modal})
-		return
-	var result = narrative.choose(selected_id, dialogue_subject, "duel" if option_id == "start_duel" else option_id)
+	var result = narrative.choose(selected_id, dialogue_subject, option_id)
 	if not result.ok:
 		_notice(result.message, _render_dialogue)
 		return
-	var gift: String = result.get("relic", "")
-	if option_id == "join" and not gift.is_empty():
-		var person = run.actor(dialogue_subject)
-		_queue_story_rewards(_node_title(person.position), [{"kind": "relic", "id": gift, "count": 1}])
-		run.save_game()
-		_refresh()
-		_show_story(person.name, person.name, result.response, _story_scene_at(person.position),
-			[_story_portrait(selected_id), _story_portrait(dialogue_subject, "friendly")], [],
-			func(_option: String): _show_pending_story_rewards(), {})
-		return
-	if option_id in ["join", "start_duel", "personal_a", "personal_b"]:
+	if option_id in ["personal_a", "personal_b"]:
 		run.save_game()
 	var response: String = result.get("response", "")
 	if response.is_empty() and _show_relic_intro(_render_dialogue):
@@ -2218,8 +2074,6 @@ func _story_choice(option_id: String) -> void:
 		_refresh()
 	elif result.get("quest", false):
 		_personal_quest()
-	elif result.get("battle", false):
-		_deck_dialog(true)
 	elif result.has("rescue"):
 		_item_dialog(selected_id)
 	else:

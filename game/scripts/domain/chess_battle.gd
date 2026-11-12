@@ -136,7 +136,7 @@ static func enemy_definition(expedition: RefCounted, id: String, leader: bool = 
 		"diagonal": leader, "trait": "横竖斜走一格。" if leader else "横竖走一格，可沿无阻挡的直线攻击两格。" if ranged else "横竖移动或攻击一格。"}
 
 func definition(id: String) -> Dictionary:
-	return enemy_definition(run, id.trim_prefix("foe:")) if id.begins_with("foe:") else Cards.definition(id)
+	return enemy_definition(run, id.trim_prefix("foe:")) if id.begins_with("foe:") else Cards.owned_definition(id, run.data.actors)
 
 func _piece(entry: Dictionary, side: int, leader: bool = false) -> Dictionary:
 	var piece := entry.duplicate()
@@ -175,8 +175,15 @@ func moves(from: int) -> Dictionary:
 		var strike := not other.is_empty()
 		if not ((actor.get("diagonal", false) and maxi(dx, dy) == 1) or (straight and length <= (range_attack if strike else walking))):
 			continue
-		if straight and length == 2 and not board[(from + target) >> 1].is_empty():
-			continue
+		if straight and length > 1:
+			var step := floori(float(target - from) / length)
+			var blocked := false
+			for offset in range(1, length):
+				if not board[from + step * offset].is_empty():
+					blocked = true
+					break
+			if blocked:
+				continue
 		options[target] = "attack" if strike else "move"
 	return options
 
@@ -503,6 +510,8 @@ func _finish(result: String) -> void:
 	if result == "victory":
 		if npc.is_empty():
 			run.data.tiles[position].enemies = []
+			if not final_battle:
+				run.data.peace[position] = true
 		else:
 			run.actor(npc).hp = 0
 			run.data.flags["duel_won_" + npc] = true
@@ -536,9 +545,8 @@ func _grant_victory(npc: String) -> void:
 		var inventory: Dictionary = run.actor(receiver).inventory
 		inventory.salve = int(inventory.get("salve", 0)) + 1
 		run.data.rewards[key] = true
-		if npc.is_empty():
-			coins = run.reward_coins("battle", Nodes.battle_coins(int(run.data.seed), position, Nodes.is_elite(enemy_types)))
-			run.data.lamp_coins += coins
+		coins = run.reward_coins("battle", Nodes.battle_coins(int(run.data.seed), position, Nodes.is_elite(enemy_types), final_battle))
+		run.data.lamp_coins += coins
 		duplicate = run.data.relic_seen.has(pending.relic_offer)
 		relic = run.claim_relic_reward(pending.battle_uid, pending.relic_offer, receiver, position)
 		run.data.item_revision += 1

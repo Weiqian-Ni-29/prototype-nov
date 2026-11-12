@@ -17,12 +17,12 @@ func expect(value: bool, message: String) -> void:
 		failures += 1
 		printerr("FAIL: ", message)
 
-func fixture() -> RefCounted:
+func fixture(enemy: String = "boar") -> RefCounted:
 	var run := Run.new()
 	run.save_path = "user://test-card-chess-domain.json"
 	run.new_run(41, "wayfarer")
 	var cell: String = run.actor("hero").position
-	run.data.tiles[cell].enemies = ["boar"]
+	run.data.tiles[cell].enemies = [enemy]
 	var battle := Chess.new()
 	expect(battle.begin(run, {"position": cell, "origin": cell, "npc": "", "ambush": false}, run.card_deck()).ok, "Battle fixture starts")
 	return battle
@@ -77,7 +77,8 @@ func check_rules() -> void:
 	var before: int = battle.run.actor("hero").inventory.salve
 	expect(battle.move(4, 1) and battle.outcome == "victory" and battle.run.data.pending_battle.is_empty()
 		and battle.run.data.tiles[spot].enemies.is_empty(), "Capturing the enemy commander settles the actual encounter")
-	expect(battle.run.actor("hero").inventory.salve == before + 1 and battle.run.data.has("pending_victory"),
+	expect(battle.run.actor("hero").inventory.salve == before + 1 and battle.run.data.has("pending_victory")
+		and battle.run.data.peace.has(spot) and battle.run.data.pending_victory.coins >= 4,
 		"Victory awards loot and creates a saved receipt")
 	battle._finish("victory")
 	expect(battle.run.actor("hero").inventory.salve == before + 1, "Settlement cannot grant twice")
@@ -176,6 +177,67 @@ func check_enemy_strategy() -> void:
 	expect(battle.outcome == "defeat" and battle.board[7].get("leader", false) and battle.board[3].hp == 1,
 		"Enemy takes the immediate commander win over a higher-damage attack on a partner")
 
+func check_companion_growth() -> void:
+	var run := Run.new()
+	run.save_path = "user://test-companion-growth.json"
+	run.new_run(41, "wayfarer")
+	expect(not "lorne" in Cards.collection(run.data.actors) and Cards.valid_deck(run.card_deck(), run.data.actors, true),
+		"Starter support makes a complete deck and named cards require recruitment")
+	expect(not run.recruit_companion("lorne").ok and run.data.lamp_coins == 8, "Recruitment requires the local companion")
+	var cell: String = run.actor("lorne").position
+	run.retreat_party(cell)
+	run.data.tiles[cell].enemies = ["boar"]
+	expect(not run.recruit_companion("lorne").ok, "Enemies block recruitment")
+	run.data.tiles[cell].enemies.clear()
+	run.data.lamp_coins = 7
+	expect(not run.recruit_companion("lorne").ok and run.data.lamp_coins == 7, "Recruitment requires the full price")
+	run.data.lamp_coins = 8
+	expect(run.recruit_companion("lorne").ok and run.data.lamp_coins == 0 and "lorne" in Cards.collection(run.data.actors)
+		and not run.recruit_companion("lorne").ok, "Recruitment charges once and unlocks the companion card")
+	expect(not run.breakthrough_companion("lorne", 0).ok, "Breakthrough requires funds")
+	run.data.lamp_coins = 44
+	var normal_path: String = run.save_path
+	run.save_path = "user://missing-growth-%d/save.json" % OS.get_process_id()
+	expect(not run.breakthrough_companion("lorne", 0).ok and run.data.lamp_coins == 44
+		and run.actor("lorne").get("breakthrough", 0) == 0, "Write failure rolls back rank and coins")
+	run.save_path = normal_path
+	var base := Cards.definition("lorne")
+	expect(run.breakthrough_companion("lorne", 0).ok and not run.breakthrough_companion("lorne", 0).ok
+		and Cards.owned_definition("lorne", run.data.actors).hp == base.hp + 2 and run.data.lamp_coins == 36,
+		"The first breakthrough raises health and a stale confirmation cannot buy the next rank")
+	expect(run.breakthrough_companion("lorne", 1).ok and Cards.owned_definition("lorne", run.data.actors).armor == base.armor + 1,
+		"The second breakthrough raises starting armor")
+	expect(run.breakthrough_companion("lorne", 2).ok and run.data.lamp_coins == 0 and not run.breakthrough_companion("lorne", 3).ok,
+		"The third breakthrough unlocks the talent and caps progression")
+	var saved := Run.new()
+	saved.save_path = normal_path
+	expect(saved.load_game(normal_path).ok and saved.actor("lorne").breakthrough == 3,
+		"Paid recruitment and breakthroughs survive loading")
+	var deck: Array = saved.card_deck()
+	deck[1] = "lorne"
+	saved.data.tiles[cell].enemies = ["boar"]
+	var battle := Chess.new()
+	expect(battle.begin(saved, {"position": cell, "origin": cell, "npc": "", "ambush": false}, deck).ok,
+		"Recruited cards enter a real battle")
+	battle.board[9] = battle.board[10]
+	battle.board[10] = {}
+	battle.hands[Chess.PLAYER] = ["lorne"]
+	expect(battle.play(0, 10) and battle.board[10].attack == base.attack + 1 and battle.board[10].hp == base.hp + 3 + Cards.SEED_BONUS
+		and battle.moves(10).get(1) == "attack", "The breakthrough card deploys with its improved stats and three-square range")
+	battle.board[4] = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
+	expect(not battle.moves(10).has(1), "A blocker still stops a three-square shot")
+
+func check_battle_income() -> void:
+	for reward in [["furnace_elite", 8, 12], ["war_god", 16, 20]]:
+		var battle = fixture(reward[0])
+		var before: int = battle.run.data.lamp_coins
+		battle._finish("victory")
+		var coins: int = battle.run.data.pending_victory.coins
+		expect(coins >= reward[1] and coins <= reward[2] and battle.run.data.lamp_coins == before + coins,
+			"Victory pays its battle-tier coin reward and records it on the receipt")
+		battle._finish("victory")
+		expect(battle.run.data.lamp_coins == before + coins, "Reopening settlement does not pay twice")
+
 func click(node: Button) -> void:
 	expect(node != null and not node.disabled, "Visible enabled button")
 	if node != null and not node.disabled:
@@ -209,7 +271,7 @@ func check_ui() -> void:
 		return
 	editor.search.text = "治疗"
 	editor.search.text_changed.emit(editor.search.text)
-	expect(editor.grid.get_child_count() == 1 and editor.selected == "eve", "Search finds the healing card by effect")
+	expect(editor.grid.get_child_count() == 1 and editor.selected == "support_medic", "Search finds the starter healing card by effect")
 	editor.search.clear()
 	editor.search.text_changed.emit("")
 	await click(editor.find_child("Remove_pike", true, false))
@@ -244,7 +306,7 @@ func check_ui() -> void:
 		await process_frame
 		await click(button_named(game.modal_layer, "确认"))
 		game._continue_run()
-		expect(game.modal_layer.has_node("StoryScreen") and not game.run.data.pending_battle.is_empty(),
+		expect(game.modal_layer.find_child("CardDeckEditor", true, false) != null and not game.run.data.pending_battle.is_empty(),
 			"Continuing resumes the saved encounter before the board")
 	game.queue_free()
 	await process_frame
@@ -253,6 +315,8 @@ func execute() -> void:
 	check_rules()
 	check_fatigue()
 	check_enemy_strategy()
+	check_companion_growth()
+	check_battle_income()
 	await check_ui()
 	print("CHESS BATTLE: %d checks, %d failures" % [checks, failures])
 	quit(0 if failures == 0 else 1)

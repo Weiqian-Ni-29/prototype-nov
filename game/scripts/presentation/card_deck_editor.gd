@@ -6,6 +6,7 @@ signal cancelled
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const UI = preload("res://scripts/presentation/card_ui.gd")
 var available: Array[String]
+var roster: Dictionary
 var deck: Array
 var selected := ""
 var kind := "all"
@@ -26,6 +27,7 @@ var in_encounter := false
 func setup(actors: Dictionary, current: Array, encounter: bool, width: float, opponent: String = "") -> void:
 	name = "CardDeckEditor"
 	deck = current.duplicate()
+	roster = actors
 	available = Cards.collection(actors)
 	in_encounter = encounter
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -131,7 +133,7 @@ func _filter() -> void:
 	var query := search.text.strip_edges().to_lower()
 	var results: Array[String] = []
 	for id in available:
-		var card := Cards.definition(id)
+		var card := Cards.owned_definition(id, roster)
 		if (kind == "all" or card.kind == kind) and (element.is_empty() or card.get("element") == element) \
 				and (query.is_empty() or query in (str(card.name) + str(card.trait)).to_lower()):
 			results.append(id)
@@ -144,7 +146,7 @@ func _filter() -> void:
 	_render_selection()
 
 func _add_tile(id: String) -> void:
-	var card := Cards.definition(id)
+	var card := Cards.owned_definition(id, roster)
 	var button := UI.button(grid, "", _choose.bind(id))
 	button.name = "Collection_" + id
 	button.custom_minimum_size = Vector2(92, 125)
@@ -173,7 +175,7 @@ func _render_selection() -> void:
 	if selected.is_empty():
 		UI.label(detail, "没有符合条件的卡牌。", 16, UI.MUTED)
 		return
-	var card := Cards.definition(selected)
+	var card := Cards.owned_definition(selected, roster)
 	var row := HBoxContainer.new()
 	detail.add_child(row)
 	UI.art(row, card, Vector2(58, 61))
@@ -224,7 +226,7 @@ func _render_deck() -> void:
 		var count := deck.count(id)
 		if count == 0:
 			continue
-		var card := Cards.definition(id)
+		var card := Cards.owned_definition(id, roster)
 		var row := HBoxContainer.new()
 		slots.add_child(row)
 		UI.art(row, card, Vector2(32, 34))

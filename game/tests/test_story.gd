@@ -89,7 +89,7 @@ func check_personal_choices() -> void:
 			hero.position = person.position
 			run.data.tiles[person.position].enemies.clear()
 			check_personal_blocked(story, run, "hero", id, "not recruited")
-			expect(story.choose("hero", id, "join").ok, id + " joins before personal quest")
+			expect(run.join_companion(id, "hero").ok, id + " joins before personal quest")
 			expect(str(run.data.story[id].get("personal_choice", "")).is_empty(), id + " recruitment does not auto-select a branch")
 			run.data.story[id].erase("personal_choice")
 			expect(run.save_game().ok, id + " save old unchosen state")
@@ -112,7 +112,7 @@ func check_personal_choices() -> void:
 			var ally = run.actor(ally_id)
 			ally.position = person.position
 			check_personal_blocked(story, run, ally_id, id, "visitor not recruited")
-			expect(story.choose("hero", ally_id, "join").ok, "Recruit local visitor for " + id)
+			expect(run.join_companion(ally_id, "hero").ok, "Recruit local visitor for " + id)
 			var visitor = "hero" if branch == "personal_a" else ally_id
 			var before = unrelated_state(run)
 			var dialogue = story.dialogue(visitor, id)
@@ -177,7 +177,7 @@ func check_personal_boundaries() -> void:
 	var person = run.actor("lorne")
 	run.actor("hero").position = person.position
 	run.data.tiles[person.position].enemies.clear()
-	expect(story.choose("hero", "lorne", "join").ok, "Recruit boundary fixture companion")
+	expect(run.join_companion("lorne", "hero").ok, "Recruit boundary fixture companion")
 	var before = run.data.duplicate(true)
 	expect(story.choose("hero", "lorne", "leave").ok and run.data == before, "Cancel leaves no personal decision")
 	expect(not story.choose("hero", "lorne", "personal_unknown").ok and run.data == before, "Unknown personal option cannot mutate the run")
@@ -212,7 +212,7 @@ func check_personal_boundaries() -> void:
 			"Old choice cannot be replaced and keeps its original ending")
 	var longroad = run.actor("longroad")
 	longroad.position = run.actor("hero").position
-	expect(story.choose("hero", "longroad", "join").ok, "Recruit the companion for a saved preview choice")
+	expect(run.join_companion("longroad", "hero").ok, "Recruit the companion for a saved preview choice")
 	run.data.story.longroad.personal_choice = "war_b"
 	expect(run.save_game().ok and loaded.load_game(run.save_path).ok, "Load a completed choice from the first war-story draft")
 	var preview_story = Story.new(loaded)
@@ -223,7 +223,7 @@ func check_personal_boundaries() -> void:
 		"The betrayal rewrite does not retroactively change a choice saved on the first draft")
 	for id in LegacyOutcomes.WAR_OUTCOMES:
 		run.actor(id).position = run.actor("hero").position
-		expect(story.choose("hero", id, "join").ok, "Recruit avatar for an existing god choice: " + id)
+		expect(run.join_companion(id, "hero").ok, "Recruit avatar for an existing god choice: " + id)
 		run.data.story[id].personal_choice = "war_a" if id == "seasons" else "war2_a"
 		expect(run.save_game().ok and loaded.load_game(run.save_path).ok, "Load a previous campaign choice for " + id)
 		var old_story = Story.new(loaded)
@@ -270,7 +270,7 @@ func check_legacy_choice_matrix() -> void:
 		var person = run.actor(id)
 		run.actor("hero").position = person.position
 		run.data.tiles[person.position].enemies.clear()
-		expect(story.choose("hero", id, "join").ok, "Recruit legacy matrix companion " + id)
+		expect(run.join_companion(id, "hero").ok, "Recruit legacy matrix companion " + id)
 		var routes = [
 			{"prefix": "personal_", "table": LegacyOutcomes.OUTCOMES},
 			{"prefix": "war_", "table": LegacyOutcomes.PREVIEW_OUTCOMES},
@@ -353,20 +353,14 @@ func check_hero_only_mystery() -> void:
 		run.data.tiles[person.position].enemies.clear()
 		expect(run.join_companion("lorne").ok, "Recruit ordinary visitor")
 		var first_state = run.data.duplicate(true)
-		first_state.story[id].met = true
-		var ordinary = story.dialogue("lorne", id)
-		var familiar = story.dialogue("hero", id)
-		for introduction in [ordinary, familiar]:
-			expect(introduction.ok and introduction.text == Story.COMPANION_LINES[id] and not str(introduction.text).contains("伊文洛")
-				and not str(introduction.text).contains(Story.HERO_LINES[id]) and not str(introduction.text).contains(Story.BACKGROUNDS[id]),
-				id + " first meeting reveals neither familiarity nor the full past to either visitor")
-		expect(run.data == first_state, id + " first meeting only records met, without spending or choosing")
-		expect(not str(Story.HERO_LINES[id]).contains("伊文洛"), id + " hint never reveals the protagonist's name")
-		if Catalog.COMPANIONS[id].race == "神":
-			expect("化身" in ordinary.title and "化身" in familiar.title, id + " appears to both visitors as an avatar")
 		for visitor in ["hero", "lorne"]:
+			expect(not story.dialogue(visitor, id).ok, id + " first encounter is reserved for recruitment")
 			check_topics_blocked(story, run, visitor, id, "subject not recruited")
-		expect(story.choose("hero", id, "join").ok, id + " joins before any past or echo")
+		expect(run.data == first_state, id + " locked conversation does not change any state")
+		expect(not str(Story.HERO_LINES[id]).contains("伊文洛"), id + " hint never reveals the protagonist's name")
+		expect(run.join_companion(id, "hero").ok, id + " joins before any past or echo")
+		if Catalog.COMPANIONS[id].race == "神":
+			expect("化身" in story.dialogue("hero", id).title, id + " is described as an avatar")
 		var ready = run.data.duplicate(true)
 		for visitor in ["hero", "lorne"]:
 			var chat = story.dialogue(visitor, id)
@@ -384,7 +378,7 @@ func check_hero_only_mystery() -> void:
 		hero.position = run.data.start
 		expect(not story.dialogue("hero", id).ok, id + " distant hero cannot hear the hint")
 		check_topics_blocked(story, run, "hero", id, "different tiles")
-		ordinary = story.dialogue("lorne", id)
+		var ordinary = story.dialogue("lorne", id)
 		expect(ordinary.ok and not str(ordinary.text).contains(Story.HERO_LINES[id]), id + " local companion cannot borrow absent hero familiarity")
 		check_past(story, run, "lorne", id, "hero absent")
 		hero.position = person.position
@@ -447,24 +441,17 @@ func execute() -> void:
 		if not r.data.tiles[person.position].enemies.is_empty():
 			expect(not story.dialogue("hero", id).ok, "The encounter has to be cleared first")
 			r.data.tiles[person.position].enemies.clear()
-		var dialogue = story.dialogue("hero", id)
-		expect(dialogue.ok and not dialogue.text.contains(Story.BACKGROUNDS[id]) and dialogue.text == Story.COMPANION_LINES[id], "First meeting gives the immediate introduction without the full background " + id)
-		expect(dialogue.speaker == person.name and dialogue.options.all(func(option): return option.spoken),
-			"First encounter uses the companion's voice and player replies " + id)
-		check_topics_blocked(story, r, "hero", id, "first meeting before recruitment")
-		expect(story.choose("hero", id, "join").ok and person.position == r.actor("hero").position, "Actual recruitment " + id)
+		expect(not story.dialogue("hero", id).ok, "First meeting opens no story for " + id)
+		check_topics_blocked(story, r, "hero", id, "before recruitment")
+		r.data.lamp_coins = 8
+		expect(r.recruit_companion(id).ok and person.position == r.actor("hero").position and r.data.lamp_coins == 0,
+			"Paid recruitment " + id)
+		r.data.erase("pending_story_rewards")
 		check_past(story, r, "hero", id, "immediately after first meeting and recruitment")
 		expect(str(r.data.story[id].get("personal_choice", "")).is_empty(), id + " learning the background never selects a personal branch")
 
-	var haunt: String = r.data.nodes.keys().filter(func(cell): return r.node_at(cell).kind == "haunt")[0]
-	r.retreat_party(haunt)
-	expect(not r.use_node("hero", "settle").ok, "The hero must investigate before settlement")
-	expect(r.use_node("hero", "inspect").ok and r.node_at(haunt).get("investigated", false)
-		and r.node_at(haunt).result == "" and not r.data.peace.has(haunt),
-		"Investigation supplies evidence but does not weaken the boss")
-	expect(r.use_node("hero", "settle").ok and r.data.peace.has(haunt), "A settled haunting weakens the boss")
-	var peace_count = r.data.peace.size()
-	expect(not r.use_node("hero", "settle").ok and r.data.peace.size() == peace_count, "Repeated node cannot count twice")
+	r.data.peace[positions.keys()[0]] = true
+
 	var cells = r.data.tiles.keys()
 	r.data.explored.clear()
 	r.data.visited.clear()

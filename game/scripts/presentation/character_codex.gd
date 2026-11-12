@@ -546,10 +546,7 @@ func _equipment(id: String) -> void:
 	manage.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 func _piece(id: String) -> void:
-	if id != "hero" and id not in Cards.collection(game.run.data.actors):
-		game._text(details, "招募后解锁这位伙伴的卡牌。", 16, game.muted)
-		return
-	var piece := Chess.commander_definition(game.run) if id == "hero" else Cards.definition(id)
+	var piece := Chess.commander_definition(game.run) if id == "hero" else Cards.owned_definition(id, game.run.data.actors)
 	game._text(details, "主战者 · 开局登场" if id == "hero" else "伙伴 · 部署至己方半场", 18, game.gold)
 	game._text(details, Cards.stats(piece), 16)
 	game._text(details, piece.trait, 16)
@@ -557,6 +554,38 @@ func _piece(id: String) -> void:
 		game._text(details, "森林采集时多拿一份。", 16)
 	elif id == "grit":
 		game._text(details, "可辨识已发现敌方主战者的属性。", 16)
+	if id != "hero":
+		_breakthroughs(id)
+
+func _breakthroughs(id: String) -> void:
+	var person: Dictionary = game.run.actor(id)
+	var rank := int(person.get("breakthrough", 0))
+	game._text(details, "突破 %d / 3 · 持有 %d 灯铢" % [rank, game.run.data.lamp_coins], 18, game.gold)
+	var talent := Cards.breakthrough_talent(id)
+	for index in Cards.BREAKTHROUGH_PRICES.size():
+		var benefit: String = Cards.BREAKTHROUGH_BENEFITS[index]
+		if index == 2:
+			benefit = "攻击 +1 · " + talent.name
+		var cost := "已完成" if index < rank else "%d 灯铢" % Cards.BREAKTHROUGH_PRICES[index]
+		game._text(details, "%d 阶 · %s · %s" % [index + 1, benefit, cost], 15, game.ink if index < rank else game.muted)
+	if rank < 3:
+		game._text(details, talent.text, 15, game.muted)
+	if not person.joined:
+		game._text(details, "招募后解锁伙伴牌和突破。", 15, game.muted)
+	elif rank < Cards.BREAKTHROUGH_PRICES.size():
+		var quote: Dictionary = game.run.breakthrough_quote(id)
+		var feedback: Label = game._text(details, str(quote.get("message", "")), 15, game.gold)
+		feedback.visible = not quote.ok
+		var upgrade: Button = game._button(footer, "突破至 %d 阶 · %d 灯铢" % [rank + 1, Cards.BREAKTHROUGH_PRICES[rank]], func():
+			var result: Dictionary = game.run.breakthrough_companion(id, rank)
+			if result.ok:
+				game._refresh()
+				_set_tab(2)
+			else:
+				feedback.text = result.message
+				feedback.show(), not quote.ok)
+		upgrade.name = "ConfirmCompanionBreakthrough"
+		upgrade.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 func _stories(id: String) -> void:
 	var records: Array = game.narrative.character_records(id)

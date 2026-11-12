@@ -4,9 +4,10 @@ const Hex = preload("res://scripts/domain/hex_map.gd")
 const STARTING_COINS = 8
 const PRICES = {"salve": 6, "ether": 7, "trail_food": 3, "trail_blade": 12, "padded_coat": 15, "lamp_charm": 18}
 const GEAR = ["trail_blade", "padded_coat", "lamp_charm"]
+const RETIRED_KINDS = ["choice", "haunt"]
 const LABELS = {
 	"story": "地点", "trade": "交易", "supply": "补给", "rest": "补给点",
-	"choice": "委托", "haunt": "亡灵", "cache": "寻宝", "battle": "遭遇", "elite": "险地",
+	"cache": "寻宝", "battle": "遭遇", "elite": "险地",
 }
 static var events: Dictionary = {}
 static var pools: Dictionary = {}
@@ -24,6 +25,13 @@ static func _load_events() -> void:
 				if not pools.has(key):
 					pools[key] = []
 				pools[key].append(event.id)
+	# Retain the old seeded allocation without loading the retired story text.
+	for terrain in ["plains", "forest", "mountain", "ruins", "desert", "swamp"]:
+		for kind in RETIRED_KINDS:
+			pools[kind + ":" + terrain] = legacy_event_ids(kind, terrain)
+
+static func legacy_event_ids(kind: String, terrain: String) -> Array:
+	return ["%s_%s_1" % [terrain, kind], "%s_%s_2" % [terrain, kind]]
 
 static func story(node: Dictionary) -> Dictionary:
 	_load_events()
@@ -41,9 +49,11 @@ static func label(kind: String) -> String:
 static func is_elite(types: Array) -> bool:
 	return types.any(func(type): return str(type).ends_with("_elite") or type == "lamp_boss")
 
-static func battle_coins(seed_value: int, cell: String, elite: bool) -> int:
+static func battle_coins(seed_value: int, cell: String, elite: bool, finale: bool = false) -> int:
 	var roller = RandomNumberGenerator.new()
 	roller.seed = hash("battle-coins:%d:%s" % [seed_value, cell])
+	if finale:
+		return roller.randi_range(16, 20)
 	return roller.randi_range(8, 12) if elite else roller.randi_range(4, 7)
 
 static func _kind(tile: Dictionary, has_relic: bool, defeated: bool, roll: int) -> String:
@@ -144,6 +154,39 @@ static func generate(tiles: Dictionary, seed_value: int, relic_sites: Dictionary
 		elif kind in ["battle", "elite"]:
 			node.coins = battle_coins(seed_value, cell, kind == "elite")
 	return nodes
+
+static func replace_retired_nodes(data: Dictionary) -> void:
+	# Keep the old placement and story caps so only the retired cells change.
+	_load_events()
+	var roller := RandomNumberGenerator.new()
+	for cell in data.nodes:
+		var previous: Dictionary = data.nodes[cell]
+		if previous.kind not in RETIRED_KINDS:
+			continue
+		if cell == data.boss:
+			data.nodes[cell] = {"kind": "story", "event": "", "result": ""}
+			continue
+		var tile: Dictionary = data.tiles[cell]
+		roller.seed = hash("replacement-battle:%s:%s" % [data.seed, cell])
+		var opening := Hex.distance(Hex.coord(cell), Hex.coord(data.start)) <= 2
+		var elite := not opening and roller.randi_range(0, 4) == 0
+		var kind := "elite" if elite else "battle"
+		var biome: String = tile.base_terrain
+		var candidates: Array = pools[kind + ":" + biome]
+		var event: String = candidates[roller.randi_range(0, candidates.size() - 1)]
+		var cleared: bool = not previous.result.is_empty() or data.peace.has(cell)
+		data.nodes[cell] = {"kind": kind, "event": event, "result": "cleared" if cleared else "",
+			"coins": battle_coins(int(data.seed), cell, elite)}
+		tile.resource = ""
+		tile.quantity = 0
+		tile.hidden = false
+		if cleared:
+			tile.enemies = []
+		elif elite:
+			tile.enemies = ["furnace_elite" if biome in ["mountain", "ruins", "desert"] else "hunter_elite"]
+		else:
+			tile.enemies = ["boar"] if opening else Hex._composition(biome, roller, true)
+		tile.discovered_enemy = not cleared and data.get("visited", {}).has(cell)
 
 static func shop_supplies(biome: String, roller: RandomNumberGenerator) -> Dictionary:
 	var stock := {"salve": 1, "ether": 1, "trail_food": 1}

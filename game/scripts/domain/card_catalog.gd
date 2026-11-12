@@ -4,7 +4,19 @@ const Catalog = preload("res://scripts/domain/catalog.gd")
 const DECK_SIZE = 12
 const OPENING_HAND = 3
 const SEED_BONUS = 2
-const DEFAULT_DECK = ["highdrake", "lorne", "eve", "oathguard", "ember", "blade", "pike", "coat", "coat", "ward", "rain", "sun"]
+const RECRUIT_PRICE = 8
+const BREAKTHROUGH_PRICES = [8, 14, 22]
+const BREAKTHROUGH_BENEFITS = ["生命上限 +2", "生命上限 +1 · 初始护甲 +1", "攻击 +1 · 解锁天赋"]
+const DEFAULT_DECK = ["support_vanguard", "support_archer", "support_medic", "support_guard", "support_caster", "blade", "pike", "coat", "coat", "ward", "rain", "sun"]
+const LEGACY_STARTERS = {"highdrake": "support_vanguard", "lorne": "support_archer", "eve": "support_medic",
+	"oathguard": "support_guard", "ember": "support_caster"}
+const SUPPORT = {
+	"support_vanguard": {"name": "远征先锋", "icon": "frontier_guard_weapon", "element": "earth", "attack": 4, "hp": 5, "armor": 1, "move": 2, "range": 2, "trait": "横竖最多走或攻击两格，路径上的棋子会挡路。"},
+	"support_archer": {"name": "远征弓手", "icon": "ranged_sight", "element": "wind", "attack": 3, "hp": 4, "armor": 0, "move": 1, "range": 2, "trait": "横竖走一格，可沿无阻挡的直线攻击两格。"},
+	"support_medic": {"name": "远征医师", "icon": "clean_bandage_roll", "element": "water", "attack": 2, "hp": 4, "armor": 0, "move": 1, "range": 1, "diagonal": true, "heal": 2, "trait": "横竖斜走一格，落位时治疗相邻且缺血最多的友方 2 点生命。"},
+	"support_guard": {"name": "远征卫士", "icon": "shield", "element": "earth", "attack": 2, "hp": 6, "armor": 2, "move": 1, "range": 1, "trait": "横竖走一格，带 2 点护甲登场。"},
+	"support_caster": {"name": "远征术士", "icon": "banked_ember_box", "element": "fire", "attack": 3, "hp": 4, "armor": 0, "move": 1, "range": 1, "trait": "横竖走一格，火攻受天气影响。"},
+}
 const PARTNERS = {
 	"highdrake": {"attack": 5, "hp": 6, "armor": 1, "element": "earth", "move": 2, "trait": "横竖最多走两格，路径上的棋子会挡路。"},
 	"lorne": {"attack": 3, "hp": 5, "armor": 0, "element": "wind", "range": 2, "trait": "横竖走一格，可沿无阻挡的直线攻击两格。"},
@@ -28,10 +40,21 @@ const WEATHER = {
 	"sun": {"name": "烈日", "hint": "火攻 +1 · 水攻 −1", "damage": {"fire": 1, "water": -1}},
 	"river": {"name": "冥河", "hint": "敌方攻击 −1", "damage": {}},
 }
+const TALENTS = {
+	"diagonal": {"name": "斜行", "text": "可以斜向移动或攻击一格。", "changes": {"diagonal": true}},
+	"march": {"name": "疾行", "text": "可以横竖移动两格，路径须畅通。", "changes": {"move": 2}},
+	"range": {"name": "远射", "text": "可沿无阻挡的直线攻击三格。", "changes": {"range": 3}},
+	"heal": {"name": "援护", "text": "落位时治疗相邻、缺血最多的一名友方 4 点生命。", "changes": {"heal": 4}},
+	"guard": {"name": "坚守", "text": "入场额外获得 2 点护甲。", "changes": {}},
+}
 
-static func definition(id: String) -> Dictionary:
+static func definition(id: String, rank: int = 0) -> Dictionary:
 	if ACTIONS.has(id):
 		return ACTIONS[id]
+	if SUPPORT.has(id):
+		var support: Dictionary = SUPPORT[id].duplicate()
+		support.kind = "partner"
+		return support
 	if not Catalog.COMPANIONS.has(id):
 		return {}
 	var actor: Dictionary = Catalog.COMPANIONS[id]
@@ -43,16 +66,49 @@ static func definition(id: String) -> Dictionary:
 	entry.merge(PARTNERS.get(id, {}), true)
 	if entry.move > 1:
 		entry.range = maxi(entry.range, entry.move)
+	if rank >= 1:
+		entry.hp += 2
+	if rank >= 2:
+		entry.hp += 1
+		entry.armor += 1
+	if rank >= 3:
+		var talent := breakthrough_talent(id)
+		entry.attack += 1
+		entry.armor += int(talent.get("armor_bonus", 0))
+		entry.merge(talent.changes, true)
+		entry.trait += "\n天赋 · %s。%s" % [talent.name, talent.text]
 	return entry
+
+static func breakthrough_talent(id: String) -> Dictionary:
+	if id in ["eve", "fieldmedic", "mistleaf"]:
+		return TALENTS.heal
+	if id in ["grit", "oathguard", "granite", "stone_guard", "snowforge", "siltguard"]:
+		return {"name": TALENTS.guard.name, "text": TALENTS.guard.text, "changes": {}, "armor_bonus": 2}
+	if id in ["highdrake", "ember", "cloudscale", "wind_runner"]:
+		return TALENTS.diagonal
+	return TALENTS.range if Catalog.COMPANIONS[id].attack_delivery == "ranged" else TALENTS.march
+
+static func owned_definition(id: String, actors: Dictionary) -> Dictionary:
+	return definition(id, int(actors.get(id, {}).get("breakthrough", 0)))
 
 static func collection(actors: Dictionary) -> Array[String]:
 	var result: Array[String] = []
-	result.assign(PARTNERS.keys())
+	result.assign(SUPPORT.keys())
 	for id in Catalog.COMPANIONS:
 		var actor: Variant = actors.get(id)
-		if not PARTNERS.has(id) and actor is Dictionary and actor.get("joined", false):
+		if actor is Dictionary and actor.get("joined", false):
 			result.append(id)
 	result.append_array(ACTIONS.keys())
+	return result
+
+static func migrate_deck(deck: Array, actors: Dictionary) -> Array:
+	var result := deck.duplicate()
+	for i in result.size():
+		var id: Variant = result[i]
+		if id is String and LEGACY_STARTERS.has(id):
+			var actor: Variant = actors.get(id)
+			if actor is Dictionary and not actor.get("joined", false):
+				result[i] = LEGACY_STARTERS[id]
 	return result
 
 static func limit(id: String) -> int:

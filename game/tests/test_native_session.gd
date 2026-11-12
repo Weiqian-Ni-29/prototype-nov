@@ -21,6 +21,10 @@ func execute() -> void:
 	for id in ["cen","eve","grit"]:
 		r.actor(id).position = p
 		r.join_companion(id)
+	game._refresh()
+	await process_frame
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("user://expedition-sidebar.png")
 	r.data.tiles[p].enemies = ["boar", "archer", "boar"]
 	game._open_current_encounter(false)
 	game._deck_dialog(true)
@@ -94,7 +98,7 @@ func execute() -> void:
 	# A normal NPC conflict uses the same injury state, not a cosmetic non-lethal shortcut.
 	r.actor("ember").position = p
 	r.data.tiles[p].npc = "ember"
-	game.narrative.dialogue("hero","ember")
+	r.data.story.ember.met = true
 	r.actor("ember").hp = 0
 	game._refresh()
 	await create_timer(1.5).timeout
@@ -111,6 +115,30 @@ func execute() -> void:
 	game._refresh()
 	await process_frame
 	expect(game.view.dolls.keys() == ["hero"], "Loading does not add extra map figures")
+	r.data.lamp_coins = 52
+	game._recruit_dialog("ember")
+	await process_frame
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("user://companion-recruitment.png")
+	var recruit = game.modal_layer.find_child("ConfirmCompanionRecruitment", true, false)
+	expect(recruit != null and not recruit.disabled, "Recruitment is offered at the recovered companion's location")
+	recruit.pressed.emit()
+	expect(r.actor("ember").joined and r.data.lamp_coins == 44 and game.modal_layer.has_node("StoryRewards"),
+		"Recruitment charges the wallet and opens the gift receipt")
+	for button in game.modal_layer.find_children("*", "Button", true, false):
+		if button.text.begins_with("返回地图"):
+			button.pressed.emit()
+			break
+	game._show_character_codex()
+	var codex = game.modal_layer.get_node("CharacterCodex")
+	codex._select_character("ember")
+	codex._set_tab(2)
+	await process_frame
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("user://companion-breakthrough.png")
+	for index in [1, 2, 3]:
+		codex.find_child("ConfirmCompanionBreakthrough", true, false).pressed.emit()
+	expect(r.actor("ember").breakthrough == 3 and r.data.lamp_coins == 0, "All three breakthroughs can be purchased in the native UI")
 	print("NATIVE SESSION: %d checks, %d failures" % [checks,failures])
 	game.queue_free()
 	await create_timer(1.0).timeout
