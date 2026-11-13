@@ -330,6 +330,80 @@ func check_ui() -> void:
 	game.queue_free()
 	await process_frame
 
+func _detail_text(view: Node) -> String:
+	var parts: Array[String] = []
+	if view.hover_detail_body != null:
+		for node in view.hover_detail_body.find_children("*", "Label", true, false):
+			parts.append(node.text)
+	return "\n".join(parts)
+
+func check_hover_details() -> void:
+	var game := Main.instantiate()
+	root.add_child(game)
+	await process_frame
+	game.run.save_path = "user://test-hover-details.json"
+	game._start_new()
+	await process_frame
+	var cell: String = game.run.actor("hero").position
+	game.run.data.tiles[cell].enemies = ["boar"]
+	game._open_current_encounter(false)
+	await process_frame
+	await click(game.modal_layer.find_child("ConfirmCardDeck", true, false))
+	var view = game.ui.find_child("ChessBattle", true, false)
+	expect(view != null, "Hover fixture reaches the chess board")
+	if view == null:
+		game.queue_free()
+		await process_frame
+		return
+	view._hover_tile(10)
+	await process_frame
+	await process_frame
+	var text := _detail_text(view)
+	expect(view.hover_detail.visible and view.hover_detail.size.y > 90, "Hovering the commander opens a sized detail popup")
+	expect("移动 · " in text and "攻击 · " in text, "Commander popup lists movement and attack")
+	expect(root.get_visible_rect().encloses(view.hover_detail.get_global_rect()), "The popup stays inside the viewport")
+	view._hover_tile(1)
+	await process_frame
+	await process_frame
+	text = _detail_text(view)
+	expect("敌方主战者" in text, "Enemy commander popup marks its side")
+	view._unhover_tile(1)
+	view._hover_tile(7)
+	await process_frame
+	expect(not view.hover_detail.visible, "Leaving a piece or hovering an empty square closes the popup")
+	game.combat.hands[Chess.PLAYER] = ["pike"]
+	view.render()
+	await process_frame
+	view._hover_card(0)
+	await process_frame
+	await process_frame
+	text = _detail_text(view)
+	expect(view.hover_detail.visible and "技能说明" in text and "护沿短戟" in text, "Hand card popup shows the card's skill text")
+	expect("攻击 + 1" in text and "直线射程 2 格" in text, "Hand weapon popup summarizes its stats")
+	expect(game.combat.play(0, 10), "Pike equips the commander for the equipment check")
+	view.render()
+	await process_frame
+	view._hover_tile(10)
+	await process_frame
+	await process_frame
+	text = _detail_text(view)
+	expect("当前装备" in text and "护沿短戟" in text, "Equipped popup lists the carried weapon")
+	game.combat.turn = Chess.PLAYER
+	game.combat.run.data.actors["eve"] = {"breakthrough": 3}
+	game.combat.hands[Chess.PLAYER] = ["eve"]
+	view.render()
+	await process_frame
+	view._hover_card(0)
+	await process_frame
+	await process_frame
+	text = _detail_text(view)
+	expect("角色天赋" in text and "援护" in text, "Breakthrough talent appears in the hand card popup")
+	expect("移动 · " in text, "Partner card popup lists its movement")
+	view._unhover_card(0)
+	expect(not view.hover_detail.visible, "Leaving the hand card closes the popup")
+	game.queue_free()
+	await process_frame
+
 func execute() -> void:
 	check_rules()
 	check_fatigue()
@@ -337,5 +411,6 @@ func execute() -> void:
 	check_companion_growth()
 	check_battle_income()
 	await check_ui()
+	await check_hover_details()
 	print("CHESS BATTLE: %d checks, %d failures" % [checks, failures])
 	quit(0 if failures == 0 else 1)
