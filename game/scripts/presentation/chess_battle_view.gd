@@ -8,6 +8,7 @@ const Battle = preload("res://scripts/domain/chess_battle.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const UI = preload("res://scripts/presentation/card_ui.gd")
+const CROWN = preload("res://assets/ui/crown-badge.svg")
 var battle: RefCounted
 var cells: Array[Button] = []
 var selected_square := -1
@@ -310,6 +311,8 @@ func _render_tile(tile: Button, square: int, action: String) -> void:
 	tile.text = ""
 	var content := HBoxContainer.new()
 	UI.button_body(tile, content)
+	if unit.leader:
+		_mark_commander(tile)
 	UI.art(content, unit, Vector2(56, 60))
 	var text := VBoxContainer.new()
 	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -328,6 +331,19 @@ func _render_tile(tile: Button, square: int, action: String) -> void:
 		UI.label(text, "可攻击 · %d 伤害" % battle.attack_power(battle.board[selected_square]), 13, UI.ORANGE)
 	tile.accessibility_name = "%s %s %s" % [unit.name, role, stats]
 	tile.tooltip_text = unit.trait
+
+func _mark_commander(tile: Button) -> void:
+	var plate := PanelContainer.new()
+	plate.add_theme_stylebox_override("panel", UI.box(UI.GOLD, Color("1d3329"), 1, 5))
+	plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tile.add_child(plate)
+	var crown := TextureRect.new()
+	crown.texture = CROWN
+	crown.custom_minimum_size = Vector2(20, 17)
+	crown.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	crown.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	plate.add_child(crown)
+	plate.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
 
 func _render_inspection() -> void:
 	UI.clear(inspection)
