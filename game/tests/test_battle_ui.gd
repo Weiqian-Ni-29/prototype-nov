@@ -73,6 +73,8 @@ func check_rules() -> void:
 	battle.turn = Chess.PLAYER
 	battle.commanders[Chess.ENEMY].hp = 1
 	battle.commanders[Chess.ENEMY].armor = 0
+	battle.board[battle.board.find(battle.commanders[Chess.ENEMY])] = {}
+	battle.board[1] = battle.commanders[Chess.ENEMY]
 	var spot: String = battle.position
 	var before: int = battle.run.actor("hero").inventory.salve
 	expect(battle.move(4, 1) and battle.outcome == "victory" and battle.run.data.pending_battle.is_empty()
@@ -182,16 +184,16 @@ func check_companion_growth() -> void:
 	run.save_path = "user://test-companion-growth.json"
 	run.new_run(41, "wayfarer")
 	expect(not "lorne" in Cards.collection(run.data.actors) and Cards.valid_deck(run.card_deck(), run.data.actors, true, run.data),
-		"Starter support makes a complete deck and named cards require recruitment")
-	expect(not run.recruit_companion("lorne").ok and run.data.lamp_coins == 8, "Recruitment requires the local companion")
-	var cell: String = run.actor("lorne").position
+		"The solo starter deck is complete and named cards require recruitment")
+	expect(not run.recruit_companion("lorne").ok and run.data.lamp_coins == 8, "Recruitment requires a shop with that companion")
+	var cell: String = run.data.nodes.keys().filter(func(pos): return run.node_at(pos).get("starter_shop", false))[0]
 	run.retreat_party(cell)
 	run.data.tiles[cell].enemies = ["boar"]
 	expect(not run.recruit_companion("lorne").ok, "Enemies block recruitment")
 	run.data.tiles[cell].enemies.clear()
-	run.data.lamp_coins = 7
-	expect(not run.recruit_companion("lorne").ok and run.data.lamp_coins == 7, "Recruitment requires the full price")
-	run.data.lamp_coins = 8
+	run.data.lamp_coins = 5
+	expect(not run.recruit_companion("lorne").ok and run.data.lamp_coins == 5, "Recruitment requires the full price")
+	run.data.lamp_coins = 6
 	expect(run.recruit_companion("lorne").ok and run.data.lamp_coins == 0 and "lorne" in Cards.collection(run.data.actors)
 		and not run.recruit_companion("lorne").ok, "Recruitment charges once and unlocks the companion card")
 	expect(not run.breakthrough_companion("lorne", 0).ok, "Breakthrough requires funds")
@@ -271,13 +273,13 @@ func check_ui() -> void:
 	await process_frame
 	await click(button_named(game.ui, "卡组"))
 	var editor = game.modal_layer.find_child("CardDeckEditor", true, false)
-	expect(editor != null and editor.grid.get_child_count() >= 11, "Map opens the full illustrated collection")
+	expect(editor != null and editor.grid.get_child_count() >= 10, "Map opens the full illustrated collection")
 	if editor == null:
 		game.queue_free()
 		return
-	editor.search.text = "治疗"
+	editor.search.text = "回复 2 点生命"
 	editor.search.text_changed.emit(editor.search.text)
-	expect(editor.grid.get_child_count() == 1 and editor.selected == "support_medic", "Search finds the starter healing card by effect")
+	expect(editor.grid.get_child_count() == 1 and editor.selected == "mend_spell", "Search finds the starter healing card by effect")
 	editor.search.clear()
 	editor.search.text_changed.emit("")
 	var equipment: String = game.run.card_deck().filter(func(id): return id.begins_with("gear:"))[0]
@@ -289,7 +291,7 @@ func check_ui() -> void:
 	await click(editor.find_child("AddDeckCard", true, false))
 	await click(editor.find_child("ConfirmCardDeck", true, false))
 	var saved := Run.new()
-	expect(saved.load_game(game.run.save_path).ok and saved.card_deck().count("rain") == 2, "Edited deck persists in the expedition save")
+	expect(saved.load_game(game.run.save_path).ok and saved.card_deck().count("rain") == 1, "Edited deck persists in the expedition save")
 	var cell: String = game.run.actor("hero").position
 	game.run.data.tiles[cell].enemies = ["boar"]
 	game._open_current_encounter(false)
@@ -304,6 +306,13 @@ func check_ui() -> void:
 		await click(view.find_child("ChessSquare10", true, false))
 		await click(view.find_child("ChessSquare7", true, false))
 		expect(game.combat.turn == Chess.ENEMY and view.cells[7].disabled, "Actual mouse move locks out extra actions")
+		game.combat.piles[Chess.PLAYER][0] = "ward"
+		game.battle_timer = 0.0
+		await process_frame
+		await process_frame
+		expect(game.combat.turn == Chess.ENEMY and game.combat.enemy_action_resolved
+			and not game.combat.last_enemy_action.is_empty() and view.enemy_action_label.visible,
+			"The enemy action is rendered before the player gets another turn")
 		game.battle_timer = 0.0
 		await process_frame
 		await process_frame

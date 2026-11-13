@@ -27,6 +27,10 @@ var turn := PLAYER
 var player_has_played := false
 var enemy_has_played := false
 var enemy_drew := false
+var enemy_action_resolved := false
+var last_enemy_action := {}
+var difficulty := 0
+var exploration := 0
 var outcome := ""
 var reveal_pending := false
 var river := false
@@ -83,7 +87,9 @@ func begin(expedition: RefCounted, encounter: Dictionary, deck: Array) -> Dictio
 	enemy_types = types
 	final_battle = "war_god" in types
 	var source := "battle:%s:%s" % [cell, npc]
-	var elite: bool = run.node_at(cell).get("kind") == "elite" or pending.get("reward_tier") == "elite"
+	var elite: bool = is_elite_encounter(run, cell, pending)
+	exploration = run.exploration_percent()
+	difficulty = difficulty_tier(exploration, elite, final_battle)
 	if not run.data.battle_offers.has(source):
 		run.data.battle_offers[source] = run.relic_offer(source, Relics.DATA.keys(), 1.0 if elite else 0.30)
 	pending.merge({"battle_uid": source, "reward_tier": "elite" if elite else "ordinary",
@@ -106,7 +112,7 @@ func begin(expedition: RefCounted, encounter: Dictionary, deck: Array) -> Dictio
 		board.append({})
 	var boss_type: String = "war_god" if final_battle else str(types[0])
 	board[10] = _piece(commander_definition(run), PLAYER, true)
-	board[1] = _piece(enemy_definition(run, boss_type, true), ENEMY, true)
+	board[1] = _piece(enemy_definition(run, boss_type, true, difficulty), ENEMY, true)
 	commanders.assign([board[10], board[1]])
 	initial_hero_hp = int(hero.hp)
 	board[10].hp = maxi(1, ceili(float(board[10].hp_max * hero.hp) / hero.hp_max))
@@ -116,6 +122,8 @@ func begin(expedition: RefCounted, encounter: Dictionary, deck: Array) -> Dictio
 	roller.seed = hash("%d:card-battle:%s:%d" % [int(run.data.seed), source, int(run.data.battles)])
 	piles[PLAYER] = deck.duplicate()
 	_shuffle(piles[PLAYER], roller)
+	if int(run.data.battles) == 0:
+		_ensure_opening_attack()
 	piles[ENEMY] = _enemy_deck(types, boss_type, roller)
 	if run.data.weather == "rain":
 		weather = "rain"
@@ -144,20 +152,51 @@ func _shuffle(pile: Array, roller: RandomNumberGenerator) -> void:
 		pile[i] = pile[j]
 		pile[j] = entry
 
+static func is_elite_encounter(expedition: RefCounted, cell: String, encounter: Dictionary = {}) -> bool:
+	return expedition.node_at(cell).get("kind") == "elite" or encounter.get("reward_tier") == "elite" \
+		or Nodes.is_elite(expedition.data.tiles.get(cell, {}).get("enemies", []))
+
+static func difficulty_tier(progress: int, elite: bool, finale: bool) -> int:
+	if finale:
+		return 4
+	return mini(4, floori(progress / 20.0) + int(elite))
+
+static func difficulty_name(tier: int) -> String:
+	return ["入门", "初阶", "进阶", "险峻", "极险"][clampi(tier, 0, 4)]
+
+func _ensure_opening_attack() -> void:
+	var deck: Array = piles[PLAYER]
+	for i in deck.size():
+		var card := definition(deck[i])
+		if card.has("damage") or card.get("slot") == "weapon":
+			if i >= Cards.OPENING_HAND:
+				var replaced: String = deck[Cards.OPENING_HAND - 1]
+				deck[Cards.OPENING_HAND - 1] = deck[i]
+				deck[i] = replaced
+			return
+
 func _enemy_deck(types: Array, lead: String, roller: RandomNumberGenerator) -> Array:
 	var support := types.duplicate()
 	support.erase(lead)
-	var pool := support.duplicate()
-	pool.append_array(["boar", "archer", "furnace"] if final_battle else ["boar", "archer"])
-	var deck := ["foe:" + str(pool[0]), "foe:" + str(pool[1 % pool.size()]), "coat"]
-	if final_battle or "furnace" in types:
-		deck.append("ember_spell")
-	elif pending.reward_tier == "elite":
-		deck.append("ice_spell")
-	for type in support:
-		deck.append("foe:" + str(type))
+	for id in ["boar", "archer", "spider", "apothecary"]:
+		if id != lead and id not in support:
+			support.append(id)
+	var deck: Array = []
+	for i in difficulty:
+		deck.append("foe:" + str(support[i % support.size()]))
+	deck.append_array(["blade", "brace", "ward", "mend_spell"])
+	if difficulty >= 2:
+		if lead in ["furnace", "furnace_elite", "lamp_boss", "war_god"]:
+			deck.append_array(["sun", "ember_spell"])
+		elif lead in ["canal", "lurker"]:
+			deck.append_array(["rain", "ice_spell"])
+		else:
+			deck.append_array(["ice_spell", "ember_spell"])
+	var filler := ["pike", "ward", "ember_spell", "brace", "rain", "sun", "ice_spell", "ward"]
+	var i := 0
 	while deck.size() < Cards.DECK_SIZE:
-		deck.append("foe:" + str(pool[roller.randi_range(0, pool.size() - 1)]) if deck.size() % 3 != 0 else ["blade", "coat", "ward"][roller.randi_range(0, 2)])
+		deck.append(filler[i])
+		i += 1
 	_shuffle(deck, roller)
 	return deck
 
@@ -168,19 +207,40 @@ static func commander_definition(expedition: RefCounted) -> Dictionary:
 	return {"name": hero.name, "portrait": "hero", "element": "gravity", "attack": attack, "hp": 13,
 		"armor": armor, "move": 1, "range": 1, "diagonal": true, "trait": "横竖斜走一格。"}
 
-static func enemy_definition(expedition: RefCounted, id: String, leader: bool = false) -> Dictionary:
+static func enemy_definition(expedition: RefCounted, id: String, leader: bool = false, tier: int = -1) -> Dictionary:
 	var npc := id.begins_with("npc:")
 	var actor_id := id.trim_prefix("npc:")
 	var source: Dictionary = expedition.actor(actor_id) if npc else expedition.war_god_stats() if id == "war_god" else Catalog.ENEMIES[id]
 	var ranged: bool = source.get("attack_delivery") == "ranged"
+	if tier < 0:
+		var cell: String = expedition.actor("hero").position
+		tier = difficulty_tier(expedition.exploration_percent(), is_elite_encounter(expedition, cell), id == "war_god")
 	var hp := maxi(4, roundi(float(source.hp) / (13.0 if leader else 19.0)))
+	var attack := maxi(2, roundi(float(source.attack) / 7.0))
+	var armor := 1 if leader or not ranged else 0
+	var reach := 2 if ranged else 1
 	if leader:
-		hp += 3
+		if id == "war_god":
+			hp += 3
+		else:
+			hp = 8 + tier * 2 + int(hp >= 6)
+			attack = clampi(attack, 2, 3) + floori(tier / 2.0)
+			armor = 1 + int(tier >= 3)
+			if tier == 0:
+				reach = 1
+	else:
+		hp = clampi(hp, 3, 6) + floori(tier / 2.0)
+		attack = clampi(attack, 2, 4)
+	var healer := id == "apothecary"
+	var movement := "横竖斜走一格。" if leader else "横竖走一格。"
+	if reach == 2:
+		movement += "可沿无阻挡的直线攻击两格。"
+	if healer:
+		movement += "落位时治疗相邻友方。"
 	return {"name": source.name, "kind": "partner", "portrait": actor_id if npc or id == "war_god" else "",
-		"icon": "ranged_sight" if ranged else "ember_warden_armor", "element": "fire" if id == "war_god" else source.get("element", "normal"),
-		"attack": maxi(2, roundi(float(source.attack) / 7.0)), "hp": hp,
-		"armor": 1 if leader or not ranged else 0, "move": 1, "range": 2 if ranged else 1,
-		"diagonal": leader, "trait": "横竖斜走一格。" if leader else "横竖走一格，可沿无阻挡的直线攻击两格。" if ranged else "横竖移动或攻击一格。"}
+		"enemy_art": "" if npc or id == "war_god" else id, "element": "fire" if id == "war_god" else source.get("element", "normal"),
+		"attack": attack, "hp": hp, "armor": armor, "move": 1, "range": reach, "heal": 2 if healer else 0,
+		"diagonal": leader, "trait": movement}
 
 func definition(id: String) -> Dictionary:
 	if id.begins_with("temp:"):
@@ -190,7 +250,7 @@ func definition(id: String) -> Dictionary:
 			entry.kind = "equipment"
 			entry.slot = "weapon"
 		return entry
-	return enemy_definition(run, id.trim_prefix("foe:")) if id.begins_with("foe:") else Cards.owned_definition(id, run.data.actors, run.data)
+	return enemy_definition(run, id.trim_prefix("foe:"), false, difficulty) if id.begins_with("foe:") else Cards.owned_definition(id, run.data.actors, run.data)
 
 func _piece(entry: Dictionary, side: int, leader: bool = false) -> Dictionary:
 	var piece := entry.duplicate()
@@ -342,10 +402,14 @@ func _end_player_action() -> void:
 	previous_action = action_kind
 	player_has_played = true
 	turn = ENEMY
+	last_enemy_action = {}
 	_check_outcome()
 
-func enemy_turn() -> void:
+func enemy_turn(hold_for_display: bool = false) -> void:
 	if turn != ENEMY or not outcome.is_empty() or reveal_pending:
+		return
+	if enemy_action_resolved:
+		_end_enemy_turn()
 		return
 	if enemy_has_played and not enemy_drew:
 		enemy_drew = true
@@ -355,13 +419,35 @@ func enemy_turn() -> void:
 	enemy_has_played = true
 	var action := _choose_enemy_action()
 	if action.has("from"):
+		var unit: Dictionary = board[action.from]
+		var target: Dictionary = board[action.target]
+		var message := "%s 移动到%s" % [unit.name, square_name(action.target)] if target.is_empty() else "%s 攻击 %s" % [unit.name, target.name]
+		last_enemy_action = {"message": message, "from": action.from, "target": action.target}
 		_move_piece(action.from, action.target)
 	elif action.has("card_index"):
+		var card: Dictionary = action.card
+		last_enemy_action = {"message": "打出「%s」" % card.name, "target": action.target, "card": card}
 		_play_card(ENEMY, action.card_index, action.target)
-	if _check_outcome():
+	else:
+		last_enemy_action = {"message": "无可用行动，结束回合"}
+		_log("敌方无可用行动，结束回合。")
+	enemy_action_resolved = true
+	if _check_outcome() or hold_for_display:
 		return
+	_end_enemy_turn()
+
+func _end_enemy_turn() -> void:
+	enemy_action_resolved = false
 	enemy_drew = false
 	_start_player_turn()
+
+func _enemy_tempo(option: Dictionary) -> int:
+	if option.has("from") and board[option.target].is_empty():
+		var hero_square: int = board.find(commanders[PLAYER])
+		return 3 * (_distance(option.from, hero_square) - _distance(option.target, hero_square))
+	if option.has("card") and option.card.kind == "defense" and board[option.target].armor >= 3:
+		return -5
+	return 0
 
 func _choose_enemy_action() -> Dictionary:
 	var options: Array[Dictionary] = []
@@ -397,12 +483,13 @@ func _choose_enemy_action() -> Dictionary:
 			if player_draws_fatigue:
 				preview._fatigue(PLAYER)
 
-		var position_score: int = preview._position_score()
+		var tempo := _enemy_tempo(option)
+		var position_score: int = preview._position_score() + tempo
 		# The opponent can only lower this score. Skip a branch once it cannot beat best.
 		var minimum_reply_score := best_reply_score + (0 if position_score > best_position_score else 1)
 		if position_score < minimum_reply_score:
 			continue
-		var reply_score: int = preview._score_player_reply(position_score, minimum_reply_score)
+		var reply_score: int = preview._score_player_reply(position_score - tempo, minimum_reply_score - tempo) + tempo
 		if reply_score > best_reply_score or (reply_score == best_reply_score and position_score > best_position_score):
 			best = option
 			best_reply_score = reply_score

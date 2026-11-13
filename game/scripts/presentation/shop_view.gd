@@ -9,7 +9,8 @@ const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const GOLD = Color("dec38e")
 const INK = Color("e8e4d1")
 const MUTED = Color("a2b3a7")
-const FILTERS = {"all": "全部", "item": "补给", "gear": "装备牌", "spell": "法术牌谱", "relic": "遗器"}
+const CardUI = preload("res://scripts/presentation/card_ui.gd")
+const FILTERS = {"all": "全部", "companion": "伙伴", "item": "补给", "gear": "装备牌", "spell": "法术牌谱", "relic": "遗器"}
 
 var run: RefCounted
 var trader: String
@@ -230,7 +231,10 @@ func _card(entry: Dictionary) -> Button:
 	content.offset_right = -10
 	content.offset_top = 6
 	content.offset_bottom = -6
-	_icon(content, entry.icon, Vector2(0, 66), entry.get("level", 0))
+	if entry.kind == "companion":
+		CardUI.art(content, entry, Vector2(0, 66))
+	else:
+		_icon(content, entry.icon, Vector2(0, 66), entry.get("level", 0))
 	var title := _label(content, entry.title, 16, INK)
 	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	button.tooltip_text = entry.title
@@ -244,7 +248,7 @@ func _card(entry: Dictionary) -> Button:
 	_icon(meta, "lamp_coin", Vector2(15, 15))
 	var quoted: Dictionary = _quote(entry)
 	_label(meta, str(int(quoted.price)), 14, GOLD).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_label(meta, "%d 件" % int(entry.count), 13, MUTED)
+	_label(meta, "可招募" if entry.kind == "companion" else "%d 件" % int(entry.count), 13, MUTED)
 	return button
 
 func _show_item(entry: Dictionary) -> void:
@@ -256,7 +260,10 @@ func _show_item(entry: Dictionary) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12)
 	detail.add_child(row)
-	_icon(row, entry.icon, Vector2(100, 100), entry.get("level", 0))
+	if entry.kind == "companion":
+		CardUI.art(row, entry, Vector2(100, 100))
+	else:
+		_icon(row, entry.icon, Vector2(100, 100), entry.get("level", 0))
 	var title := VBoxContainer.new()
 	title.alignment = BoxContainer.ALIGNMENT_CENTER
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -264,7 +271,7 @@ func _show_item(entry: Dictionary) -> void:
 	_label(title, "%s · %s" % [entry.category, entry.grade] if entry.has("grade") else entry.category, 14, MUTED, true)
 	_label(title, entry.title, 24, GOLD, true)
 	var count := "库存 %d 件 · 已持有 %d 件" % [entry.count, entry.owned] if buying else "持有 %d 件" % entry.count
-	_label(title, count, 14, MUTED, true)
+	_label(title, "入队后解锁专属伙伴牌" if entry.kind == "companion" else count, 14, MUTED, true)
 	_label(detail, entry.effect, 16, INK, true)
 	if not entry.story.is_empty():
 		_label(detail, entry.story, 14, MUTED, true)
@@ -276,7 +283,7 @@ func _show_item(entry: Dictionary) -> void:
 	_update_order()
 
 func _quote(entry: Dictionary, amount: int = 1, coupon: String = "") -> Dictionary:
-	if entry.kind == "spell":
+	if entry.kind in ["spell", "companion"]:
 		return {"ok": true, "unit_price": entry.base, "additional_unit_price": entry.base, "price": entry.base}
 	return run.shop_quote(entry.base, buying, amount, entry.id if entry.kind == "gear" else "", coupon)
 
@@ -309,7 +316,7 @@ func _update_order() -> void:
 	increase.disabled = quantity >= maximum
 	confirm.disabled = quantity == 0
 	confirm.text = ("灯铢不足" if buying else "暂不可出售") if quantity == 0 \
-		else "%s · %s%d 灯铢" % ["确认买入" if buying else "确认卖出", "" if buying else "+", total]
+		else "%s · %s%d 灯铢" % ["确认招募" if selected.kind == "companion" else "确认买入" if buying else "确认卖出", "" if buying else "+", total]
 
 func _step(delta: int) -> void:
 	quantity += delta

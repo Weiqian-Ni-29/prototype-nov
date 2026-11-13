@@ -14,6 +14,11 @@ var selected_square := -1
 var selected_card := -1
 var inspected_square := 10
 var phase: Label
+var enemy_action_label: Label
+var turn_banner: PanelContainer
+var turn_banner_text: Label
+var turn_banner_tween: Tween
+var displayed_turn := -1
 var weather: Label
 var inspection: VBoxContainer
 var log_text: Label
@@ -66,6 +71,9 @@ func setup(model: RefCounted, title: String, scene: Texture2D) -> void:
 	UI.label(target, "击倒%s获胜 · 旅人倒下即失败" % battle.commanders[Battle.ENEMY].name, 16, UI.GOLD, true).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	retreat = UI.button(target, "撤退", func(): retreat_requested.emit())
 	UI.button(target, "主菜单", func(): menu_requested.emit())
+	enemy_action_label = UI.label(header, "", 15, UI.ORANGE, true)
+	enemy_action_label.name = "ChessEnemyAction"
+	enemy_action_label.custom_minimum_size.y = 20
 
 	var body := HBoxContainer.new()
 	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -157,14 +165,50 @@ func setup(model: RefCounted, title: String, scene: Texture2D) -> void:
 	pile = UI.label(pile_box, "", 14, UI.INK, true)
 	pile.name = "ChessPile"
 	pile.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var center := CenterContainer.new()
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(center)
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	turn_banner = PanelContainer.new()
+	turn_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	turn_banner.custom_minimum_size = Vector2(300, 68)
+	center.add_child(turn_banner)
+	turn_banner_text = UI.label(turn_banner, "", 30, UI.GOLD)
+	turn_banner_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	turn_banner_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	turn_banner.hide()
 	render()
+
+func _show_turn_banner() -> void:
+	if not battle.outcome.is_empty() or battle.reveal_pending:
+		turn_banner.hide()
+		return
+	if displayed_turn == battle.turn:
+		return
+	displayed_turn = battle.turn
+	if turn_banner_tween != null:
+		turn_banner_tween.kill()
+	var player_turn := displayed_turn == Battle.PLAYER
+	var accent := UI.GREEN if player_turn else UI.ORANGE
+	turn_banner.add_theme_stylebox_override("panel", UI.box(Color("213b33") if player_turn else Color("49352c"), accent, 18, 9))
+	turn_banner_text.add_theme_color_override("font_color", accent)
+	turn_banner_text.text = "我方回合" if player_turn else "敌方回合"
+	turn_banner.modulate.a = 0.0
+	turn_banner.show()
+	turn_banner_tween = create_tween()
+	turn_banner_tween.tween_property(turn_banner, "modulate:a", 1.0, 0.14)
+	turn_banner_tween.tween_interval(0.55)
+	turn_banner_tween.tween_property(turn_banner, "modulate:a", 0.0, 0.22)
+	turn_banner_tween.tween_callback(turn_banner.hide)
 
 func render() -> void:
 	var usable: bool = battle.can_act()
-	var turn_text := "本回合可走 1 手" if usable else "对方正在走一手"
+	var turn_text := "我方回合 · 可走 1 手" if usable else "敌方回合"
+	enemy_action_label.text = "敌方上一手 · " + battle.last_enemy_action.message if not battle.last_enemy_action.is_empty() else ""
 	if not battle.outcome.is_empty():
 		turn_text = {"victory": "敌方主战者倒下", "defeat": "己方主战者倒下", "retreat": "已撤退"}[battle.outcome]
 	phase.text = "第 %d 轮 · %s" % [battle.round_number, turn_text]
+	phase.add_theme_color_override("font_color", UI.GREEN if usable else UI.ORANGE)
 	retreat.disabled = not usable or battle.river
 	wait_button.visible = usable and battle.must_pass()
 	var climate: Dictionary = Cards.WEATHER.get(battle.weather, {})
@@ -189,6 +233,7 @@ func render() -> void:
 	if battle.piles[Battle.PLAYER].is_empty():
 		pile.text += "\n下次疲劳 %d" % (battle.fatigue[Battle.PLAYER] + 1)
 	_render_hand()
+	_show_turn_banner()
 
 func _legal() -> Dictionary:
 	if not battle.can_act():
@@ -200,7 +245,7 @@ func _legal() -> Dictionary:
 		var card: Dictionary = battle.definition(battle.hands[Battle.PLAYER][selected_card])
 		for square in battle.card_targets(Battle.PLAYER, selected_card):
 			if square >= 0:
-				result[square] = "deploy" if card.kind == "partner" else "equip"
+				result[square] = "deploy" if card.kind == "partner" else "spell_hit" if card.has("damage") else "equip"
 	return result
 
 func _select_tile(square: int) -> void:
@@ -239,14 +284,20 @@ func _render_tile(tile: Button, square: int, action: String) -> void:
 	var light := (row + square % Battle.COLS) % 2 == 0
 	var tint := (Color("5b493b") if light else Color("483a31")) if row < 2 else (Color("375648") if light else Color("29453b"))
 	var border := Color("886d58") if row < 2 else Color("638473")
+	var enemy_action: Dictionary = battle.last_enemy_action
 	if unit.get("leader", false) or square == selected_square:
 		border = UI.GOLD
-	if action == "attack":
+	if action in ["attack", "spell_hit"]:
 		tint = Color("76513c")
 		border = UI.ORANGE
 	elif not action.is_empty():
 		tint = Color("426e56")
 		border = UI.GREEN
+	elif square == enemy_action.get("target", -1):
+		tint = tint.lightened(0.14)
+		border = UI.ORANGE
+	elif square == enemy_action.get("from", -1):
+		border = Color("c99264")
 	for state in ["normal", "pressed", "disabled"]:
 		tile.add_theme_stylebox_override(state, UI.box(tint, border, 6, 4))
 	tile.add_theme_stylebox_override("hover", UI.box(tint.lightened(0.09), border, 6, 4))

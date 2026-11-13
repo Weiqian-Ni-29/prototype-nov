@@ -73,6 +73,11 @@ static func art(parent: Node, entry: Dictionary, minimum: Vector2) -> void:
 			cropped.region = Rect2(size.x * 0.17, 0, size.x * 0.66, size.y * 0.64)
 			cropped.filter_clip = true
 			texture = cropped
+	var enemy: String = entry.get("enemy_art", "")
+	if texture == null and not enemy.is_empty():
+		var art_path := "res://assets/portraits/enemies/%s.png" % enemy
+		if ResourceLoader.exists(art_path, "Texture2D"):
+			texture = load(art_path) as Texture2D
 	var icon: String = entry.get("icon", "")
 	if icon in ["rain", "sun"]:
 		var emblem := label(parent, "☂" if icon == "rain" else "☀", 37, Color("b8def0") if icon == "rain" else GOLD)

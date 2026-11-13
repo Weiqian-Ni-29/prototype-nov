@@ -8,7 +8,9 @@ const STARTING_PARTNER_HP_BONUS = 2
 const RECRUIT_PRICE = 8
 const BREAKTHROUGH_PRICES = [8, 14, 22]
 const BREAKTHROUGH_BENEFITS = ["生命上限 +2", "生命上限 +1 · 初始护甲 +1", "攻击 +1 · 解锁天赋"]
-const DEFAULT_DECK = ["support_vanguard", "support_archer", "support_medic", "support_guard", "support_caster", "blade", "pike", "coat", "coat", "ward", "rain", "sun"]
+const DEFAULT_DECK = ["blade", "pike", "coat", "coat", "brace", "brace", "ward", "ward",
+	"ember_spell", "ember_spell", "mend_spell", "sun"]
+const STARTER_SPELLS = ["ember_spell", "mend_spell"]
 const LEGACY_STARTERS = {"highdrake": "support_vanguard", "lorne": "support_archer", "eve": "support_medic",
 	"oathguard": "support_guard", "ember": "support_caster"}
 const SUPPORT = {
@@ -29,6 +31,7 @@ const ACTIONS = {
 	"blade": {"name": "巡路短刃", "kind": "weapon", "icon": "trail_blade", "attack": 2, "trait": "给一枚友方棋子装备短刃，本场攻击 +2。每枚棋子装备一把武器。"},
 	"pike": {"name": "护沿短戟", "kind": "weapon", "icon": "frontier_guard_weapon", "attack": 1, "range": 2, "trait": "攻击 +1，可沿无阻挡的直线攻击两格。每枚棋子装备一把武器。"},
 	"coat": {"name": "夹棉旅衣", "kind": "defense", "icon": "padded_coat", "armor": 3, "trait": "选一枚友方棋子，增加 3 点护甲。"},
+	"brace": {"name": "护身", "kind": "defense", "icon": "shield", "armor": 3, "trait": "选一枚友方棋子，增加 3 点护甲。"},
 	"ward": {"name": "列阵", "kind": "defense", "icon": "shield", "armor": 2, "column": true, "trait": "选一枚友方棋子，同列所有己方棋子各获得 2 点护甲。"},
 	"rain": {"name": "唤雨", "kind": "spell", "icon": "rain", "element": "water", "weather": "rain", "trait": "降雨持续两轮（含施放轮）。双方水伤 +1，火伤 −1。"},
 	"sun": {"name": "烈日", "kind": "spell", "icon": "sun", "element": "fire", "weather": "sun", "trait": "烈日持续两轮（含施放轮）。双方火伤 +1，水伤 −1。"},
@@ -108,14 +111,15 @@ static func owned_definition(id: String, actors: Dictionary, state: Dictionary =
 		return {} if instance.is_empty() else Gear.card(instance)
 	return definition(id, int(actors.get(id, {}).get("breakthrough", 0)))
 
-static func collection(actors: Dictionary, state: Dictionary = {}) -> Array[String]:
+static func collection(actors: Dictionary, state: Dictionary = {}, legacy_support: bool = false) -> Array[String]:
 	var result: Array[String] = []
-	result.assign(SUPPORT.keys())
+	if legacy_support:
+		result.assign(SUPPORT.keys())
 	for id in Catalog.COMPANIONS:
 		var actor: Variant = actors.get(id)
 		if actor is Dictionary and actor.get("joined", false):
 			result.append(id)
-	for id in ["blade", "pike", "coat", "ward", "rain", "sun"]:
+	for id in ["blade", "pike", "coat", "brace", "ward", "rain", "sun"]:
 		if state.is_empty() or id not in ["blade", "pike", "coat"]:
 			result.append(id)
 	for id in UNLOCKABLE_SPELLS:
@@ -140,10 +144,10 @@ static func migrate_deck(deck: Array, actors: Dictionary) -> Array:
 static func limit(id: String) -> int:
 	return 2 if ACTIONS.has(id) else 1
 
-static func valid_deck(deck: Variant, actors: Dictionary, require_full: bool = false, state: Dictionary = {}) -> bool:
+static func valid_deck(deck: Variant, actors: Dictionary, require_full: bool = false, state: Dictionary = {}, legacy_support: bool = false) -> bool:
 	if not deck is Array or deck.size() > DECK_SIZE or (require_full and deck.size() != DECK_SIZE):
 		return false
-	var available := collection(actors, state)
+	var available := collection(actors, state, legacy_support)
 	var counts := {}
 	for id in deck:
 		if not id is String or id not in available:
