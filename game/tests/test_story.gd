@@ -444,6 +444,14 @@ func execute() -> void:
 		expect(not story.dialogue("hero", id).ok, "First meeting opens no story for " + id)
 		check_topics_blocked(story, r, "hero", id, "before recruitment")
 		r.data.lamp_coins = 8
+		var store := ""
+		for candidate in r.data.nodes:
+			if r.data.nodes[candidate].get("kind", "") == "trade" and not r.data.nodes[candidate].get("starter_shop", false) \
+					and id in r.recruit_shop_offers(candidate):
+				store = candidate
+				break
+		expect(not store.is_empty(), id + " is stocked at a regular shop")
+		r.retreat_party(store)
 		expect(r.recruit_companion(id).ok and person.position == r.actor("hero").position and r.data.lamp_coins == 0,
 			"Paid recruitment " + id)
 		r.data.erase("pending_story_rewards")

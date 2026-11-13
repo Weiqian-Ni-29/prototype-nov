@@ -35,6 +35,11 @@ var hand_generation := 0
 var pending_animation := 0
 var hovered := -1
 var animating: Array[int] = []
+var hover_detail: PanelContainer
+var hover_detail_body: VBoxContainer
+var detail_serial := 0
+var detail_kind := ""
+var detail_index := -1
 
 func setup(model: RefCounted, title: String, scene: Texture2D) -> void:
 	name = "ChessBattle"
@@ -108,6 +113,8 @@ func setup(model: RefCounted, title: String, scene: Texture2D) -> void:
 			tile.custom_minimum_size = Vector2(102, 88)
 			tile.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			tile.size_flags_vertical = Control.SIZE_EXPAND_FILL
+			tile.mouse_entered.connect(_hover_tile.bind(square))
+			tile.mouse_exited.connect(_unhover_tile.bind(square))
 			cells.append(tile)
 	hint = UI.label(board_panel, "", 15, UI.GOLD, true)
 	var side := VBoxContainer.new()
@@ -178,6 +185,18 @@ func setup(model: RefCounted, title: String, scene: Texture2D) -> void:
 	turn_banner_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	turn_banner_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	turn_banner.hide()
+	hover_detail = PanelContainer.new()
+	hover_detail.name = "ChessHoverDetail"
+	hover_detail.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hover_detail.custom_minimum_size = Vector2(300, 0)
+	hover_detail.z_index = 60
+	hover_detail.hide()
+	hover_detail.add_theme_stylebox_override("panel", UI.box(Color("1d3329"), UI.GOLD, 8, 5))
+	add_child(hover_detail)
+	hover_detail_body = VBoxContainer.new()
+	hover_detail_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hover_detail_body.add_theme_constant_override("separation", 4)
+	hover_detail.add_child(hover_detail_body)
 	render()
 
 func _show_turn_banner() -> void:
@@ -234,6 +253,11 @@ func render() -> void:
 	if battle.piles[Battle.PLAYER].is_empty():
 		pile.text += "\n下次疲劳 %d" % (battle.fatigue[Battle.PLAYER] + 1)
 	_render_hand()
+	if detail_kind == "unit" and hover_detail.visible:
+		if battle.board[detail_index].is_empty():
+			_hide_detail()
+		else:
+			_show_detail(cells[detail_index], func(): _fill_unit_detail(battle.board[detail_index]))
 	_show_turn_banner()
 
 func _legal() -> Dictionary:
@@ -330,7 +354,6 @@ func _render_tile(tile: Button, square: int, action: String) -> void:
 	if action == "attack":
 		UI.label(text, "可攻击 · %d 伤害" % battle.attack_power(battle.board[selected_square]), 13, UI.ORANGE)
 	tile.accessibility_name = "%s %s %s" % [unit.name, role, stats]
-	tile.tooltip_text = unit.trait
 
 func _mark_commander(tile: Button) -> void:
 	var plate := PanelContainer.new()
@@ -388,12 +411,12 @@ func _render_hand() -> void:
 		hand_buttons.clear()
 		animating.clear()
 		hovered = -1
+		_hide_detail()
 		hand_ids = current.duplicate()
 		for i in hand_ids.size():
 			var entry: Dictionary = battle.definition(hand_ids[i])
 			var button := UI.button(hand, "", _select_card.bind(i))
 			button.name = "HandCard%d" % i
-			button.tooltip_text = entry.trait
 			button.accessibility_name = entry.name
 			button.mouse_entered.connect(_hover_card.bind(i))
 			button.mouse_exited.connect(_unhover_card.bind(i))
@@ -466,8 +489,185 @@ func _hover_card(index: int) -> void:
 	if battle.can_act() and index not in animating:
 		hovered = index
 		_pose_card(index)
+	if index not in animating:
+		_show_card_detail(index)
 
 func _unhover_card(index: int) -> void:
 	if hovered == index:
 		hovered = -1
 		_pose_card(index)
+	if detail_kind == "card" and detail_index == index:
+		_hide_detail()
+
+func _hover_tile(square: int) -> void:
+	if not battle.board[square].is_empty():
+		_show_unit_detail(square)
+
+func _unhover_tile(square: int) -> void:
+	if detail_kind == "unit" and detail_index == square:
+		_hide_detail()
+
+func _show_unit_detail(square: int) -> void:
+	detail_kind = "unit"
+	detail_index = square
+	_show_detail(cells[square], func(): _fill_unit_detail(battle.board[square]))
+
+func _show_card_detail(index: int) -> void:
+	if index < 0 or index >= hand_ids.size() or index >= hand_buttons.size():
+		return
+	detail_kind = "card"
+	detail_index = index
+	_show_detail(hand_buttons[index], func(): _fill_card_detail(battle.definition(hand_ids[index])))
+
+func _hide_detail() -> void:
+	detail_serial += 1
+	detail_kind = ""
+	detail_index = -1
+	hover_detail.hide()
+
+func _show_detail(source: Control, filler: Callable) -> void:
+	detail_serial += 1
+	var serial := detail_serial
+	UI.clear(hover_detail_body)
+	filler.call()
+	_ignore_mouse(hover_detail)
+	hover_detail.size = Vector2(300, 0)
+	hover_detail.position = Vector2(-4000, -4000)
+	hover_detail.show()
+	await get_tree().process_frame
+	if serial != detail_serial:
+		return
+	if not is_instance_valid(source) or not source.is_visible_in_tree():
+		_hide_detail()
+		return
+	hover_detail.size = Vector2(300, maxi(hover_detail.get_combined_minimum_size().y, 40.0))
+	var bounds := get_global_rect()
+	var rect := source.get_global_rect()
+	var place := Vector2(rect.position.x, rect.position.y - hover_detail.size.y - 10)
+	if place.y < bounds.position.y:
+		place.y = mini(rect.position.y + rect.size.y + 10, bounds.position.y + bounds.size.y - hover_detail.size.y)
+	place.x = clampf(place.x, bounds.position.x, bounds.position.x + bounds.size.x - hover_detail.size.x)
+	hover_detail.position = place
+
+func _ignore_mouse(node: Node) -> void:
+	if node is Control:
+		(node as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for child in node.get_children():
+		_ignore_mouse(child)
+
+func _section(title: String) -> void:
+	UI.label(hover_detail_body, title, 13, UI.GOLD)
+
+func _detail_header(entry: Dictionary, kind: String, accent: Color) -> void:
+	var head := HBoxContainer.new()
+	hover_detail_body.add_child(head)
+	UI.art(head, entry, Vector2(44, 46))
+	var title := VBoxContainer.new()
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(title)
+	UI.label(title, kind, 13, accent)
+	UI.label(title, entry.name, 19, UI.GOLD)
+
+func _fill_unit_detail(unit: Dictionary) -> void:
+	_detail_header(unit, ("敌方" if unit.side == Battle.ENEMY else "己方") + ("主战者" if unit.leader else "棋子"),
+		UI.ORANGE if unit.side == Battle.ENEMY else UI.GREEN)
+	UI.label(hover_detail_body, "%s属性 · 攻 %d · 血 %d/%d · 甲 %d" % [Cards.ELEMENTS.get(unit.element, "物理"),
+		battle.attack_power(unit), unit.hp, unit.hp_max, unit.armor], 14, UI.MUTED, true)
+	_section("移动与攻击")
+	UI.label(hover_detail_body, _movement_text(unit, true), 13, UI.INK, true)
+	var talent := _split_talent(unit.trait)
+	if not talent.rules.is_empty():
+		_section("特性")
+		UI.label(hover_detail_body, talent.rules, 13, UI.INK, true)
+	var gear: Dictionary = unit.get("gear", {})
+	if not gear.is_empty():
+		_section("当前装备")
+		for slot in gear:
+			var item: Dictionary = gear[slot]
+			UI.label(hover_detail_body, "· " + item.name, 14, UI.GREEN, true)
+			UI.label(hover_detail_body, item.trait, 12, UI.MUTED, true)
+	if not talent.talent.is_empty():
+		_section("角色天赋")
+		UI.label(hover_detail_body, talent.talent, 13, UI.GREEN, true)
+
+func _fill_card_detail(card: Dictionary) -> void:
+	_detail_header(card, ("临时 · " if card.get("temporary", false) else "") + Cards.KINDS[card.kind] + "牌", UI.MUTED)
+	var summary := _card_stats(card)
+	if not summary.is_empty():
+		UI.label(hover_detail_body, summary, 14, UI.MUTED, true)
+	if card.kind == "partner":
+		_section("移动与攻击")
+		UI.label(hover_detail_body, _movement_text(card, false), 13, UI.INK, true)
+	var talent := _split_talent(card.trait)
+	_section("技能说明")
+	UI.label(hover_detail_body, talent.rules, 13, UI.INK, true)
+	if not talent.talent.is_empty():
+		_section("角色天赋")
+		UI.label(hover_detail_body, talent.talent, 13, UI.GREEN, true)
+
+func _split_talent(entry: String) -> Dictionary:
+	if not "\n天赋 · " in entry:
+		return {"rules": entry, "talent": ""}
+	var parts := entry.split("\n天赋 · ", true, 1)
+	return {"rules": parts[0].strip_edges(false, true), "talent": "天赋 · " + parts[1]}
+
+func _movement_text(entry: Dictionary, live: bool) -> String:
+	var slowed: bool = live and int(entry.get("slow_until", 0)) >= battle.round_number
+	var walking := maxi(int(entry.get("move", 1)), int(entry.get("ready_move", 0)))
+	if slowed:
+		walking = 1
+	var diagonal: bool = entry.get("diagonal", false)
+	var move_text := "移动 · 横竖走 1 格" if walking <= 1 else "移动 · 横竖最多走 %d 格，路径须畅通" % walking
+	if diagonal or entry.get("ready_diagonal", false):
+		move_text += "，可斜走 1 格"
+	if entry.get("bend_move", false):
+		move_text += "，可斜绕 1 格"
+	if slowed:
+		move_text += "（减速中）"
+	var reach: int = battle._attack_range(entry) if live else maxi(int(entry.get("range", 1)), int(entry.get("move", 1)))
+	var attack_text := "攻击 · 横竖直线 %d 格" % reach
+	if reach > 1:
+		attack_text += "，路径须畅通"
+	if diagonal:
+		attack_text += "，可斜攻 1 格"
+	var healing := int(entry.get("heal", 0))
+	if healing > 0:
+		attack_text += "；落位时治疗相邻缺血最多的友方 %d 点" % healing
+	return move_text + "\n" + attack_text
+
+func _card_stats(card: Dictionary) -> String:
+	if card.kind == "partner":
+		return Cards.stats(card)
+	if card.kind == "spell":
+		if card.has("weather"):
+			var climate: Dictionary = Cards.WEATHER[card.weather]
+			return "天气 · %s · %s" % [climate.name, climate.hint]
+		if card.has("damage"):
+			return "%s属性 · 伤害 %d 点%s" % [Cards.ELEMENTS.get(card.element, "物理"), int(card.damage),
+				" · 施加减速" if card.get("slow", false) else ""]
+		if card.has("heal"):
+			return "治疗 %d 点生命" % int(card.heal)
+	if card.kind == "defense":
+		var guard: Array[String] = ["护甲 + %d" % int(card.get("armor", 0))]
+		if card.has("heal"):
+			guard.append("回复 %d 点生命" % int(card.heal))
+		if card.get("column", false):
+			guard.append("同列己方生效")
+		if card.get("row", false):
+			guard.append("同排己方生效")
+		return " · ".join(guard)
+	if card.kind == "weapon" or card.get("slot", "") == "weapon":
+		var weapon: Array[String] = []
+		if card.has("attack"):
+			weapon.append("攻击 + %d" % int(card.attack))
+		if int(card.get("range", 0)) >= 2:
+			weapon.append("直线射程 %d 格" % int(card.range))
+		return " · ".join(weapon)
+	var gear: Array[String] = []
+	if card.has("armor"):
+		gear.append("护甲 + %d" % int(card.armor))
+	if card.has("hp_bonus"):
+		gear.append("生命上限 + %d" % int(card.hp_bonus))
+	if card.has("heal"):
+		gear.append("装备时回复 %d 点" % int(card.heal))
+	return " · ".join(gear)

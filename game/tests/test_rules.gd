@@ -115,8 +115,10 @@ func execute() -> void:
 	expect(r.save_game().ok and r.save_game().ok, "Repeated atomic save")
 	var loaded = fresh(1)
 	expect(loaded.load_game("user://test-run.json").ok, "Load stable checkpoint")
-	# JSON numbers are parsed as floats; compare the serialization contract, not native int tags.
-	expect(loaded.data == JSON.parse_string(JSON.stringify(r.data)), "State round-trip including RNG and inventory")
+	# JSON numbers are parsed as floats and dictionary equality is type-strict,
+	# so normalize both sides through the serialization contract before comparing.
+	expect(JSON.parse_string(JSON.stringify(loaded.data)) == JSON.parse_string(JSON.stringify(r.data)),
+		"State round-trip including RNG and inventory")
 	expect(loaded.rng.state == r.rng.state, "RNG state survives save/load exactly")
 	expect(loaded.move(r.data.start).ok, "Loaded numeric state supports subsequent gameplay")
 	for i in range(70):
