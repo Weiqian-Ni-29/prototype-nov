@@ -1,6 +1,6 @@
 class_name CharacterDoll
 extends Node3D
-## Shared skinned actor for exploration and battle. AnimationPlayer owns every bone.
+## Skinned actor for exploration. AnimationPlayer owns every bone.
 var skeleton: Skeleton3D
 var body: Node3D
 var bones: Dictionary = {}
@@ -30,9 +30,9 @@ func configure(character: Dictionary) -> void:
 	body = rigged.body
 	ring = _cylinder(self,0.5,0.5,0.035,Color("b99e65"),Vector3(0,0.02,0),32)
 
-func play_action(kind: String, duration: float = -1.0) -> void:
+func play_action(kind: String) -> void:
 	action = kind
-	rigged.play_action(kind,duration)
+	rigged.play_action(kind)
 
 func set_down(value: bool) -> void:
 	if value and is_moving():

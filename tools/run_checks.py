@@ -54,7 +54,7 @@ def main() -> int:
     if args.visual:
         commands.append(('visual_capture.gd', ['--script', 'res://tests/visual_capture.gd']))
         for script in ['test_animation_samples.gd', 'test_actor_assets.gd', 'test_map_motion.gd',
-                       'test_melee_contact.gd', 'test_presentation_events.gd', 'test_native_session.gd']:
+                       'test_native_session.gd']:
             commands.append((script, ['--script', 'res://tests/' + script]))
     results = []
     for name, command in commands:

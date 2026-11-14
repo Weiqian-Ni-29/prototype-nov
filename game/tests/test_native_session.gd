@@ -88,7 +88,7 @@ func execute() -> void:
 			if button.text == "继续远征":
 				button.pressed.emit()
 				break
-	expect(not game.view.battle_mode and not r.data.has("pending_victory") and r.data.rewards == checkpoint.get("rewards"),
+	expect(game.combat == null and not r.data.has("pending_victory") and r.data.rewards == checkpoint.get("rewards"),
 		"Acknowledging the settlement returns to exploration without re-awarding loot")
 	# Recruitment gifts and a victory drop can each have multiple story pages.
 	var page_budget: int = maxi(2, r.data.relic_intros.size() * 8)

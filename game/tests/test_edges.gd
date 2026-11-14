@@ -1,7 +1,7 @@
 extends SceneTree
 ## Adversarial state fixtures; these are not claimed as full player journeys.
 const Run = preload("res://scripts/domain/expedition.gd")
-const Combat = preload("res://tests/legacy/realtime_battle.gd")
+const Chess = preload("res://scripts/domain/chess_battle.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")
@@ -27,25 +27,11 @@ func ally(r: RefCounted, id: String) -> void:
 	r.actor(id).position = r.actor("hero").position
 	r.join_companion(id)
 
-func battle(r: RefCounted, ids: Array) -> RefCounted:
-	var p = r.actor("hero").position
-	r.data.tiles[p].enemies = ["boar"]
-	var b = Combat.new()
-	expect(b.begin(r, {"position": p, "origin": p, "movers": [], "npc": "", "ambush": false}, ids).ok, "Edge encounter starts")
-	return b
-
-func sunny(r: RefCounted, rain: bool) -> void:
-	for seed_value in range(100):
-		r.rng.seed = seed_value
-		if (r.next_weather() == "rain") == rain:
-			return
-
 func execute() -> void:
 	checkpoint_edges()
 	day_edges()
-	combat_edges()
 	story_modifiers()
-	print("EDGE TESTS: %d checks, %d failures (invalid saves, encounter checkpoints, weather, isolation, speed, policies, epilogue modifiers)" % [checks, failures])
+	print("EDGE TESTS: %d checks, %d failures (invalid saves, encounter checkpoints, weather and epilogue modifiers)" % [checks, failures])
 	quit(0 if failures == 0 else 1)
 
 func checkpoint_edges() -> void:
@@ -76,22 +62,26 @@ func checkpoint_edges() -> void:
 		expect(not r.load_game(path).ok, "Reject corrupt field " + issue)
 		expect(JSON.stringify(r.data) == before and FileAccess.get_file_as_string(path) == raw, "Rejected load leaves memory and source intact " + issue)
 	var original_steps = r.remaining_steps()
-	var b = battle(r, ["hero"])
+	var position: String = r.actor("hero").position
+	r.data.tiles[position].enemies = ["boar"]
+	var b := Chess.new()
+	expect(b.begin(r, {"position": position, "origin": position, "npc": "", "ambush": false}, r.card_deck()).ok,
+		"Edge encounter starts")
 	expect(r.remaining_steps() == original_steps, "Live encounter does not spend movement")
 	expect(not r.save_game().ok, "No partial battle checkpoint")
 	var continued = fresh()
 	expect(continued.load_game().ok, "Load prebattle checkpoint")
 	expect(continued.remaining_steps() == original_steps and not continued.data.pending_battle.is_empty(), "Checkpoint preserves pending battle and steps")
-	var resumed = Combat.new()
-	expect(resumed.begin(continued, continued.data.pending_battle, ["hero"]).ok, "Resume pending encounter")
+	var resumed := Chess.new()
+	expect(resumed.begin(continued, continued.data.pending_battle, continued.card_deck()).ok, "Resume pending encounter")
 	expect(continued.remaining_steps() == original_steps, "Resume leaves movement unchanged")
-	for id in resumed.enemies:
-		resumed.enemies[id].hp = 0
-	resumed.check_end()
-	var loot = continued.actor("hero").inventory.salve
-	resumed.check_end()
-	expect(continued.actor("hero").inventory.salve == loot, "Repeated finish cannot duplicate victory reward")
-	b.retreat()
+	resumed.commanders[Chess.ENEMY].hp = 0
+	resumed._check_outcome()
+	var loot: int = continued.actor("hero").inventory.salve
+	var coins: int = continued.data.lamp_coins
+	resumed._check_outcome()
+	expect(resumed.outcome == "victory" and continued.actor("hero").inventory.salve == loot
+		and continued.data.lamp_coins == coins, "Repeated finish cannot duplicate victory rewards")
 
 func day_edges() -> void:
 	var r = fresh()
@@ -123,63 +113,6 @@ func day_edges() -> void:
 	expect(not r.move(pos).ok and r.actor("eve").position == neighbor, "A healthy companion cannot move independently")
 	expect(r.use_item("eve", "hero", "salve").ok and hero.hp > 0, "A companion can spend a salve to rescue the traveler")
 	expect(r.actor("eve").energy == 0, "Map support never charges ultimate")
-
-func combat_edges() -> void:
-	var r = fresh()
-	ally(r, "lorne")
-	var b = battle(r, ["hero", "lorne"])
-	var simulated = b.timeline(60)
-	var counts = {"hero": 0, "lorne": 0, "enemy_0": 0}
-	for entry in simulated:
-		counts[entry.id] += 1
-	expect(counts.lorne > counts.enemy_0 and counts.hero > counts.enemy_0, "Fast units act more often over same continuous timeline")
-	var untouched = "0,0"
-	r.data.tiles[untouched].terrain = "forest"
-	var remote = JSON.stringify(r.data.tiles[untouched])
-	var day = r.data.day
-	while b.enemies.has(b.current):
-		b.step_auto()
-	var steps = r.remaining_steps()
-	var outgoing = b.current
-	ally(r, "eve")
-	expect(b.swap("eve").ok, "Reserve enters on normal action")
-	for turn in range(20):
-		if b.current == "eve":
-			break
-		if b.enemies.has(b.current): b.step_auto()
-		else: b.act("guard")
-	expect(b.swap(outgoing).ok and r.remaining_steps() == steps, "Returning reserve does not spend movement")
-	expect(JSON.stringify(r.data.tiles[untouched]) == remote and r.data.day == day, "Battle leaves remote tiles and date unchanged")
-	b.retreat()
-	for skill_id in ["ember", "sunfall"]:
-		for condition in ["dry", "rain", "wet"]:
-			r = fresh()
-			ally(r, "ember")
-			var tile = r.data.tiles[r.actor("hero").position]
-			tile.terrain = "forest"
-			r.data.weather = "rain" if condition == "rain" else "sun"
-			b = battle(r, ["ember"])
-			if condition == "wet":
-				b._apply_field_effect("wet")
-			r.actor("ember").energy = 100 if skill_id == "sunfall" else 0
-			b.auto_mode = true
-			b.step_auto()
-			var casts = b.events.filter(func(event): return event.get("skill_id") == skill_id)
-			expect(not casts.is_empty(), "Automatic battle casts %s in a %s forest" % [skill_id, condition])
-			expect(not casts.is_empty() and casts[0].environment_after.burning == (condition == "dry"),
-				"Automatic %s follows battlefield ignition rules in a %s forest" % [skill_id, condition])
-			expect(tile.terrain == "forest" and (b.outcome.is_empty() or not b.field_view().burning),
-				"Finishing a battle clears ignition without changing the forest")
-	r = fresh()
-	ally(r, "grit")
-	b = battle(r, ["hero", "grit"])
-	r.actor("hero").hp = 30
-	b._hurt("hero", 10)
-	expect(r.actor("hero").hp == 22, "Present protector reduces damage to injured ally")
-	r.actor("grit").hp = 0
-	b._hurt("hero", 10)
-	expect(r.actor("hero").hp == 12, "Downed protector does not grant protection")
-	b.retreat()
 
 func story_modifiers() -> void:
 	var r = fresh()

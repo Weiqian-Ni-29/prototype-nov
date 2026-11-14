@@ -12,11 +12,6 @@ var role = "melee"
 var asset_name = "knight"
 var locomotion = "idle"
 var holding_down = false
-var held_weapon: Node3D
-var weapon_bone = ""
-var contact_sample: Dictionary = {}
-var bow_release_pending = false
-var bow_release_clip = "attack_bow"
 
 func configure(character: Dictionary) -> void:
 	definition = character.duplicate(true)
@@ -139,86 +134,24 @@ func _weapon(asset: String, bone: String) -> void:
 	var prop = load("res://assets/characters/" + asset + ".gltf").instantiate()
 	attachment.add_child(prop)
 	_customize(prop)
-	if asset.begins_with("sword"):
-		held_weapon = prop
-		weapon_bone = bone
 
-func weapon_tip_global() -> Vector3:
-	if held_weapon == null:
-		var name = "Head0" if role=="swarm" else "Head"
-		var index = skeleton.find_bone(name)
-		if index<0: return global_position + global_basis.z * 0.8 + Vector3.UP
-		skeleton.force_update_all_bone_transforms()
-		return skeleton.global_transform*skeleton.get_bone_global_pose(index)*Vector3(0,0.32 if role=="wolf" else 0.35 if role in ["beast","spider"] else 0.15,0)
-	var meshes = held_weapon.find_children("*", "MeshInstance3D", true, false)
-	if meshes.is_empty(): return global_position
-	var mesh = meshes[0]
-	var bounds = mesh.get_aabb()
-	var tip = bounds.get_center()
-	tip.y = bounds.end.y
-	var relative = held_weapon.to_local(mesh.to_global(tip))
-	var bone = skeleton.find_bone(weapon_bone)
-	skeleton.force_update_all_bone_transforms()
-	return skeleton.global_transform * skeleton.get_bone_global_pose(bone) * held_weapon.transform * relative
-
-func emission_point_global() -> Vector3:
-	var name = "LeftHandSocket" if role=="bow" else "RightHandSocket"
-	var bone = skeleton.find_bone(name)
-	if bone<0: return global_position+Vector3.UP
-	skeleton.force_update_all_bone_transforms()
-	return skeleton.global_transform*skeleton.get_bone_global_pose(bone)*Vector3(0,0.6 if role=="magic" else 0,0)
-
-func sample_melee_contact(clip: String = "attack_melee", ceiling: float = 2.0) -> Dictionary:
-	var key = clip+":"+str(snappedf(ceiling,0.1))
-	if contact_sample.has(key): return contact_sample[key]
-	var length = animator.get_animation(clip).length
-	animator.play(clip, 0)
-	var best_tip = Vector3.ZERO
-	var best_time = length * 0.5
-	var best_score = -INF
-	for i in range(4,22):
-		var time = length * float(i) / 24.0
-		animator.seek(time, true)
-		var tip = body.to_local(weapon_tip_global())
-		var world_tip = body.to_global(tip)
-		var score = tip.z - maxf(0,world_tip.y-ceiling)*3.0 - maxf(0,0.25-world_tip.y)*3.0
-		if score>best_score:
-			best_score = score
-			best_tip = tip
-			best_time = time
-	contact_sample[key] = {"tip":best_tip, "time":best_time, "length":length, "clip":clip}
-	play_action("idle")
-	return contact_sample[key]
-
-func play_action(kind: String, duration: float = -1.0) -> void:
+func play_action(kind: String) -> void:
 	if animator == null: return
 	action = kind
-	bow_release_pending = false
-	var clip = kind
-	match kind:
-		"attack": clip = "bow_draw" if role == "bow" else "crossbow_shoot" if role=="crossbow" else "cast" if role == "magic" else "attack_melee"
-		"cast": clip = "bow_draw" if role == "bow" else "crossbow_aim" if role=="crossbow" else "cast"
-		"aim": clip = "crossbow_aim"
-		"ultimate": clip = "attack_heavy" if role == "melee" else "bow_draw_up" if role=="bow" else "support"
-		"heal": clip = "support"
-		"recover":
-			var was_down = animator.current_animation=="down"
-			var previous_time = animator.current_animation_position
-			holding_down = false
-			animator.play_backwards("down", 0.1)
-			if was_down: animator.seek(previous_time,true)
-			return
-	if not animator.has_animation(clip):
-		push_error("Missing required animation %s for %s" % [clip, asset_name])
+	if kind == "recover":
+		var was_down = animator.current_animation == "down"
+		var previous_time = animator.current_animation_position
+		holding_down = false
+		animator.play_backwards("down", 0.1)
+		if was_down:
+			animator.seek(previous_time, true)
+		return
+	if not animator.has_animation(kind):
+		push_error("Missing required animation %s for %s" % [kind, asset_name])
 		return
 	if kind in ["idle", "walk", "run"]: locomotion = kind
 	holding_down = false
-	var rate = animator.get_animation(clip).length / duration if duration > 0 else 1.0
-	if role=="bow" and clip in ["bow_draw","bow_draw_up"]:
-		bow_release_pending = true
-		bow_release_clip = "bow_release_up" if clip=="bow_draw_up" else "attack_bow"
-		rate = animator.get_animation(clip).length / 0.3
-	animator.play(clip, 0.1, rate)
+	animator.play(kind, 0.1)
 
 func set_down(value: bool) -> void:
 	if down == value: return
@@ -229,10 +162,6 @@ func set_down(value: bool) -> void:
 		if holding_down or animator.current_animation=="down": play_action("recover")
 
 func _animation_finished(clip: StringName) -> void:
-	if str(clip) in ["bow_draw","bow_draw_up"] and bow_release_pending:
-		bow_release_pending = false
-		animator.play(bow_release_clip,0.04,animator.get_animation(bow_release_clip).length/0.2)
-		return
 	if str(clip) == "down" and down:
 		holding_down = true
 		animator.pause()

@@ -1,6 +1,6 @@
 extends SceneTree
 const Run = preload("res://scripts/domain/expedition.gd")
-const Combat = preload("res://tests/legacy/realtime_battle.gd")
+const Chess = preload("res://scripts/domain/chess_battle.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
 const LegacyOutcomes = preload("res://scripts/domain/legacy_companion_outcomes.gd")
@@ -435,7 +435,7 @@ func execute() -> void:
 		var person = r.actor(id)
 		expect(not positions.has(person.position) and r.data.tiles[person.position].npc == id, "Unique encounter tile " + id)
 		positions[person.position] = true
-		expect(person.race in ["龙", "恶魔", "神", "人类", "矮人", "精灵"] and Catalog.SKILLS.has(person.skill) and Catalog.SKILLS.has(person.ultimate), "Complete character " + id)
+		expect(person.race in ["龙", "恶魔", "神", "人类", "矮人", "精灵"] and Catalog.SAVE_SKILL_IDS.has(person.skill) and Catalog.SAVE_SKILL_IDS.has(person.ultimate), "Complete character " + id)
 		expect(Nodes.story(r.node_at(person.position)).size() > 0, "Character is placed in a real node " + id)
 		r.retreat_party(person.position)
 		if not r.data.tiles[person.position].enemies.is_empty():
@@ -458,7 +458,9 @@ func execute() -> void:
 		check_past(story, r, "hero", id, "immediately after first meeting and recruitment")
 		expect(str(r.data.story[id].get("personal_choice", "")).is_empty(), id + " learning the background never selects a personal branch")
 
-	r.data.peace[positions.keys()[0]] = true
+	var full_power := Chess.enemy_definition(r, "war_god", true)
+	for cell in positions.keys().slice(0, 8):
+		r.data.peace[cell] = true
 
 	var cells = r.data.tiles.keys()
 	r.data.explored.clear()
@@ -475,31 +477,28 @@ func execute() -> void:
 	expect(r.boss_known() and r.data.tiles[r.data.boss].enemies == ["war_god"], "80 percent locates the actual boss")
 	expect(r.actor("hero").ultimate == "gravity_wave", "A memory unlocks the upgraded gravity skill")
 	r.retreat_party(r.data.boss)
-	var b = Combat.new()
-	var encounter = {"position": r.data.boss, "origin": r.data.boss, "movers": [], "npc": "", "ambush": false}
-	expect(b.begin(r, encounter, ["hero"]).ok, "Boss battle begins")
-	expect(b.unit("enemy_0").attack < Catalog.ENEMIES.war_god.attack, "Earlier peace directly reduces Kadran's power")
-	b.current = "hero"
-	b.unit("enemy_0").hp = 1
-	expect(b.act("gravity", "enemy_0").ok and b.reveal_pending and b.outcome.is_empty(), "Boss cannot be defeated before the replayed strike")
-	expect(b.events[-1].skill_id == "old_strike", "The old strike precedes the reveal")
+	var b := Chess.new()
+	var encounter = {"position": r.data.boss, "origin": r.data.boss, "npc": "", "ambush": false}
+	expect(b.begin(r, encounter, r.card_deck()).ok, "Boss battle begins")
+	var enemy := b.commanders[Chess.ENEMY]
+	var hero := b.commanders[Chess.PLAYER]
+	expect(enemy.attack < full_power.attack and enemy.hp_max < full_power.hp,
+		"Earlier peace directly reduces Kadran's power")
+	b.board[4] = hero
+	b.board[10] = {}
+	enemy.hp = 1
+	enemy.armor = 0
+	expect(b.move(4, 1) and enemy.hp == 1 and b.reveal_pending and b.outcome.is_empty() and not b.can_act(),
+		"A lethal blow pauses the battle for the memory instead of completing the run")
+	hero.hp = 1
+	var attack := b.attack_power(enemy)
 	b.awaken_death_power()
-	expect(b.river and r.actor("hero").name == "伊文洛" and r.actor("hero").energy == 100, "Remembering precedes the river and full power")
-	var hp = r.actor("hero").hp
-	var attack = b.unit("enemy_0").attack
-	b._hurt("hero", 999)
-	expect(r.actor("hero").hp == hp, "Ivenlo is invulnerable while the river is present")
-	b.current = "hero"
-	b.act("guard")
-	expect(b.unit("enemy_0").attack < attack, "The river strips Kadran's strength")
-	b.current = "hero"
-	b.request_ultimate("hero")
-	b.resolve_queued()
-	for i in range(5):
-		if not b.outcome.is_empty():
-			break
-		b.current = "hero"
-		b.act("gravity", "enemy_0")
+	expect(b.river and b.weather == "river" and r.actor("hero").name == "伊文洛"
+		and hero.hp == hero.hp_max, "Remembering restores Ivenlo and summons the river")
+	expect(b.attack_power(enemy) < attack and not b.retreat(), "The river strips Kadran's strength and prevents retreat")
+	b.enemy_turn()
+	if b.can_act() and b.moves(4).has(1):
+		b.move(4, 1)
 	expect(r.data.status == "won" and story.main_ending().text.contains("卡德兰"), "Only beating Kadran completes the run")
 	var loaded = Run.new()
 	expect(loaded.load_game(r.save_path).ok and loaded.data.status == "won" and loaded.data.chapter == 4, "Victory and chapter state survive reload")

@@ -1,7 +1,7 @@
 extends SceneTree
 const Run = preload("res://scripts/domain/expedition.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
-const BattleRules = preload("res://tests/legacy/realtime_battle.gd")
+const Chess = preload("res://scripts/domain/chess_battle.gd")
 
 func _initialize() -> void:
 	call_deferred("execute")
@@ -20,9 +20,6 @@ func journey(seed_value: int) -> bool:
 	r.save_path = "user://veylodan-journey.json"
 	r.new_run(seed_value, "wayfarer")
 	var hero = r.actor("hero")
-	hero.attack = 160
-	hero.speed = 200
-	hero.defense = 120
 	var stages: Array[int] = []
 	var steps = 0
 	for cell in r.data.tiles:
@@ -62,14 +59,39 @@ func journey(seed_value: int) -> bool:
 	return true
 
 func fight(r: RefCounted) -> bool:
-	var b = BattleRules.new()
-	if not b.begin(r, r.data.pending_battle, ["hero"]).ok:
+	var battle := Chess.new()
+	if not battle.begin(r, r.data.pending_battle, r.card_deck()).ok:
 		return false
-	b.auto_mode = true
-	for turn in range(30):
-		if b.reveal_pending:
-			b.awaken_death_power()
-		b.step_auto()
-		if not b.outcome.is_empty():
-			break
-	return b.outcome == "victory"
+	# Keep campaign tests deterministic while playing legal turns on the real board.
+	var commander := battle.commanders[Chess.PLAYER]
+	commander.attack = 40
+	commander.armor = 100
+	for turn in range(40):
+		if not battle.outcome.is_empty():
+			return battle.outcome == "victory"
+		if battle.reveal_pending:
+			battle.awaken_death_power()
+		if battle.turn == Chess.ENEMY:
+			battle.enemy_turn()
+			continue
+		var source := battle.board.find(commander)
+		var target := battle.board.find(battle.commanders[Chess.ENEMY])
+		var choices := battle.moves(source)
+		if choices.has(target):
+			battle.move(source, target)
+		elif not choices.is_empty():
+			var ranked := choices.keys()
+			ranked.sort_custom(func(a: int, b: int):
+				if choices[a] != choices[b]:
+					return choices[a] == "attack"
+				return Chess._distance(a, target) < Chess._distance(b, target))
+			battle.move(source, ranked[0])
+		else:
+			for index in battle.hands[Chess.PLAYER].size():
+				var targets := battle.card_targets(Chess.PLAYER, index)
+				if not targets.is_empty():
+					battle.play(index, targets[0])
+					break
+			if battle.can_act():
+				battle.pass_turn()
+	return battle.outcome == "victory"
