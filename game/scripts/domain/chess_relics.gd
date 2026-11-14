@@ -8,7 +8,6 @@ const RULES = {
 	"ranged_sight": ["equip", "weapon,partner", "sight", 1, 1, "首次给伙伴装备武器后，它下一次横竖普通攻击射程 +1，最高 3 格。"],
 	"lamp_badge": ["entry", "", "entry", "", 0, "己方棋子首次登场时，获得其生命上限 12% 的护甲，四舍五入。"],
 	"herbal_case": ["heal", "spell_heal", "amount", 1, 1, "每场首次用治疗法术实际回血时，治疗量 +1。"],
-	"rainstone": ["opening_weather", "", "weather", "rain", 1, "选择此开局天气时，前两轮为降雨。"],
 	"life_seed": ["growth", "", "entry", "", 0, "启用后，本次远征所有己方棋子的战棋生命上限 +1。重复启用不叠加。"],
 	"opening_flint": ["attack", "own_front_from", "bonus", 1, 1, "第一次从己方前排发起的普通攻击伤害 +1。"],
 	"patient_knot": ["action_end", "patient", "leader_armor", 2, 1, "前两次行动均未普攻或施放伤害法术，第二次行动后主战者获得 2 甲。"],
@@ -18,12 +17,10 @@ const RULES = {
 	"shield_borer": ["attack", "armored", "pierce", 1, 1, "首次普通攻击有护甲的敌棋时，1 点伤害直接扣生命。"],
 	"cadence_beads": ["spell", "previous_attack", "bonus", 1, 2, "上一手是普通攻击时，本次伤害法术 +1。每场最多两次。"],
 	"lone_watch_token": ["incoming", "alone", "block", 2, 1, "首次有独占一列的己方伙伴受击时，伤害 −2。"],
-	"spent_rune_clip": ["weather_cast", "", "weather_card", "", 1, "首次打出天气法术后，按新天气生成一张牌：降雨给冰针，烈日给余烬，雾幕给回春。"],
 	"measured_spoon": ["opening", "only_partners", "search", "action", 1, "如果三张起手全是伙伴，从牌库额外抽取第一张非伙伴牌。"],
 	"aftersong_shell": ["kill", "spell", "generate", "mend_spell", 1, "首次用伤害法术击倒敌方伙伴后，生成「回春」。"],
 	"third_stitch": ["deploy", "third", "armor", 2, 1, "第三个部署的伙伴登场时获得 2 甲。"],
 	"witness_ribbon": ["occupy", "", "occupy_armor", "", 1, "首次击倒敌人并占格后，攻击者获得 1 甲，若占领敌后排则获得 2 甲。"],
-	"clear_air_reed": ["opening_weather", "", "weather", "sun", 1, "选择此开局天气时，前两轮为烈日。"],
 	"mended_buckle": ["survive", "broken_armor", "armor_victim", 1, 1, "首次有伙伴的护甲被打空且它存活时，为其补 1 甲。"],
 	"guard_candle_cap": ["deploy", "near_leader", "leader_armor", 2, 1, "首次将伙伴部署在主战者相邻格时，主战者获得 2 甲。"],
 	"broken_ring": ["turn_start", "ally_lost", "draw", 1, 1, "首次有己方伙伴倒下后，下一个己方回合额外抽 1 张，牌库空时不抽。"],
@@ -40,28 +37,13 @@ const RULES = {
 	"tender_gauze": ["heal", "talent_heal", "amount", 1, 1, "首次由伙伴天赋实际治疗时，治疗量 +1。"],
 	"unburdened_clasp": ["deploy", "edge", "diagonal", "", 1, "首枚部署在边路的伙伴，下一次移动可斜走到相邻空格。"],
 	"last_drop_cup": ["healed", "saved", "armor", 1, 1, "首次将生命不超过 2 的友方治到至少 3 点时，为其加 1 甲。"],
-	"rain_listening_pin": ["defense", "rain", "generate", "rain", 1, "降雨中首次打出防御牌后，生成「唤雨」。"],
 	"banked_ember_box": ["opening", "", "generate", "ember_spell", 1, "开场生成一张「余烬」。"],
 	"rime_thimble": ["opening", "", "generate", "ice_spell", 1, "开场生成一张「冰针」。首次获得时也永久解锁该牌。"],
-	"copper_rain_comb": ["hit", "rain,water,attack,hp_damage", "leader_armor", 1, 1, "雨中己方水属性普通攻击首次扣除敌方生命时，主战者获得 1 甲。"],
-	"crossed_wind_chimes": ["opening", "", "generate", "fog_spell", 1, "开场生成一张「起雾」；己方风属性棋子的攻击不受雾幕削弱。首次获得时也永久解锁该牌。"],
-	"rootbound_bracelet": ["deploy", "rain,earth", "armor", 2, 1, "雨中首枚部署的地属性伙伴获得 2 甲。"],
-	"field_water_sponge": ["heal", "rain", "heal_guard", 1, 1, "雨中首次实际治疗时，治疗量 +1，目标也获得 1 甲。"],
-	"dripping_spool": ["weather_end", "rain_ended", "column_armor", 1, 1, "第一次降雨自然结束时，与主战者同列的己方棋子各获得 1 甲。"],
-	"conductive_needle": ["attack", "rain,lightning", "bonus", 1, 1, "雨中首次雷属性普通攻击伤害 +1。"],
-	"ice_anchor_button": ["hit", "rain,ice,attack,alive_victim", "slow", "", 1, "雨中己方冰属性普通攻击首次击中仍存活的敌棋时，敌棋下回合最多移动 1 格。"],
-	"grounding_heel": ["incoming", "rain,spell", "block", 2, 1, "降雨中己方首次受到伤害法术时，伤害 −2。"],
-	"river_brace": ["move", "rain,two_steps,partner", "armor", 2, 1, "雨中伙伴首次走两格后，该伙伴获得 2 甲。"],
-	"ash_filter_patch": ["incoming", "sun,fire", "block", 2, 1, "烈日中己方首次受到火伤害时，伤害 −2。"],
-	"thaw_water_vial": ["weather_cast", "sun,wet_before", "weakest_heal", 2, 1, "首次用烈日覆盖降雨或雾幕时，最缺血的己方棋子回复 2 点。"],
-	"field_dial": ["weather_cast", "", "bottom", "", 1, "首次打出天气法术后，将下一张待抽的牌移到牌库底，并在战报中显示牌名。"],
-	"waterline_thread": ["move", "rain,water,own_front", "neighbor_heal", 1, 2, "雨中水属性棋子走到己方前排后，治疗相邻且最缺血的友方 1 点，每场最多两次。"],
 	"survey_tally": ["loot", "", "survey", "", 1, "共鸣期间累计赢过一场普通战和一场精英战后，解锁「冰针」。"],
 	"market_window": ["shop", "", "entry", "", 0, "共鸣时，商店每轮库存额外展示第二本未解锁的法术牌谱；每轮仍只能买一本。"],
 	"caution_compass": ["opening", "ambush", "leader_armor", 2, 1, "被伏击、由敌方先手时，主战者开局获得 2 甲。"],
 	"honest_ledger": ["victory", "ordinary", "daily_coin", 2, 1, "每天第一场普通战胜利后多得 2 灯铢。"],
 	"terrain_caliper": ["move", "cross_columns,partner", "armor", 2, 1, "首次有伙伴从一侧边路横跨到另一侧边路时，为其加 2 甲。"],
-	"cloud_almanac": ["opening", "clear", "generate", "sun", 1, "实际开局无特殊天气时，生成一张「烈日」。"],
 	"uphill_kneepad": ["move", "from_back,own_front", "armor", 1, 1, "第一枚由己方后排走到己方前排的棋子获得 1 甲。"],
 	"milestone_waterbag": ["opening", "wounded_victory", "generate", "mend_spell", 1, "若上场战斗主战者带伤获胜，这场开局生成一张「回春」。"],
 	"bargaining_counter": ["shop", "", "entry", "", 0, "商店法术牌谱减价 2 灯铢。"],
@@ -82,7 +64,6 @@ const RULES = {
 
 const PREPARATIONS = {
 	"stillwater_stone": "首个己方回合结束时，主战者回复 2 点生命。",
-	"rain_bell": "开局下雨两轮，优先于共鸣遗器设定的开局天气。",
 	"clean_bandage_roll": "开场生成临时牌「包扎」：治疗友方 3 点。",
 	"mint_distillate": "开局额外抽 1 张牌。",
 	"balanced_broth_jar": "开场生成临时牌「热汤」：选友方回复 2 点生命并获得 1 甲。",
@@ -141,15 +122,7 @@ static func _condition(b, tag: String, c: Dictionary) -> bool:
 	var square := int(c.get("square", -1))
 	var leader: Dictionary = b.commanders[0]
 	match tag:
-		"rain", "sun":
-			return b.weather == tag
-		"clear":
-			return b.weather.is_empty()
-		"rain_ended":
-			return c.old == "rain"
-		"wet_before":
-			return c.old in ["rain", "fog"]
-		"earth", "ice", "water", "fire", "lightning":
+		"earth", "ice", "fire":
 			return c.get("element", unit.get("element", "")) == tag
 		"spell", "attack":
 			return c.get("kind", "") == tag
@@ -256,46 +229,29 @@ static func _apply(b, op: String, value: Variant, c: Dictionary, id: String) -> 
 			leader.armor += value
 		"occupy_armor":
 			unit.armor += 2 if int(c.square) / 3 == 0 else 1
-		"partner_armor", "column_armor":
-			var leader_square: int = b.board.find(leader)
-			for i in b.board.size():
-				var ally: Dictionary = b.board[i]
-				if ally.get("side", -1) == 0 and ((op == "partner_armor" and not ally.leader) or (op == "column_armor" and i % 3 == leader_square % 3)):
+		"partner_armor":
+			for ally in b.board:
+				if ally.get("side", -1) == 0 and not ally.leader:
 					ally.armor += value
-		"neighbor_armor", "neighbor_heal", "weakest_heal":
-			var ally := _weakest(b, int(c.get("square", -1)) if op.begins_with("neighbor") else -1, op != "neighbor_armor")
+		"neighbor_armor":
+			var ally := _weakest_neighbor(b, int(c.square))
 			if ally.is_empty():
 				return false
-			if op == "neighbor_armor":
-				ally.armor += value
-			else:
-				b._heal(ally, value, "relic")
+			ally.armor += value
 		"leader_heal", "heal_unit":
 			b._heal(leader if op == "leader_heal" else unit, value, "relic")
-		"heal_guard":
-			c.amount += value
-			unit.armor += 1
 		"sight", "edge", "ready_move":
 			unit[op] = value
 		"diagonal", "relay":
 			unit["ready_diagonal" if op == "diagonal" else "relay"] = true
 		"track":
 			victim.tracked_by = unit.uid
-		"slow":
-			victim.slow_until = b.round_number
 		_:
 			return false if b.public_preview else _private_effect(b, op, value, c, id)
 	return true
 
 static func _private_effect(b, op: String, value: Variant, c: Dictionary, id: String) -> bool:
 	match op:
-		"weather":
-			if b.run.prepared_weather != id or b.prep == "rain_bell":
-				return false
-			b.weather = value
-			b.weather_rounds = 2
-		"weather_card":
-			_generate(b, {"rain": "ice_spell", "sun": "ember_spell", "fog": "mend_spell"}[b.weather])
 		"generate":
 			_generate(b, value)
 		"reveal":
@@ -307,12 +263,6 @@ static func _private_effect(b, op: String, value: Variant, c: Dictionary, id: St
 			b._draw(0, mini(int(value), b.piles[0].size()))
 		"search":
 			return _search(b, value)
-		"bottom":
-			if b.piles[0].is_empty():
-				return false
-			var next: String = b.piles[0].pop_front()
-			b.piles[0].append(next)
-			b._log("「%s」移到牌库底。" % b.definition(next).name)
 		"scout":
 			return _scout(b)
 		"daily_coin":
@@ -348,15 +298,15 @@ static func _private_effect(b, op: String, value: Variant, c: Dictionary, id: St
 			return false
 	return true
 
-static func _weakest(b, square: int, wounded: bool) -> Dictionary:
+static func _weakest_neighbor(b, square: int) -> Dictionary:
 	var best := {}
 	var amount := -1
 	for i in b.board.size():
 		var ally: Dictionary = b.board[i]
-		if ally.get("side", -1) != 0 or (square >= 0 and not b._neighbors(square, i)):
+		if ally.get("side", -1) != 0 or not b._neighbors(square, i):
 			continue
 		var missing := int(ally.hp_max - ally.hp)
-		if ally.hp > 0 and (not wounded or missing > 0) and missing > amount:
+		if ally.hp > 0 and missing > amount:
 			best = ally
 			amount = missing
 	return best
@@ -388,9 +338,6 @@ static func _scout(b) -> bool:
 
 static func prepare(b, id: String) -> void:
 	match id:
-		"rain_bell":
-			b.weather = "rain"
-			b.weather_rounds = 2
 		"clean_bandage_roll":
 			_generate(b, "bandage_card")
 		"mint_distillate":

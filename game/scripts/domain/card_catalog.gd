@@ -2,14 +2,14 @@ extends RefCounted
 
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
-const MIN_DECK_SIZE = 12
 const OPENING_HAND = 3
+const MIN_DECK_SIZE = OPENING_HAND
 const STARTING_PARTNER_HP_BONUS = 2
 const RECRUIT_PRICE = 8
 const BREAKTHROUGH_PRICES = [8, 14, 22]
 const BREAKTHROUGH_BENEFITS = ["生命上限 +2", "生命上限 +1 · 初始护甲 +1", "攻击 +1 · 解锁天赋"]
 const DEFAULT_DECK = ["blade", "pike", "coat", "coat", "brace", "brace", "ward", "ward",
-	"ember_spell", "ember_spell", "mend_spell", "sun"]
+	"ember_spell", "ember_spell", "mend_spell"]
 const STARTER_SPELLS = ["ember_spell", "mend_spell"]
 const LEGACY_STARTERS = {"highdrake": "support_vanguard", "lorne": "support_archer", "eve": "support_medic",
 	"oathguard": "support_guard", "ember": "support_caster"}
@@ -18,13 +18,13 @@ const SUPPORT = {
 	"support_archer": {"name": "远征弓手", "icon": "ranged_sight", "element": "wind", "attack_delivery": "ranged", "attack_projectile": "arrow", "attack": 3, "hp": 4, "armor": 0, "move": 1, "range": 2, "trait": "横竖走一格，可沿无阻挡的直线攻击两格。"},
 	"support_medic": {"name": "远征医师", "icon": "clean_bandage_roll", "element": "water", "attack_delivery": "ranged", "attack": 2, "hp": 4, "armor": 0, "move": 1, "range": 1, "diagonal": true, "heal": 2, "trait": "横竖斜走一格，落位时治疗相邻且缺血最多的友方 2 点生命。"},
 	"support_guard": {"name": "远征卫士", "icon": "shield", "element": "earth", "attack": 2, "hp": 6, "armor": 2, "move": 1, "range": 1, "trait": "横竖走一格，带 2 点护甲登场。"},
-	"support_caster": {"name": "远征术士", "icon": "banked_ember_box", "element": "fire", "attack_delivery": "ranged", "attack": 3, "hp": 4, "armor": 0, "move": 1, "range": 1, "trait": "横竖走一格，火攻受天气影响。"},
+	"support_caster": {"name": "远征术士", "icon": "banked_ember_box", "element": "fire", "attack_delivery": "ranged", "attack": 3, "hp": 4, "armor": 0, "move": 1, "range": 1, "trait": "横竖走一格。"},
 }
 const PARTNERS = {
 	"highdrake": {"attack": 5, "hp": 6, "armor": 1, "element": "earth", "move": 2, "trait": "横竖最多走两格，路径上的棋子会挡路。"},
 	"lorne": {"attack": 3, "hp": 5, "armor": 0, "element": "wind", "range": 2, "trait": "横竖走一格，可沿无阻挡的直线攻击两格。"},
 	"eve": {"attack": 2, "hp": 5, "armor": 0, "element": "water", "diagonal": true, "heal": 3, "trait": "横竖斜走一格。落位时治疗相邻、缺血最多的一名友方 3 点生命。"},
-	"ember": {"attack": 4, "hp": 5, "armor": 0, "element": "fire", "trait": "横竖走一格。烈日增强火攻，降雨削弱火攻。"},
+	"ember": {"attack": 4, "hp": 5, "armor": 0, "element": "fire", "trait": "横竖走一格。"},
 	"oathguard": {"attack": 3, "hp": 7, "armor": 3, "element": "earth", "trait": "横竖走一格，带着 3 点护甲登场。"},
 }
 const ACTIONS = {
@@ -33,27 +33,18 @@ const ACTIONS = {
 	"coat": {"cost": 1, "name": "夹棉旅衣", "kind": "defense", "icon": "padded_coat", "armor": 3, "trait": "选一枚友方棋子，增加 3 点护甲。"},
 	"brace": {"cost": 1, "name": "护身", "kind": "defense", "icon": "shield", "armor": 3, "trait": "选一枚友方棋子，增加 3 点护甲。"},
 	"ward": {"cost": 2, "name": "列阵", "kind": "defense", "icon": "shield", "armor": 2, "column": true, "trait": "选一枚友方棋子，同列所有己方棋子各获得 2 点护甲。"},
-	"rain": {"cost": 1, "name": "唤雨", "kind": "spell", "icon": "rain", "element": "water", "weather": "rain", "trait": "降雨持续两轮（含施放轮）。双方水伤 +1，火伤 −1。"},
-	"sun": {"cost": 1, "name": "烈日", "kind": "spell", "icon": "sun", "element": "fire", "weather": "sun", "trait": "烈日持续两轮（含施放轮）。双方火伤 +1，水伤 −1。"},
 	"ember_spell": {"cost": 1, "name": "余烬", "kind": "spell", "icon": "banked_ember_box", "element": "fire", "damage": 2, "trait": "对射程内的敌棋造成 2 点火伤害。射程为任一友方棋子横竖 2 格，路径须畅通。"},
 	"ice_spell": {"cost": 1, "name": "冰针", "kind": "spell", "icon": "rime_thimble", "element": "ice", "damage": 1, "slow": true, "trait": "对射程内的敌棋造成 1 点冰伤害，并使其下回合最多移动 1 格。横竖射程 2，路径须畅通。"},
 	"mend_spell": {"cost": 1, "name": "回春", "kind": "spell", "icon": "herbal_case", "element": "water", "heal": 2, "trait": "选一枚受伤的友方棋子，回复 2 点生命。"},
-	"fog_spell": {"cost": 2, "name": "起雾", "kind": "spell", "icon": "crossed_wind_chimes", "element": "wind", "weather": "fog", "trait": "起雾持续两轮，双方相距两格及以上的普通攻击伤害 −1。"},
 	"bandage_card": {"cost": 1, "name": "包扎", "kind": "spell", "icon": "clean_bandage_roll", "heal": 3, "trait": "选一枚受伤的友方棋子，回复 3 点生命。"},
 	"broth_card": {"cost": 2, "name": "热汤", "kind": "defense", "icon": "balanced_broth_jar", "armor": 1, "heal": 2, "trait": "选一枚友方棋子，回复 2 点生命并获得 1 点护甲。"},
 	"cup_card": {"cost": 1, "name": "递饮", "kind": "defense", "icon": "passing_cup", "armor": 2, "cup": true, "trait": "选一枚友方伙伴，使其获得 2 点护甲。若主战者与其相邻，主战者回复 1 点生命。"},
 	"loaf_card": {"cost": 2, "name": "分食", "kind": "defense", "icon": "divided_warm_loaf", "armor": 1, "heal": 1, "row": true, "trait": "选一枚友方棋子，同排友方各回复 1 点生命并获得 1 点护甲。"},
 }
-const UNLOCKABLE_SPELLS = ["ember_spell", "ice_spell", "mend_spell", "fog_spell"]
+const UNLOCKABLE_SPELLS = ["ember_spell", "ice_spell", "mend_spell"]
 const PREP_CARDS = ["bandage_card", "broth_card", "cup_card", "loaf_card"]
 const KINDS = {"all": "全部", "partner": "伙伴", "weapon": "武器", "equipment": "装备", "defense": "防御", "spell": "法术"}
 const ELEMENTS = {"earth": "地", "fire": "火", "water": "水", "ice": "冰", "wind": "风", "lightning": "雷"}
-const WEATHER = {
-	"rain": {"cost": 1, "name": "降雨", "hint": "水伤 +1 · 火伤 −1", "damage": {"water": 1, "fire": -1}},
-	"sun": {"cost": 1, "name": "烈日", "hint": "火伤 +1 · 水伤 −1", "damage": {"fire": 1, "water": -1}},
-	"fog": {"name": "雾幕", "hint": "两格及以上的普攻伤害 −1", "damage": {}},
-	"river": {"name": "冥河", "hint": "敌方攻击 −1", "damage": {}},
-}
 const TALENTS = {
 	"diagonal": {"name": "斜行", "text": "可以斜向移动或攻击一格。", "changes": {"diagonal": true}},
 	"march": {"name": "疾行", "text": "可以横竖移动两格，路径须畅通。", "changes": {"move": 2}},
@@ -129,7 +120,7 @@ static func collection(actors: Dictionary, state: Dictionary = {}, legacy_suppor
 		var actor: Variant = actors.get(id)
 		if actor is Dictionary and actor.get("joined", false):
 			result.append(id)
-	for id in ["blade", "pike", "coat", "brace", "ward", "rain", "sun"]:
+	for id in ["blade", "pike", "coat", "brace", "ward"]:
 		if state.is_empty() or id not in ["blade", "pike", "coat"]:
 			result.append(id)
 	for id in UNLOCKABLE_SPELLS:

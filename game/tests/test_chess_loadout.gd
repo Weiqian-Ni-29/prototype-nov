@@ -4,6 +4,7 @@ const Run = preload("res://scripts/domain/expedition.gd")
 const Chess = preload("res://scripts/domain/chess_battle.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
+const Relics = preload("res://scripts/domain/relic_catalog.gd")
 var checks := 0
 var failures := 0
 
@@ -23,7 +24,7 @@ func execute() -> void:
 	var deck := run.card_deck()
 	var start: String = run.actor("hero").position
 	var owned := Cards.collection(run.data.actors, run.data)
-	expect(deck.size() == 12 and deck.count("ember_spell") == 2 and deck.count("sun") == 1
+	expect(deck.size() == 11 and deck.count("ember_spell") == 2 and deck.count("mend_spell") == 1
 		and deck.filter(func(id): return id.begins_with("gear:")).size() == 4
 		and "ice_spell" not in owned and not owned.any(func(id): return Cards.definition(id).get("kind") == "partner"), "New game owns four real equipment cards, solo defense and spells")
 	var blade_id: String = deck[0]
@@ -52,7 +53,7 @@ func execute() -> void:
 	run.data.erase("pending_victory")
 	var battle := Chess.new()
 	expect(battle.begin(run, encounter, deck).ok and battle.hands[0].size() == 3
-		and battle.hands[1].size() == 3 and battle.piles[0].size() == 9, "Both sides draw exactly three from shuffled decks")
+		and battle.hands[1].size() == 3 and battle.piles[0].size() == 8, "Both sides draw exactly three from shuffled decks")
 	battle.hands[0] = [blade_id]
 	expect(battle.play(0, 10) and battle.board[10].armor == 2 and battle.attack_power(battle.board[10]) == 6
 		and battle.board[10].weapon == blade_id and battle.can_move_piece(), "The enhanced card equips the commander without using the board action")
@@ -62,12 +63,11 @@ func execute() -> void:
 	run.grant_relic("dry_ink_seal", "hero", start)
 	run.grant_relic("banked_ember_box", "hero", start)
 	run.grant_relic("rime_thimble", "hero", start)
-	run.grant_relic("clear_air_reed", "hero", start)
-	run.prepared_weather = "clear_air_reed"
+	run.data.weather = "rain"
 	run.data.tiles[start].enemies = ["boar"]
 	battle = Chess.new()
-	expect(battle.begin(run, encounter, run.card_deck()).ok and battle.weather == "sun"
-		and battle.piles[0].size() == 9 and battle.hands[0].has("temp:ember_spell") and battle.hands[0].size() == 5,
+	expect(battle.begin(run, encounter, run.card_deck()).ok
+		and battle.piles[0].size() == 8 and battle.hands[0].has("temp:ember_spell") and battle.hands[0].size() == 5,
 		"A temporary spell enters hand without drawing or changing deck size")
 	var spell_index: int = battle.hands[0].find("temp:ember_spell")
 	var enemy := battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
@@ -77,13 +77,14 @@ func execute() -> void:
 	battle.board[7] = battle._piece(battle.definition("foe:archer"), Chess.ENEMY)
 	expect(4 not in battle.card_targets(0, spell_index), "A blocker stops a two-square spell")
 	battle.board[7] = {}
-	expect(battle.play(spell_index, 4) and enemy.armor == 0 and enemy.hp == old_hp - 2
-		and battle.board[10].leader and battle.can_move_piece(), "Fire, weather, relic damage and armor resolve together without moving a piece")
+	expect(battle.play(spell_index, 4) and enemy.armor == 0 and enemy.hp == old_hp - 1
+		and battle.board[10].leader and battle.can_move_piece(), "Fire ignores map rain and resolves relic damage and armor without moving a piece")
 	var loaded := Run.new()
 	expect(loaded.load_game(run.save_path).ok and "ice_spell" in Cards.collection(loaded.data.actors, loaded.data),
 		"A relic spell unlock survives reloading")
 	check_progression()
 	check_legacy_loadout()
+	check_weather_migration()
 	print("CHESS LOADOUT: %d checks, %d failures" % [checks, failures])
 	quit(1 if failures > 0 else 0)
 
@@ -119,7 +120,7 @@ func check_progression() -> void:
 	var roller := RandomNumberGenerator.new()
 	var boar_deck := battle._enemy_deck(["boar"], "boar", roller)
 	var spiders := battle._enemy_deck(["spider"], "spider", roller)
-	expect(boar_deck.count("brace") == 2 and "fog_spell" in spiders and "fog_spell" not in boar_deck,
+	expect(boar_deck.count("brace") == 2 and spiders.count("ice_spell") == 2 and boar_deck.count("ice_spell") == 1,
 		"Facing a different commander changes the enemy deck even in the first difficulty band")
 	battle.difficulty = 2
 	var squad := battle._enemy_deck(["boar", "swarm", "swarm"], "boar", roller)
@@ -147,5 +148,47 @@ func check_legacy_loadout() -> void:
 	run.data.card_deck = ["support_vanguard", "support_archer", "support_medic", "support_guard",
 		"eve", "ward", "rain", "sun"] + equipment
 	expect(run.save_game().ok and run.load_game().ok and Cards.valid_deck(run.card_deck(), run.data.actors, true, run.data)
-		and "eve" in run.card_deck() and run.actor("eve").joined and "support_vanguard" not in run.card_deck(),
-		"Version 8 saves retain recruited cards and replace former free support without shrinking the deck")
+		and run.card_deck().size() == 10 and "eve" in run.card_deck()
+		and run.actor("eve").joined and "support_vanguard" not in run.card_deck(),
+		"Version 8 saves retain recruited cards and replace former free support")
+
+func check_weather_migration() -> void:
+	var run := Run.new()
+	run.save_path = "user://test-chess-v10-weather-migration.json"
+	run.new_run(41, "wayfarer")
+	var start: String = run.actor("hero").position
+	var original_deck := run.card_deck()
+	run.grant_relic("telescope", "hero", start)
+	run.data.version = 10
+	run.data.weather = "rain"
+	run.data.card_deck = original_deck + ["rain", "sun", "fog_spell"]
+	run.data.spell_collection.append("fog_spell")
+	for id in Relics.REMOVED_WEATHER_RELICS:
+		run.data.relic_seen[id] = true
+		run.data.relic_inventory[id] = 1
+	run.data.relic_attunement.append("rainstone")
+	run.data.relic_intros.append({"id": "crossed_wind_chimes", "finder": "hero", "position": start,
+		"npc": "", "lead": "", "stage": 0, "new_sight": []})
+	run.data.relic_claims["field_cache:" + start] = {"success": true, "relic_id": "rainstone", "delivered": true}
+	run.data.battle_offers["battle:" + start + ":"] = "rain_bell"
+	run.data.pending_victory = {"enemies": 1, "members": ["hero"], "revived": [], "relic": "rain_bell"}
+	run.open_battle_shop()
+	run.data.battle_shop.relic_stock["rain_bell"] = 1
+	run.data.pending_story_rewards = {"source": "旧奖励", "items": [{"kind": "relic", "id": "rainstone", "count": 1}]}
+	expect(run.save_game().ok and run.load_game().ok, "A version-ten save with weather cards and relics opens successfully")
+	expect(run.card_deck() == original_deck and Cards.valid_deck(run.card_deck(), run.data.actors, true, run.data)
+		and not run.data.spell_collection.has("fog_spell") and run.data.weather == "rain",
+		"Migration removes retired cards without padding the deck and retains exploration rain")
+	expect(run.data.relic_inventory.keys() == ["telescope"] and run.data.relic_seen.keys() == ["telescope"]
+		and run.data.relic_attunement == ["telescope"] and run.data.relic_intros.size() == 1
+		and run.data.relic_claims["field_cache:" + start].relic_id == ""
+		and run.data.relic_claims["field_cache:" + start].delivered and run.data.battle_offers["battle:" + start + ":"] == ""
+		and run.data.pending_victory.relic == "" and not run.data.has("pending_story_rewards")
+		and not run.data.battle_shop.relic_stock.has("rain_bell"),
+		"Retired weather loot is removed from inventory, receipts, attunement, and pending offers")
+	var short_deck := original_deck.slice(0, Cards.OPENING_HAND)
+	run.data.tiles[start].enemies = ["boar"]
+	var battle := Chess.new()
+	var encounter := {"position": start, "origin": start, "npc": ""}
+	expect(battle.begin(run, encounter, short_deck).ok and battle.hands[0].size() == 3 and battle.piles[0].is_empty(),
+		"An opening-hand-sized deck starts battle")

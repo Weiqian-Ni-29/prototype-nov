@@ -36,23 +36,23 @@ func check_effects(run: RefCounted) -> void:
 	expect(not run.use_relic("hero", "life_seed").ok and run.data.relic_inventory.life_seed == 1, "A duplicate seed cannot reapply growth")
 	run.grant_relic("rime_thimble", "hero", start)
 	expect("ice_spell" in Cards.collection(run.data.actors, run.data), "Finding a relic unlocks its spell in the collection")
-	run.grant_relic("rain_bell", "hero", start)
+	run.grant_relic("clean_bandage_roll", "hero", start)
 	run.grant_relic("lamp_badge", "hero", start)
-	run.grant_relic("rootbound_bracelet", "hero", start)
-	expect(not run.use_relic("hero", "rain_bell").ok, "Consumables are prepared for battle")
-	run.prepared_relic = "rain_bell"
-	run.data.weather = "sun"
+	expect(not run.use_relic("hero", "clean_bandage_roll").ok, "Consumables are prepared for battle")
+	run.prepared_relic = "clean_bandage_roll"
+	run.data.weather = "rain"
 	run.data.tiles[start].enemies = ["boar"]
 	var combat = Battle.new()
 	var encounter = {"position": start, "origin": start, "ambush": false, "npc": ""}
-	expect(combat.begin(run, encounter, run.card_deck()).ok and combat.weather == "rain"
-		and not run.data.relic_inventory.has("rain_bell") and run.data.weather == "sun", "The bell changes only battle weather and is spent once")
+	expect(combat.begin(run, encounter, run.card_deck()).ok and "temp:bandage_card" in combat.hands[0]
+		and not run.data.relic_inventory.has("clean_bandage_roll") and run.data.weather == "rain",
+		"The prepared bandage grants its temporary card and leaves the expedition rain in place")
 	expect(combat.board[10].hp_max == 14 and combat.board[10].armor == 3, "Life seed and lamp badge modify the actual commander")
 	combat.hands[0] = ["support_vanguard"]
 	combat.mana_capacity[Battle.PLAYER] = 2
 	combat.mana[Battle.PLAYER] = 2
-	expect(combat.play(0, 6) and combat.board[6].hp_max == 8 and combat.board[6].armor == 4,
-		"The seeded earth partner gets its starting armor and the rain deployment bonus")
+	expect(combat.play(0, 6) and combat.board[6].hp_max == 8 and combat.board[6].armor == 2,
+		"The seeded earth partner gets its starting armor and the lamp badge bonus")
 	for id in Relics.DATA:
 		if Relics.is_active(id):
 			expect(not Relics.current_effect(id).is_empty(), "Every active relic has a chess effect: " + id)
@@ -173,7 +173,7 @@ func check_exploration() -> void:
 func execute() -> void:
 	var run = Run.new()
 	run.save_path = "user://test-relic-domain.json"
-	expect(Relics.DATA.size() == 100, "One hundred distinct relics are defined")
+	expect(Relics.REMOVED_WEATHER_RELICS.all(func(id): return not Relics.DATA.has(id)), "Weather relics are absent from the catalog")
 	check_effects(run)
 	check_battle_drop(run)
 	await check_victory_receipt(run.save_path)
