@@ -39,8 +39,8 @@ const RULES = {
 	"last_drop_cup": ["healed", "saved", "armor", 1, 1, "首次将生命不超过 2 的友方治到至少 3 点时，为其加 1 甲。"],
 	"banked_ember_box": ["opening", "", "generate", "ember_spell", 1, "开场生成一张「余烬」。"],
 	"rime_thimble": ["opening", "", "generate", "ice_spell", 1, "开场生成一张「冰针」。首次获得时也永久解锁该牌。"],
-	"survey_tally": ["loot", "", "survey", "", 1, "共鸣期间累计赢过一场普通战和一场精英战后，解锁「冰针」。"],
-	"market_window": ["shop", "", "entry", "", 0, "共鸣时，商店每轮库存额外展示第二本未解锁的法术牌谱；每轮仍只能买一本。"],
+	"survey_tally": ["loot", "", "survey", "", 1, "持有期间累计赢过一场普通战和一场精英战后，解锁「冰针」。"],
+	"market_window": ["shop", "", "entry", "", 0, "持有时，商店每轮库存额外展示第二本未解锁的法术牌谱。每轮仍只能买一本。"],
 	"caution_compass": ["opening", "ambush", "leader_armor", 2, 1, "被伏击、由敌方先手时，主战者开局获得 2 甲。"],
 	"honest_ledger": ["victory", "ordinary", "daily_coin", 2, 1, "每天第一场普通战胜利后多得 2 灯铢。"],
 	"terrain_caliper": ["move", "cross_columns,partner", "armor", 2, 1, "首次有伙伴从一侧边路横跨到另一侧边路时，为其加 2 甲。"],
@@ -51,7 +51,7 @@ const RULES = {
 	"fair_weight_seal": ["victory", "guarded_victory", "amount", 1, 1, "用过防御牌且主战者带甲获胜，多得 1 灯铢。"],
 	"commission_carbon": ["victory", "two_kills", "amount", 2, 1, "击倒至少两枚敌方伙伴后获胜，多得 2 灯铢。"],
 	"farewell_receipt": ["victory", "ally_lost", "amount", 2, 1, "有伙伴倒下后仍获胜，多得 2 灯铢。"],
-	"survey_bonus_stamp": ["loot", "elite,treasure_found", "unlock_next", "", 1, "发现过寻宝遗器后，共鸣赢得精英战可解锁一张新法术，每次远征一次。"],
+	"survey_bonus_stamp": ["loot", "elite,treasure_found", "unlock_next", "", 1, "发现过寻宝遗器后，持有此遗器并赢得精英战可解锁一张新法术，每次远征一次。"],
 	"first_fit_pattern": ["equip", "weapon,partner", "search", "defense", 1, "首次为伙伴装备武器后，从牌库检索第一张防御牌。"],
 	"price_pair_slip": ["loot", "no_relic", "discount_spell", "", 1, "胜利未掉遗器时，获得下次购买法术牌谱半价的机会，不累积。"],
 	"breath_reserve": ["after_fatigue", "", "generate", "mend_spell", 1, "第一次疲劳结算后，若主战者仍在场，生成「回春」。"],
@@ -182,7 +182,8 @@ static func _condition(b, tag: String, c: Dictionary) -> bool:
 		"hand_empty":
 			return not b.public_preview and b.hands[0].is_empty()
 		"only_partners":
-			return not b.public_preview and b.hands[0].all(func(id): return b.definition(id).kind == "partner")
+			return not b.public_preview and b.hands[0].slice(0, Cards.OPENING_HAND).all(
+				func(id): return b.definition(id).kind == "partner")
 		"coat":
 			return c.id == "coat" or c.get("icon", "") == "padded_coat"
 		"saved":

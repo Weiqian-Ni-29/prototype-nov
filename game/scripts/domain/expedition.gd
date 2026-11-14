@@ -8,7 +8,7 @@ const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Items = preload("res://scripts/domain/expedition_items.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
-const SAVE_VERSION = 11
+const SAVE_VERSION = 12
 const REMOVED_WEATHER_CARDS = ["rain", "sun", "fog_spell"]
 const REMOVED_SUPPLIES = ["salve", "ether"]
 const STEPS_PER_DAY = 5
@@ -432,7 +432,15 @@ func use_node(id: String, option: String) -> Dictionary:
 	return {"ok": true, "message": message, "items": items}
 
 func has_relic(id: String) -> bool:
-	return id in data.relic_attunement
+	return int(data.relic_inventory.get(id, 0)) > 0 and Relics.is_active(id) and Relics.DATA[id].type == "P"
+
+func passive_relic_ids() -> Array[String]:
+	var ids: Array[String] = []
+	for id in data.relic_inventory:
+		if has_relic(id):
+			ids.append(id)
+	ids.sort()
+	return ids
 
 func relic_intro() -> Dictionary:
 	return data.relic_intros[0] if not data.relic_intros.is_empty() else {}
@@ -478,14 +486,11 @@ func grant_relic(id: String, finder: String, position: String, npc: String = "",
 	if not Relics.is_active(id):
 		return false
 	var first = not data.relic_seen.has(id)
+	var unlocks_sight := id == "telescope" and not has_relic(id)
 	data.relic_seen[id] = true
 	data.relic_inventory[id] = int(data.relic_inventory.get(id, 0)) + amount
 	data.item_revision += 1
-	var new_sight: Array = []
-	if Relics.DATA[id].type == "P" and not has_relic(id) and data.relic_attunement.size() < 6:
-		data.relic_attunement.append(id)
-		if id == "telescope":
-			new_sight = _refresh_relic_sight()
+	var new_sight: Array = _refresh_relic_sight() if unlocks_sight else []
 	if first:
 		var spell: String = SPELL_RELICS.get(id, "")
 		if not spell.is_empty():
@@ -501,34 +506,14 @@ func _refresh_relic_sight() -> Array:
 			_reveal_sight(actor(member).position)
 	return data.explored.keys().filter(func(cell): return not previous.has(cell))
 
-func attune_relic(user: String, id: String) -> Dictionary:
-	var check = _node_access(user)
-	if not check.ok:
-		return check
-	if not Relics.is_active(id) or int(data.relic_inventory.get(id, 0)) <= 0 or Relics.DATA[id].type != "P":
-		return fail("没有可共鸣的遗器。")
-	if has_relic(id):
-		_unattune(id)
-		return _item_result("已解除「%s」的共鸣。" % Relics.DATA[id].name)
-	if data.relic_attunement.size() >= 6:
-		return fail("六个共鸣位已满，请先解除一件。")
-	data.relic_attunement.append(id)
-	if id == "telescope":
-		_refresh_relic_sight()
-	return _item_result("已共鸣「%s」。" % Relics.DATA[id].name)
-
 func _remove_relic(id: String, amount: int = 1) -> void:
 	data.relic_inventory[id] -= amount
 	if data.relic_inventory[id] == 0:
 		data.relic_inventory.erase(id)
-		_unattune(id)
-
-func _unattune(id: String) -> void:
-	data.relic_attunement.erase(id)
-	if id == "uphill_kneepad":
-		for key in data.item_effect_counts.keys():
-			if str(key).begins_with("uphill_ready:"):
-				data.item_effect_counts.erase(key)
+		if id == "uphill_kneepad":
+			for key in data.item_effect_counts.keys():
+				if str(key).begins_with("uphill_ready:"):
+					data.item_effect_counts.erase(key)
 
 func use_relic(user: String, id: String, _target: String = "") -> Dictionary:
 	var check := _node_access(user)
@@ -973,7 +958,7 @@ func load_game(path: String = "") -> Dictionary:
 	if json.parse(FileAccess.get_file_as_string(path)) != OK or not json.data is Dictionary:
 		return fail("存档损坏了，原来的文件还在。")
 	var loaded: Dictionary = json.data
-	if not _whole_number(loaded.get("version", -1)) or int(loaded.version) not in [3, 4, 5, 6, 7, 8, 9, 10, SAVE_VERSION] or not loaded.has_all(["actors", "tiles", "rng_state", "day", "explored", "status"]):
+	if not _whole_number(loaded.get("version", -1)) or int(loaded.version) not in [3, 4, 5, 6, 7, 8, 9, 10, 11, SAVE_VERSION] or not loaded.has_all(["actors", "tiles", "rng_state", "day", "explored", "status"]):
 		return fail("存档版本不兼容，或者进度记录不完整。")
 	if int(loaded.version) >= 4 and (not loaded.get("relic_seen") is Dictionary or not loaded.get("nodes") is Dictionary):
 		return fail("遗器发现记录无效。")
@@ -1006,6 +991,9 @@ func load_game(path: String = "") -> Dictionary:
 	if int(loaded.version) < 10:
 		Nodes.replace_shop_nodes(loaded)
 		_remove_old_supplies(loaded)
+	var old_attunement: Variant = loaded.get("relic_attunement")
+	var restore_relic_sight: bool = old_attunement is Array and not old_attunement.has("telescope")
+	loaded.erase("relic_attunement")
 	loaded.version = SAVE_VERSION
 	data = loaded
 	data.merge({"spell_collection": []})
@@ -1033,6 +1021,8 @@ func load_game(path: String = "") -> Dictionary:
 		data.choices = []
 	_initialize_relics()
 	_initialize_nodes(rebalance)
+	if restore_relic_sight and has_relic("telescope"):
+		_refresh_relic_sight()
 	if data.has("pending_victory"):
 		open_battle_shop()
 	rng.state = int(data.rng_state)
@@ -1049,8 +1039,6 @@ func _remove_battle_weather(loaded: Dictionary) -> void:
 		if loaded.get(field) is Dictionary:
 			for id in removed:
 				loaded[field].erase(id)
-	if loaded.get("relic_attunement") is Array:
-		loaded.relic_attunement = loaded.relic_attunement.filter(func(id): return id not in removed)
 	if loaded.get("relic_intros") is Array:
 		loaded.relic_intros = loaded.relic_intros.filter(func(entry): return not entry is Dictionary or entry.get("id") not in removed)
 	var shops: Array = [loaded.get("battle_shop")]
@@ -1126,8 +1114,6 @@ func _migrate_travel(loaded: Dictionary) -> void:
 		loaded.erase(key)
 	if loaded.get("route_records") is Dictionary:
 		loaded.route_records.clear()
-	if loaded.get("relic_attunement") is Array:
-		loaded.relic_attunement = loaded.relic_attunement.filter(func(id): return not Relics.DATA.has(id) or Relics.is_active(id))
 	for node in loaded.nodes.values():
 		var stock = node.get("relic_stock")
 		if stock is Dictionary:

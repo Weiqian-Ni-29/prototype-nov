@@ -752,7 +752,7 @@ func _shop_offers(trader_id: String, buying: bool) -> Array[Dictionary]:
 				entry.base = Relics.DATA[id].price
 				entry.owned = int(run.data.relic_inventory.get(id, 0))
 				if not buying and run.has_relic(id):
-					entry.grade = "共鸣中"
+					entry.grade = "生效中"
 	return entries
 
 func _item_command(action: Callable) -> Callable:
@@ -1132,7 +1132,7 @@ func _inventory_relics(page: InventoryPage, id: String, selection: String, feedb
 			if entry.type != type or not run.data.relic_seen.has(relic):
 				continue
 			var count: int = int(run.data.relic_inventory.get(relic, 0))
-			var badge := "共鸣中" if run.has_relic(relic) else ("已发现" if count == 0 else "")
+			var badge := "生效中" if run.has_relic(relic) else ("已发现" if count == 0 else "")
 			entries.append({"id": relic, "title": entry.name, "icon": relic,
 				"caption": entry.name, "count": count, "badge": badge})
 	page.item_selected.connect(func(relic: String):
@@ -1149,24 +1149,16 @@ func _relic_detail(content: VBoxContainer, id: String, relic: String, feedback: 
 	if not feedback.is_empty():
 		_text(content, feedback, 16, gold)
 	var kind: String = {"P": "持续", "C": "消耗", "L": "永久"}[entry.type]
-	_text(content, kind + (" · 共鸣中" if relic in run.data.relic_attunement else ""), 15, muted)
-	if entry.type == "P":
-		_text(content, "全队共鸣 · %d / 6" % run.data.relic_attunement.size(), 15, muted)
+	_text(content, kind + (" · 持有即生效" if run.has_relic(relic) else ""), 15, muted)
 	_text(content, Relics.current_effect(relic), 17)
 	_button(content, "阅读遗器故事", func():
 		_show_story(entry.name, "器物故事", entry.story, _story_scene_at(a.position),
 			[], [], func(_option: String): _inventory_dialog(id, 2, relic), {}))
 	var count: int = int(run.data.relic_inventory.get(relic, 0))
 	if count > 0 and Relics.is_active(relic):
-		if entry.type == "P":
-			var execute = _item_command(run.attune_relic.bind(id, relic))
-			_button(content, "解除共鸣" if run.has_relic(relic) else "共鸣", func():
-				var result = execute.call()
-				_run_action(result)
-				_inventory_dialog(id, 2, relic, result.get("message", "")))
-		elif entry.type == "C":
+		if entry.type == "C":
 			_text(content, "在开战前的卡组页面携带；每场最多携带一件。", 16, muted)
-		else:
+		elif entry.type == "L":
 			var execute = _item_command(run.use_relic.bind(id, relic))
 			_button(content, "启用生命之种", func():
 				var result = execute.call()
@@ -1885,7 +1877,7 @@ func _show_relic_intro(after: Callable = Callable()) -> bool:
 	var body: String = Relics.current_effect(intro.id) if effect_page else definition.story
 	if not effect_page and not intro.lead.is_empty():
 		body = intro.lead + "\n\n" + body
-	var speaker = ("已共鸣" if run.has_relic(intro.id) else "遗器效果") if effect_page else "旁白"
+	var speaker = ("已生效" if run.has_relic(intro.id) else "遗器效果") if effect_page else "旁白"
 	_show_story("获得遗器 · " + definition.name, speaker, body, scene, portraits, [], func(_option: String):
 		if not effect_page:
 			intro.stage = 1

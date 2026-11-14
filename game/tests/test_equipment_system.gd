@@ -154,30 +154,58 @@ func check_bulk_trade() -> void:
 		and run.data.relic_inventory.modest_trade_coupon == 1, "Bulk purchase charges the quote and preserves battle preparations")
 	expect(run.trade("hero", "lamp_badge", false, "", 2).ok and run.data.lamp_coins == 80
 		and not run.has_relic("lamp_badge") and run.shop_at(cell).relic_stock.lamp_badge == 2,
-		"Bulk sale restores stock and removes attunement only after selling the last copy")
+		"Bulk sale restores stock and deactivates the effect after selling the last copy")
 
 func check_relics() -> void:
 	var run = fixture()
 	var hero: Dictionary = run.actor("hero")
-	var first: Array = ["telescope", "uphill_kneepad", "ranged_sight", "lamp_badge", "herbal_case", "rime_thimble"]
+	var first: Array = ["uphill_kneepad", "ranged_sight", "herbal_case", "rime_thimble", "opening_flint", "tender_gauze"]
 	for id in first:
 		run.grant_relic(id, "hero", hero.position)
-	run.grant_relic("opening_flint", "hero", hero.position)
+	var explored_without_telescope: Dictionary = run.data.explored.duplicate()
+	run.grant_relic("lamp_badge", "hero", hero.position)
 	run.grant_relic("telescope", "hero", hero.position)
-	expect(run.data.relic_attunement == first and run.data.relic_inventory.telescope == 2,
-		"Only six distinct passives auto-attune")
-	expect(not run.attune_relic("hero", "opening_flint").ok and run.attune_relic("hero", "rime_thimble").ok
-		and run.attune_relic("hero", "opening_flint").ok, "Full slots require deliberate replacement")
+	run.grant_relic("telescope", "hero", hero.position)
+	var all_passives: Array = first + ["lamp_badge", "telescope"]
+	all_passives.sort()
+	expect(run.passive_relic_ids() == all_passives and run.data.relic_inventory.telescope == 2
+		and run.data.explored.size() > explored_without_telescope.size(),
+		"All owned passives activate once per relic ID, including map vision after the sixth relic")
+
+	run.data.version = 11
+	run.data.relic_attunement = first
+	run.data.explored = explored_without_telescope
+	run.data.relic_intros.clear()
+	expect(run.save_game().ok and run.load_game().ok, "Load a save with all six legacy attunement slots filled")
+	expect(run.passive_relic_ids() == all_passives and not run.data.has("relic_attunement")
+		and run.data.explored.size() > explored_without_telescope.size(),
+		"Older saves activate passives outside the legacy slots and reveal map vision immediately")
+	expect(run.save_game().ok and run.load_game().ok and run.passive_relic_ids() == all_passives,
+		"All passives remain active when saving and loading without legacy slots")
+
+	hero = run.actor("hero")
+	var position: String = hero.position
+	run.data.tiles[position].enemies = ["hunter_elite"]
+	var battle := Chess.new()
+	var encounter = {"position": position, "origin": position, "ambush": false, "npc": "", "reward_tier": "elite"}
+	expect(battle.begin(run, encounter, run.card_deck()).ok, "Start a battle with more than six passive relics")
+	var commander: Dictionary = Chess.commander_definition(run)
+	expect(battle.relic_ids == all_passives
+		and battle.commanders[Chess.PLAYER].armor == int(commander.armor) + roundi(float(commander.hp) * 0.12),
+		"The seventh relic applies opening armor alongside the other owned passives")
+	battle.commanders[Chess.ENEMY].hp = 0
+	battle._check_outcome()
 	var shop = open_shop(run)
 	hero.position = shop
 	expect(run.trade("hero", "telescope", false).ok and run.has_relic("telescope") and run.trade("hero", "telescope", false).ok
 		and not run.has_relic("telescope") and run.data.relic_seen.has("telescope"),
-		"Only selling the last copy removes attunement; discovery is retained")
+		"Selling the last copy stops the effect and preserves discovery")
 	run.grant_relic("stillwater_stone", "hero", shop)
 	expect(not run.use_relic("hero", "stillwater_stone").ok and run.data.relic_inventory.stillwater_stone == 1,
 		"An inapplicable consumable is not spent")
 	hero.mp = 0
-	expect(not run.use_relic("hero", "stillwater_stone").ok and "stillwater_stone" in run.preparation_options(),
+	expect(not run.use_relic("hero", "stillwater_stone").ok and "stillwater_stone" in run.preparation_options()
+		and not run.has_relic("stillwater_stone"),
 		"Consumable is available for the next battle without changing map resources")
 	var successes = 0
 	for seed in 10000:
@@ -226,7 +254,7 @@ func check_migration() -> void:
 		"Migration does not create an extra copy for the worn weapon")
 	expect(a.hp == 21 and a.hp_max == 114 and loaded.data.relic_effect_flags.life_seed_applied
 		and loaded.has_relic("telescope") and not loaded.data.relic_inventory.has("rain_bell"),
-		"Migration preserves resources, passive attunement and consumed relic history")
+		"Migration preserves resources, passive relic effects and consumed relic history")
 	expect(loaded.data.relic_claims["battle:0,0:"].delivered and not loaded.data.relic_claims["battle:0,0:"].success,
 		"Previously failed sources are not redrawn")
 
@@ -283,6 +311,17 @@ func check_ui() -> void:
 			expect(game.run.data.gear_instances[uid].enhance_level == 1 and game.run.data.lamp_coins == 96
 				and tabs.current_tab == 1 and tabs.get_child(1).selected_id == uid,
 				"UI enhancement updates both the instance and wallet and keeps the gear selected")
+	var position: String = game.run.actor("hero").position
+	game.run.grant_relic("tender_gauze", "hero", position)
+	game._inventory_dialog("hero", 2, "tender_gauze")
+	await process_frame
+	tabs = game.modal_layer.find_child("InventoryTabs", true, false) as TabContainer
+	var details: VBoxContainer = tabs.get_child(2).details
+	expect(details.find_children("*", "Label", true, false).any(func(label): return label.text == "持续 · 持有即生效")
+		and not details.find_children("*", "Label", true, false).any(func(label): return "共鸣" in label.text)
+		and find_button(details, "共鸣") == null and find_button(details, "解除共鸣") == null
+		and find_button(details, "阅读遗器故事") != null,
+		"Passive relic details show automatic activation and retain the story button without attunement controls")
 	game.queue_free()
 	await create_timer(0.3).timeout
 
