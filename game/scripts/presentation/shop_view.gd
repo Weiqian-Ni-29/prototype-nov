@@ -306,7 +306,7 @@ func _update_order() -> void:
 			maximum = mini(maximum, 1 + floori(float(balance - quote.unit_price) / quote.additional_unit_price))
 	quantity = clampi(quantity, 1, maximum) if maximum > 0 else 0
 	if not buying and selected.kind == "relic" and run.has_relic(selected.id) and quantity == selected.count:
-		message = "售出最后一件会解除共鸣。"
+		message = "售出最后一件后，该遗器的效果会停止。"
 	warning.text = message
 	warning.visible = not message.is_empty()
 	var total: int = quote.unit_price + quote.additional_unit_price * (quantity - 1) if quantity > 0 else 0

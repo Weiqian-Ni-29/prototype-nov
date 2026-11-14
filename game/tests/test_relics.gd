@@ -53,6 +53,14 @@ func check_effects(run: RefCounted) -> void:
 	combat.mana[Battle.PLAYER] = 2
 	expect(combat.play(0, 6) and combat.board[6].hp_max == 8 and combat.board[6].armor == 2,
 		"The seeded earth partner gets its starting armor and the lamp badge bonus")
+	run.grant_relic("banked_ember_box", "hero", start)
+	run.grant_relic("measured_spoon", "hero", start)
+	combat.relic_ids = run.passive_relic_ids()
+	combat.hands[0] = ["support_vanguard", "support_archer", "support_medic"]
+	combat.piles[0] = ["brace"]
+	combat._relic("opening")
+	expect(combat.hands[0].slice(3) == ["temp:ember_spell", "brace"] and combat.piles[0].is_empty(),
+		"The spoon checks the original three opening cards even when another relic generates a spell")
 	for id in Relics.DATA:
 		if Relics.is_active(id):
 			expect(not Relics.current_effect(id).is_empty(), "Every active relic has a chess effect: " + id)

@@ -190,7 +190,7 @@ func check_weather_migration() -> void:
 	for id in Relics.REMOVED_WEATHER_RELICS:
 		run.data.relic_seen[id] = true
 		run.data.relic_inventory[id] = 1
-	run.data.relic_attunement.append("rainstone")
+	run.data.relic_attunement = ["telescope", "rainstone"]
 	run.data.relic_intros.append({"id": "crossed_wind_chimes", "finder": "hero", "position": start,
 		"npc": "", "lead": "", "stage": 0, "new_sight": []})
 	run.data.relic_claims["field_cache:" + start] = {"success": true, "relic_id": "rainstone", "delivered": true}
@@ -204,12 +204,12 @@ func check_weather_migration() -> void:
 		and not run.data.spell_collection.has("fog_spell") and run.data.weather == "rain",
 		"Migration removes retired cards without padding the deck and retains exploration rain")
 	expect(run.data.relic_inventory.keys() == ["telescope"] and run.data.relic_seen.keys() == ["telescope"]
-		and run.data.relic_attunement == ["telescope"] and run.data.relic_intros.size() == 1
+		and run.passive_relic_ids() == ["telescope"] and run.data.relic_intros.size() == 1
 		and run.data.relic_claims["field_cache:" + start].relic_id == ""
 		and run.data.relic_claims["field_cache:" + start].delivered and run.data.battle_offers["battle:" + start + ":"] == ""
 		and run.data.pending_victory.relic == "" and not run.data.has("pending_story_rewards")
 		and not run.data.battle_shop.relic_stock.has("rain_bell"),
-		"Retired weather loot is removed from inventory, receipts, attunement, and pending offers")
+		"Retired weather loot is removed from inventory, receipts, passive effects, and pending offers")
 	var short_deck := original_deck.slice(0, Cards.OPENING_HAND)
 	run.data.tiles[start].enemies = ["boar"]
 	var battle := Chess.new()

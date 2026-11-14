@@ -6,7 +6,7 @@ const Nodes = preload("res://scripts/domain/map_nodes.gd")
 
 static func initialize(data: Dictionary) -> void:
 	data.merge({"gear_instances": {}, "next_gear_uid": 1, "item_revision": 0,
-		"last_item_operation": {}, "relic_inventory": {}, "relic_attunement": [],
+		"last_item_operation": {}, "relic_inventory": {},
 		"relic_seen": {}, "relic_effect_flags": {}, "relic_claims": {}, "relic_intros": [],
 		"battle_offers": {}, "item_effect_counts": {}, "map_intel": {}, "route_records": {}})
 
@@ -104,7 +104,6 @@ static func migrate(data: Dictionary) -> void:
 		data.relic_seen[id] = true
 		if Relics.DATA[id].type == "P":
 			data.relic_inventory[id] = 1
-			data.relic_attunement.append(id)
 		elif id == "life_seed":
 			data.relic_effect_flags.life_seed_applied = true
 	for key in data.get("relic_checks", {}):
@@ -201,13 +200,6 @@ static func validate(data: Dictionary) -> bool:
 	for id in data.relic_inventory:
 		if not data.relic_seen.has(id) or not whole(data.relic_inventory[id], 1):
 			return false
-	var seen: Dictionary = {}
-	if not data.get("relic_attunement") is Array or data.relic_attunement.size() > 6:
-		return false
-	for id in data.relic_attunement:
-		if seen.has(id) or not data.relic_inventory.has(id) or not Relics.is_active(id) or Relics.DATA[id].type != "P":
-			return false
-		seen[id] = true
 	for id in data.relic_effect_flags:
 		if id not in ["life_seed_applied", "last_battle_wounded_victory", "chess_survey_elite", "chess_survey_ordinary",
 				"chess_survey_bonus", "chess_workshop_credit", "chess_spell_discount"] or data.relic_effect_flags[id] != true:

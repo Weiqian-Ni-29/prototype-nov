@@ -93,7 +93,7 @@ func begin(expedition: RefCounted, encounter: Dictionary, deck: Array) -> Dictio
 	if types.is_empty():
 		return {"ok": false, "message": "这里没有敌人。"}
 	run = expedition
-	relic_ids = run.data.relic_attunement.duplicate()
+	relic_ids = run.passive_relic_ids()
 	life_seed_active = run.data.relic_effect_flags.has("life_seed_applied")
 	prep = run.prepared_relic if run.prepared_relic in run.preparation_options() else ""
 	position = cell
