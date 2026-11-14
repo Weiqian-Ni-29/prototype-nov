@@ -1002,9 +1002,14 @@ func check_story_pagination() -> void:
 	var options = [{"id": "finish", "text": "确认完成"}, {"id": "wait", "text": "暂不完成"}]
 	game._show_story("长文选项", "旁白", body, "road", [], options, completed, {})
 	await process_frame
+	var choice_page_count := story_page().y
+	var choice_on_first_page := find_button(game.modal_layer, "确认完成") != null
+	expect(choice_page_count >= 2 and not choice_on_first_page, "The first page of a multi-page story hides its choices")
 	await click_story_blank()
-	expect(story_page().x == 2 and calls.count == 0 and find_button(game.modal_layer, "确认完成") == null,
-		"Blank click turns a non-final page without exposing or selecting a choice")
+	var choice_on_second_page := find_button(game.modal_layer, "确认完成") != null
+	expect(story_page() == Vector2i(2, choice_page_count) and calls.count == 0
+		and choice_on_second_page == (choice_page_count == 2),
+		"Blank click advances one page and shows choices only on the final page")
 	await click("上一页")
 	var choice_pages = await read_current_body(true, func(): return calls.count == 0 and game.run.data == before)
 	expect(choice_pages.size() >= 2 and compact("".join(choice_pages)) == compact(body), "Choice story preserves its full body before decisions")
