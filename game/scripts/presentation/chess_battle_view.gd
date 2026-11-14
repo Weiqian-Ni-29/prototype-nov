@@ -9,6 +9,13 @@ const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const UI = preload("res://scripts/presentation/card_ui.gd")
 const CROWN = preload("res://assets/ui/crown-badge.svg")
+const ATTACK_ICON = preload("res://assets/ui/chess-attack.png")
+const HEALTH_ICON = preload("res://assets/ui/chess-health.png")
+const ARMOR_ICON = preload("res://assets/ui/chess-armor.png")
+const STAT_SIZE = 38
+const STAT_INSET = 6
+const GRID_LINE = 2
+
 var battle: RefCounted
 var cells: Array[Button] = []
 var selected_square := -1
@@ -90,13 +97,40 @@ func setup(model: RefCounted, scene: Texture2D) -> void:
 	var board_frame := board_panel.get_parent() as Control
 	board_frame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	board_frame.size_flags_stretch_ratio = 2.7
+	var board := HBoxContainer.new()
+	board.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	board.add_theme_constant_override("separation", 10)
+	board_panel.add_child(board)
+	var ranks := VBoxContainer.new()
+	ranks.add_theme_constant_override("separation", 0)
+	board.add_child(ranks)
+	var rank_spacer := Control.new()
+	rank_spacer.custom_minimum_size.y = 25
+	ranks.add_child(rank_spacer)
+	for row in Battle.ROWS:
+		var rank := UI.label(ranks, ["敌方\n后排", "敌方\n前排", "己方\n前排", "己方\n后排"][row],
+			15, UI.ORANGE if row < 2 else UI.GREEN)
+		rank.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		rank.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	var columns := VBoxContainer.new()
+	columns.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	columns.add_theme_constant_override("separation", 0)
+	board.add_child(columns)
+	var lanes := HBoxContainer.new()
+	lanes.custom_minimum_size.y = 25
+	lanes.add_theme_constant_override("separation", 0)
+	columns.add_child(lanes)
+	for title in ["左路", "中路", "右路"]:
+		var lane := UI.label(lanes, title, 15, UI.MUTED)
+		lane.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		lane.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var grid := GridContainer.new()
 	grid.name = "ChessGrid"
 	grid.columns = Battle.COLS
 	grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	grid.add_theme_constant_override("h_separation", 4)
-	grid.add_theme_constant_override("v_separation", 4)
-	board_panel.add_child(grid)
+	grid.add_theme_constant_override("h_separation", 0)
+	grid.add_theme_constant_override("v_separation", 0)
+	columns.add_child(grid)
 	for square in Battle.ROWS * Battle.COLS:
 		var tile := UI.button(grid, "", _select_tile.bind(square))
 		tile.name = "ChessSquare%d" % square
@@ -297,14 +331,18 @@ func _render_tile(tile: Button, square: int, action: String) -> void:
 	var unit: Dictionary = battle.board[square]
 	var empty := unit.is_empty()
 	var row := floori(float(square) / Battle.COLS)
+	var col := square % Battle.COLS
 	var square_label := ("敌方" if row < 2 else "己方") + Battle.square_name(square)
-	var light := (row + square % Battle.COLS) % 2 == 0
+	var light := (row + col) % 2 == 0
 	var tint := (Color("5b493b") if light else Color("483a31")) if row < 2 else (Color("375648") if light else Color("29453b"))
-	var border := Color("886d58") if row < 2 else Color("638473")
+	var border := Color("a48a69") if row < 2 else Color("7f9b86")
 	var enemy_action: Dictionary = battle.last_enemy_action
-	if unit.get("leader", false) or square == selected_square:
+	if not empty:
+		tint = tint.lightened(0.05)
 		border = UI.GOLD
-	if action in ["attack", "spell_hit"]:
+	if square == selected_square:
+		tint = Color("4a6656")
+	elif action in ["attack", "spell_hit"]:
 		tint = Color("76513c")
 		border = UI.ORANGE
 	elif not action.is_empty():
@@ -315,37 +353,77 @@ func _render_tile(tile: Button, square: int, action: String) -> void:
 		border = UI.ORANGE
 	elif square == enemy_action.get("from", -1):
 		border = Color("c99264")
+	var style := UI.box(tint, border, 0, 0)
+	# An occupied square owns its edge against an empty one. For matching neighbors,
+	# only the square on the left or above draws the shared edge.
+	var left_edge: bool = col == 0 or (not empty and battle.board[square - 1].is_empty())
+	var right_edge: bool = col == Battle.COLS - 1 or not empty or battle.board[square + 1].is_empty()
+	var top_edge: bool = row == 0 or (row != 2 and not empty and battle.board[square - Battle.COLS].is_empty())
+	var bottom_edge: bool = row == Battle.ROWS - 1 or not empty or battle.board[square + Battle.COLS].is_empty()
+	style.border_width_left = GRID_LINE if left_edge else 0
+	style.border_width_right = GRID_LINE if right_edge else 0
+	style.border_width_top = GRID_LINE if top_edge else 0
+	style.border_width_bottom = GRID_LINE + 1 if row == 1 else GRID_LINE if bottom_edge else 0
 	for state in ["normal", "pressed", "disabled"]:
-		tile.add_theme_stylebox_override(state, UI.box(tint, border, 6, 4))
-	tile.add_theme_stylebox_override("hover", UI.box(tint.lightened(0.09), border, 6, 4))
+		tile.add_theme_stylebox_override(state, style)
+	var hover_style := style.duplicate() as StyleBoxFlat
+	hover_style.bg_color = tint.lightened(0.09)
+	tile.add_theme_stylebox_override("hover", hover_style)
 	tile.disabled = not battle.can_act() or empty and action.is_empty()
 	UI.clear(tile)
 	if empty:
-		tile.text = "+" if action == "deploy" else "●" if action == "move" else "·"
+		tile.text = "+" if action == "deploy" else "●" if action == "move" else ""
 		tile.accessibility_name = square_label + "空格"
 		return
 	tile.text = ""
 	var content := HBoxContainer.new()
-	UI.button_body(tile, content)
-	if unit.leader:
-		_mark_commander(tile)
-	UI.art(content, unit, Vector2(56, 60))
+	UI.button_body(tile, content, STAT_INSET)
+	content.offset_left = STAT_INSET + 20
+	content.offset_right = -STAT_INSET - STAT_SIZE
+	content.add_theme_constant_override("separation", 8)
+	UI.art(content, unit, Vector2(118, 0))
 	var text := VBoxContainer.new()
 	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	text.alignment = BoxContainer.ALIGNMENT_CENTER
 	text.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content.add_child(text)
-	UI.label(text, unit.name, 17).text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	UI.label(text, unit.name, 19).text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	var details: String = Cards.ELEMENTS.get(unit.element, "物理")
 	if not unit.weapon.is_empty():
 		details += " · " + battle._weapon(unit).name
-	UI.label(text, details, 13, UI.GOLD if unit.leader else UI.MUTED, true)
-	var stats := "攻 %d · 血 %d/%d · 甲 %d" % [battle.attack_power(unit), unit.hp, unit.hp_max, unit.armor]
-	UI.label(text, stats, 14, UI.INK, true)
+	UI.label(text, details, 13, UI.GOLD).text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	if action == "attack":
-		UI.label(text, "可攻击 · %d 伤害" % battle.attack_power(battle.board[selected_square]), 13, UI.ORANGE)
+		var damage := UI.label(text, "可攻击 · %d 伤害" % battle.attack_power(battle.board[selected_square]), 13, UI.ORANGE)
+		damage.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	if unit.leader:
+		_mark_commander(tile)
+	var attack: int = battle.attack_power(unit)
+	_stat_badge(tile, "Attack", ATTACK_ICON, attack, Control.PRESET_BOTTOM_LEFT)
+	_stat_badge(tile, "Health", HEALTH_ICON, unit.hp, Control.PRESET_BOTTOM_RIGHT, 4)
+	_stat_badge(tile, "Armor", ARMOR_ICON, unit.armor, Control.PRESET_TOP_RIGHT)
+	var stats := "攻 %d · 血 %d/%d · 甲 %d" % [attack, unit.hp, unit.hp_max, unit.armor]
 	var accessible_name: String = unit.name + (" 主战者" if unit.leader else "")
 	tile.accessibility_name = "%s %s %s %s" % [square_label, accessible_name, details, stats]
+
+func _stat_badge(tile: Button, badge_name: String, icon: Texture2D, value: int, corner: int, text_y: int = 0) -> void:
+	var badge := TextureRect.new()
+	badge.name = badge_name
+	badge.texture = icon
+	badge.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	badge.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.size = Vector2(STAT_SIZE, STAT_SIZE)
+	tile.add_child(badge)
+	badge.set_anchors_and_offsets_preset(corner, Control.PRESET_MODE_KEEP_SIZE, STAT_INSET)
+	var digits := str(value)
+	var number := UI.label(badge, digits, clampi(22 - digits.length() * 3, 10, 19), Color("fff0cf"))
+	number.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	number.offset_top = text_y
+	number.offset_bottom = text_y
+	number.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	number.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	number.add_theme_color_override("font_outline_color", Color("251912"))
+	number.add_theme_constant_override("outline_size", 4)
 
 func _mark_commander(tile: Button) -> void:
 	var plate := PanelContainer.new()
@@ -357,8 +435,9 @@ func _mark_commander(tile: Button) -> void:
 	crown.custom_minimum_size = Vector2(20, 17)
 	crown.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	crown.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	crown.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	plate.add_child(crown)
-	plate.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	plate.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT, Control.PRESET_MODE_MINSIZE, STAT_INSET)
 
 func _render_inspection() -> void:
 	UI.clear(inspection)

@@ -4,6 +4,7 @@ const Main = preload("res://scenes/main.tscn")
 const Run = preload("res://scripts/domain/expedition.gd")
 const Chess = preload("res://scripts/domain/chess_battle.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
+const ChessView = preload("res://scripts/presentation/chess_battle_view.gd")
 
 var checks := 0
 var failures := 0
@@ -240,7 +241,7 @@ func check_battle_income() -> void:
 		battle._finish("victory")
 		expect(battle.run.data.lamp_coins == before + coins, "Reopening settlement does not pay twice")
 
-func click(node: Button) -> void:
+func click(node: Button, point_in_button: Vector2 = Vector2(0.5, 0.5)) -> void:
 	expect(node != null and not node.disabled, "Visible enabled button: " + (str(node.name) if node != null else "<missing>"))
 	if node != null and not node.disabled:
 		var parent := node.get_parent()
@@ -249,7 +250,8 @@ func click(node: Button) -> void:
 				parent.ensure_control_visible(node)
 			parent = parent.get_parent()
 		await process_frame
-		var point := node.get_global_rect().get_center()
+		var rect := node.get_global_rect()
+		var point := rect.position + rect.size * point_in_button
 		for pressed in [true, false]:
 			var event := InputEventMouseButton.new()
 			event.position = point
@@ -356,6 +358,51 @@ func check_ui() -> void:
 	game.queue_free()
 	await process_frame
 
+func check_board_badges() -> void:
+	var battle = fixture()
+	battle.board[11] = battle._piece(Cards.definition("eve"), Chess.PLAYER)
+	var view := ChessView.new()
+	root.add_child(view)
+	view.setup(battle, null)
+	await process_frame
+	await process_frame
+	var flush := true
+	for square in view.cells.size():
+		var rect := view.cells[square].get_global_rect()
+		if square % Chess.COLS < Chess.COLS - 1:
+			flush = flush and is_equal_approx(rect.end.x, view.cells[square + 1].get_global_rect().position.x)
+		if square + Chess.COLS < view.cells.size():
+			flush = flush and is_equal_approx(rect.end.y, view.cells[square + Chess.COLS].get_global_rect().position.y)
+	expect(flush, "All twelve square buttons share edges with their neighbors")
+	for square in [1, 10, 11]:
+		var tile := view.cells[square]
+		var unit: Dictionary = battle.board[square]
+		var rect := tile.get_global_rect()
+		for stat in [["Attack", battle.attack_power(unit), Vector2(-1, 1)],
+				["Health", unit.hp, Vector2(1, 1)], ["Armor", unit.armor, Vector2(1, -1)]]:
+			var badge := tile.get_node_or_null(stat[0]) as TextureRect
+			var number := badge.get_child(0) as Label if badge != null else null
+			var badge_rect := badge.get_global_rect() if badge != null else Rect2()
+			var quadrant := (badge_rect.get_center() - rect.get_center()).sign()
+			expect(number != null and number.text == str(stat[1]) and badge.texture != null
+				and rect.grow(-1).encloses(badge_rect) and quadrant == stat[2],
+				"%s shows the correct %s badge fully inside its corner" % [unit.name, stat[0]])
+	var left := view.cells[10]
+	var right := view.cells[11]
+	var health := left.get_node("Health") as TextureRect
+	await click(left, (health.get_global_rect().get_center() - left.global_position) / left.size)
+	expect(view.selected_square == 10, "Clicking the health badge selects its unit")
+	var armor := right.get_node("Armor") as TextureRect
+	await click(right, (armor.get_global_rect().get_center() - right.global_position) / right.size)
+	expect(view.selected_square == 11, "Clicking the adjacent armor badge selects the neighboring unit")
+	battle.board[11].hp -= 1
+	battle.board[11].armor = 0
+	view.render()
+	expect(right.get_node("Health").get_child(0).text == str(battle.board[11].hp)
+		and right.get_node("Armor").get_child(0).text == "0", "Re-rendering shows the latest health and armor")
+	view.queue_free()
+	await process_frame
+
 func _detail_text(view: Node) -> String:
 	var parts: Array[String] = []
 	if view.hover_detail_body != null:
@@ -437,6 +484,7 @@ func execute() -> void:
 	check_companion_growth()
 	check_battle_income()
 	await check_ui()
+	await check_board_badges()
 	await check_hover_details()
 	print("CHESS BATTLE: %d checks, %d failures" % [checks, failures])
 	quit(0 if failures == 0 else 1)
