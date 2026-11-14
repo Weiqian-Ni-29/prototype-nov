@@ -196,7 +196,6 @@ func inspect_board() -> void:
 		expect(not view.board_surface.profiles.has(hidden) and is_equal_approx(old_height, view.board_surface.height_at(point)), "Hidden terrain cannot influence relief")
 		run.data.tiles[hidden].terrain = old_terrain
 		var shore = ""
-		var forest = ""
 		var ridge = ""
 		var coastal_ridge = ""
 		for id in run.data.tiles:
@@ -207,8 +206,6 @@ func inspect_board() -> void:
 					if Hex.is_land(run.data.tiles, next):
 						shore = next
 						break
-			if forest.is_empty() and terrain == "forest" and run.data.tiles[id].site == "":
-				forest = id
 			if terrain == "mountain":
 				var neighbors = Hex.neighbors(id, run.data.tiles)
 				if ridge.is_empty() and neighbors.any(func(next): return run.data.tiles[next].terrain == "mountain"):
@@ -219,7 +216,7 @@ func inspect_board() -> void:
 		view.focus_cell("0,0")
 		game._refresh()
 		expect(view.board_fog.get_child_count() == 0 and view.board_fringe.get_child_count() == 0
-			and view.board_surface.triangles.size() == 217, "All revealed cells render and support surface picking")
+			and view.board_surface.triangles.size() == run.data.tiles.size(), "All revealed cells render and support surface picking")
 		verify_seams(view.board_surface)
 		var rocky_mountain = verify_mountain_rocks(view)
 		await create_timer(view.FOG_REVEAL_SECONDS + 0.1).timeout
@@ -229,8 +226,8 @@ func inspect_board() -> void:
 		view.focus_cell(shore)
 		game._refresh()
 		await capture("terrain-lake-" + seed_value)
-		if seed_value == "20261104" and not forest.is_empty():
-			await inspect_occlusion(forest)
+		if seed_value == "20261104":
+			await inspect_occlusion()
 			var areas = {"ridge": ridge, "coast-close": coastal_ridge, "ridge-close": ridge, "rocks-close": rocky_mountain}
 			for detail in areas:
 				var focus: String = areas[detail]
@@ -284,9 +281,20 @@ func verify_mountain_rocks(view: Node3D) -> String:
 	expect(grounded and not rocky_cell.is_empty(), "Mountain rocks meet the actual ground mesh and remain partly visible")
 	return rocky_cell
 
-func inspect_occlusion(forest: String) -> void:
+func inspect_occlusion() -> void:
 	var view = game.view
 	var run = game.run
+	var occluder: MeshInstance3D
+	for candidate in view.map_occluders:
+		var bounds: AABB = candidate.global_transform * candidate.get_aabb()
+		var cell := Hex.cell_at(bounds.get_center())
+		if run.data.tiles.get(cell, {}).get("terrain") == "forest" and bounds.size.y > 0.42:
+			occluder = candidate
+			break
+	if not is_instance_valid(occluder):
+		expect(false, "A tall forest occluder exists for the close-up")
+		return
+	var forest := Hex.cell_at((occluder.global_transform * occluder.get_aabb()).get_center())
 	run.actor("hero").position = forest
 	game.selected_cell = forest
 	view.zoom_size = 8.0
@@ -296,15 +304,6 @@ func inspect_occlusion(forest: String) -> void:
 	var actor = view.dolls.hero
 	while actor.is_moving():
 		await process_frame
-	var occluder: MeshInstance3D
-	for candidate in view.map_occluders:
-		var bounds: AABB = candidate.global_transform * candidate.get_aabb()
-		if bounds.get_center().distance_to(actor.global_position) < 1.3 and bounds.size.y > 0.42:
-			occluder = candidate
-			break
-	if not is_instance_valid(occluder):
-		expect(false, "A tall forest occluder exists for the close-up")
-		return
 	var bounds: AABB = occluder.global_transform * occluder.get_aabb()
 	var sight: Vector3 = -view.camera.global_basis.z
 	actor.global_position = bounds.get_center() + sight * 0.48 - Vector3.UP * 0.20
@@ -346,6 +345,7 @@ func capture_node_examples() -> void:
 		return
 	game.chosen_seed = str(seed_value)
 	game._start_new()
+	run.data.chapter = 3
 	var rest: String = forest_rest[0]
 	var approach: String = Hex.neighbors(rest, run.data.tiles).filter(func(cell): return Hex.is_land(run.data.tiles, cell))[0]
 	run.data.tiles[approach].enemies.clear()
@@ -633,6 +633,7 @@ func execute() -> void:
 	await create_timer(0.5).timeout
 	await capture("02-exploration")
 	var arrival_run = game.run
+	arrival_run.data.chapter = 1
 	var first_tile: String = Hex.neighbors(arrival_run.data.start, arrival_run.data.tiles).filter(func(cell):
 		return arrival_run.node_at(cell).get("kind") == "supply" and arrival_run.data.tiles[cell].enemies.is_empty())[0]
 	game._select_cell(first_tile)

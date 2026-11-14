@@ -39,8 +39,8 @@ func journey(seed_value: int) -> bool:
 				var stage = r.pending_chapter()
 				stages.append(stage)
 				r.finish_chapter(stage)
-		if r.boss_known():
-			break
+			if r.boss_known():
+				break
 	if stages != [1, 2, 3, 4] or hero.name != "旅人":
 		return false
 	var route = Hex.path(r.data.tiles, hero.position, r.data.boss)

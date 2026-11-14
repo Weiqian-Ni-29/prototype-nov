@@ -41,6 +41,7 @@ func execute() -> void:
 	game._start_new()
 	game.set_process(false)
 	var run = game.run
+	run.data.chapter = 1
 	var origin: String = run.actor("hero").position
 	var next: String = Hex.neighbors(origin, run.data.tiles).filter(func(cell): return Hex.is_land(run.data.tiles, cell))[0]
 	run.data.tiles[next].enemies.clear()

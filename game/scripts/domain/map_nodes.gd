@@ -58,7 +58,7 @@ static func battle_coins(seed_value: int, cell: String, elite: bool, finale: boo
 	return roller.randi_range(8, 12) if elite else roller.randi_range(4, 7)
 
 static func _kind(tile: Dictionary, has_relic: bool, defeated: bool, roll: int) -> String:
-	if tile.site == "start":
+	if tile.site in ["start", "boss"]:
 		return "story"
 	if not tile.enemies.is_empty() or defeated:
 		return "elite" if is_elite(tile.enemies) else "battle"
@@ -67,7 +67,7 @@ static func _kind(tile: Dictionary, has_relic: bool, defeated: bool, roll: int) 
 	if not tile.resource.is_empty():
 		return "supply"
 	if roll < 7:
-		return "story" if tile.site == "boss" else "battle"
+		return "battle"
 	if roll < 19:
 		return "rest"
 	if roll < 27:
@@ -99,7 +99,8 @@ static func replace_legacy_clues(nodes: Dictionary, tiles: Dictionary, seed_valu
 		_set_local_reward(node, roller)
 		nodes[cell] = node
 
-static func generate(tiles: Dictionary, seed_value: int, relic_sites: Dictionary, rewards: Dictionary, relic_checks: Dictionary) -> Dictionary:
+static func generate(tiles: Dictionary, seed_value: int, relic_sites: Dictionary, rewards: Dictionary,
+		relic_checks: Dictionary, opening_supply: String = "") -> Dictionary:
 	_load_events()
 	var nodes = {}
 	var use_counts = {}
@@ -111,7 +112,8 @@ static func generate(tiles: Dictionary, seed_value: int, relic_sites: Dictionary
 	for cell in cells:
 		if tiles[cell].site == "start":
 			start = cell
-			nearby_haunts = Hex.neighbors(cell, tiles).filter(func(next): return Hex.is_land(tiles, next) and tiles[next].site.is_empty())
+			nearby_haunts = Hex.neighbors(cell, tiles).filter(func(next):
+				return Hex.is_land(tiles, next) and tiles[next].site.is_empty() and not relic_sites.has(next))
 			nearby_haunts.sort_custom(func(a, b): return hash("clue:%s:%s" % [seed_value, a]) < hash("clue:%s:%s" % [seed_value, b]))
 			nearby_haunts = nearby_haunts.slice(0, 3)
 			break
@@ -123,7 +125,7 @@ static func generate(tiles: Dictionary, seed_value: int, relic_sites: Dictionary
 		var defeated = rewards.has(cell + ":")
 		var forced_haunt = cell in nearby_haunts
 		var roll = 0 if forced_haunt else roller.randi_range(0, 99)
-		var kind = "haunt" if forced_haunt else _kind(tile, relic_sites.has(cell), defeated, roll)
+		var kind = "rest" if cell == opening_supply else ("haunt" if forced_haunt else _kind(tile, relic_sites.has(cell), defeated, roll))
 		var node = {"kind": kind, "event": "", "result": ""}
 		nodes[cell] = node
 		if kind == "story":
@@ -199,6 +201,7 @@ static func raise_elite_share(data: Dictionary) -> void:
 	var target := roundi(data.nodes.size() * 0.20)
 	var current := 0
 	var candidates: Array[String] = []
+	var ordinary: Array[String] = []
 	var priority := {}
 	var start := Hex.coord(data.start)
 	for cell in data.nodes:
@@ -207,11 +210,17 @@ static func raise_elite_share(data: Dictionary) -> void:
 			continue
 		if node.kind == "elite":
 			current += 1
-		elif (node.kind == "supply" and node.result.is_empty()
-				and Hex.distance(Hex.coord(cell), start) > 2 and cell != data.actors.hero.position):
-			candidates.append(cell)
-			priority[cell] = hash("elite-from-supply:%s:%s" % [data.seed, cell])
-	candidates.sort_custom(func(a, b): return a < b if priority[a] == priority[b] else priority[a] < priority[b])
+		elif node.result.is_empty() and Hex.distance(Hex.coord(cell), start) > 2 and cell != data.actors.hero.position:
+			if node.kind == "supply":
+				candidates.append(cell)
+				priority[cell] = hash("elite-from-supply:%s:%s" % [data.seed, cell])
+			elif node.kind == "battle" and not data.tiles[cell].enemies.is_empty():
+				ordinary.append(cell)
+				priority[cell] = hash("elite-from-battle:%s:%s" % [data.seed, cell])
+	var by_priority := func(a, b): return a < b if priority[a] == priority[b] else priority[a] < priority[b]
+	candidates.sort_custom(by_priority)
+	ordinary.sort_custom(by_priority)
+	candidates.append_array(ordinary)
 	var roller := RandomNumberGenerator.new()
 	for index in mini(maxi(0, target - current), candidates.size()):
 		var cell := candidates[index]
@@ -258,37 +267,12 @@ static func replace_shop_nodes(data: Dictionary) -> void:
 		if data.gear_instances[uid].owner.kind == "shop":
 			data.gear_instances.erase(uid)
 
-static func place_opening_battles(data: Dictionary, relic_sites: Dictionary) -> void:
-	var start: String = data.start
-	var tiles: Dictionary = data.tiles
-	var neighbors := Hex.neighbors(start, tiles)
+static func place_opening_battles(data: Dictionary, route: Array) -> void:
 	var roller := RandomNumberGenerator.new()
 	roller.seed = hash("opening-battles:%s" % data.seed)
-	var candidates: Array = []
-	var best := -10
-	for battle in neighbors:
-		if not Hex.is_land(tiles, battle) or not tiles[battle].npc.is_empty():
-			continue
-		for next in Hex.neighbors(battle, tiles):
-			if Hex.distance(Hex.coord(start), Hex.coord(next)) != 2 or not Hex.is_land(tiles, next):
-				continue
-			var tile: Dictionary = tiles[next]
-			if tile.site.is_empty() and tile.npc.is_empty():
-				var priority := 4 * int(tile.enemies.is_empty()) + 2 * int(data.nodes[battle].kind == "battle")
-				if relic_sites.has(battle) or relic_sites.has(next):
-					priority -= 8
-				if priority > best:
-					candidates.clear()
-					best = priority
-				if priority == best:
-					candidates.append([battle, next])
-	if candidates.is_empty():
-		return
-	var pair: Array = candidates[roller.randi_range(0, candidates.size() - 1)]
-	_replace_with_battle(data, pair[0], roller, false, true, false)
-	data.nodes[pair[0]].intro_duel = true
-	_replace_with_battle(data, pair[1], roller, false, true, false)
-	data.nodes[pair[1]].intro_duel = true
+	for cell in route:
+		_replace_with_battle(data, cell, roller, false, true, false)
+		data.nodes[cell].intro_duel = true
 
 static func shop_supplies(roller: RandomNumberGenerator) -> Dictionary:
 	return {"trail_food": roller.randi_range(1, 2)}

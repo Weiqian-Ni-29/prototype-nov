@@ -1,7 +1,11 @@
 class_name HexMap
 extends RefCounted
 const Catalog = preload("res://scripts/domain/catalog.gd")
+const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const DIRECTIONS = [Vector2i(1, 0), Vector2i(1, -1), Vector2i(0, -1), Vector2i(-1, 0), Vector2i(-1, 1), Vector2i(0, 1)]
+
+static func cell_count(radius: int) -> int:
+	return 1 + 3 * radius * (radius + 1)
 
 static func key(p: Vector2i) -> String:
 	return "%d,%d" % [p.x, p.y]
@@ -73,60 +77,72 @@ static func generate(seed_value: int) -> Dictionary:
 	var rng = RandomNumberGenerator.new()
 	rng.seed = seed_value
 	var tiles = {}
+	var radius := Catalog.RADIUS
 	# Region centers produce coherent patches, with a tiny deterministic edge variation.
 	var biomes = ["plains", "forest", "mountain", "ruins", "desert", "swamp"]
+	var available_centers: Array[Vector2i] = []
+	for q in range(1 - radius, radius):
+		for r in range(1 - radius, radius):
+			var center := Vector2i(q, r)
+			if distance(center, Vector2i.ZERO) < radius:
+				available_centers.append(center)
 	var centers: Array[Vector2i] = []
-	for i in range(6):
-		centers.append(Vector2i(rng.randi_range(-6, 6), rng.randi_range(-4, 4)))
-	for q in range(-8, 9):
-		for r in range(-8, 9):
+	for _biome in biomes:
+		centers.append(available_centers.pop_at(rng.randi_range(0, available_centers.size() - 1)))
+	for q in range(-radius, radius + 1):
+		for r in range(-radius, radius + 1):
 			var p = Vector2i(q, r)
-			if distance(p, Vector2i.ZERO) > 8:
+			if distance(p, Vector2i.ZERO) > radius:
 				continue
 			var best = INF
 			var terrain = "plains"
 			for i in range(6):
-				var score = distance(p, centers[i]) + rng.randf_range(0.0, 1.5)
+				var score = distance(p, centers[i]) + rng.randf()
 				if score < best:
 					best = score
 					terrain = biomes[i]
 			tiles[key(p)] = {"terrain": terrain, "base_terrain": terrain, "resource": "", "quantity": 0, "enemies": [], "hidden": false, "discovered_enemy": false, "site": "", "npc": "", "height": rng.randf_range(0.0, 0.08)}
 	var starts: Array[String] = []
 	for cell in tiles:
-		if distance(coord(cell), Vector2i.ZERO) == 7 and tiles[cell].terrain != "ruins":
+		if distance(coord(cell), Vector2i.ZERO) == radius - 1:
 			starts.append(cell)
-	var start = starts[rng.randi_range(0, starts.size() - 1)]
+	var preferred := starts.filter(func(cell): return tiles[cell].terrain != "ruins")
+	var start: String = _pick(preferred if not preferred.is_empty() else starts, rng)
 	var distant: Array[String] = []
 	for cell in tiles:
-		if distance(coord(start), coord(cell)) >= 11:
+		if distance(coord(start), coord(cell)) >= radius + 1:
 			distant.append(cell)
-	var boss = distant[rng.randi_range(0, distant.size() - 1)]
+	var boss: String = _pick(distant, rng)
 	tiles[start].site = "start"
 	tiles[boss].site = "boss"
 	var occupied = {start: true, boss: true}
+	# Reserve the village route before the 25 companions fill the small island.
+	var routes: Array = []
+	for first in neighbors(start, tiles):
+		for second in neighbors(first, tiles):
+			if distance(coord(start), coord(second)) == 2:
+				routes.append([first, second])
+	var opening_route: Array = _pick(routes, rng)
+	for cell in opening_route:
+		occupied[cell] = true
+	var early: Array[String] = neighbors(start, tiles).filter(func(cell): return not occupied.has(cell))
+	var lorne: String = _pick(early, rng)
+	tiles[lorne].npc = "lorne"
+	occupied[lorne] = true
+	early.erase(lorne)
+	var opening_supply: String = _pick(early, rng)
+	occupied[opening_supply] = true
+	_add_lake(tiles, occupied, seed_value, start)
+	_reserve_relic_sites(tiles, occupied, rng)
+	var free := tiles.keys().filter(func(cell): return not occupied.has(cell) and is_land(tiles, cell))
 	for id in Catalog.COMPANIONS:
-		var candidates: Array[String] = []
-		for cell in tiles:
-			if occupied.has(cell):
-				continue
-			var steps = distance(coord(start), coord(cell))
-			if (id == "lorne" and steps <= 2) or (id != "lorne" and steps > 2 and tiles[cell].terrain == Catalog.COMPANIONS[id].terrain):
-				candidates.append(cell)
-		var cell = _pick_free(tiles, occupied, rng, 2) if candidates.is_empty() else candidates[rng.randi_range(0, candidates.size() - 1)]
+		if id == "lorne":
+			continue
+		var candidates := free.filter(func(cell): return tiles[cell].terrain == Catalog.COMPANIONS[id].terrain)
+		var cell: String = _pick(candidates if not candidates.is_empty() else free, rng)
 		tiles[cell].npc = id
 		occupied[cell] = true
-	# Ensure all six base biomes exist even when Voronoi seeds happen to overlap.
-	for terrain in biomes:
-		var exists = false
-		for k in tiles:
-			if tiles[k].terrain == terrain:
-				exists = true
-		if not exists:
-			var k = _pick_free(tiles, occupied, rng, 2)
-			tiles[k].terrain = terrain
-			occupied[k] = true
-	# Keep approaches to the village, companions and final battle open.
-	_add_lake(tiles, occupied, seed_value, start)
+		free.erase(cell)
 	var safe = {}
 	for destination in occupied:
 		for k in path(tiles, start, destination):
@@ -145,7 +161,26 @@ static func generate(seed_value: int) -> Dictionary:
 			rng.randf()
 			t.resource = "trail_food"
 			t.quantity = rng.randi_range(1, 2)
-	return {"tiles": tiles, "start": start, "boss": boss, "rng_state": rng.state}
+	return {"tiles": tiles, "start": start, "boss": boss, "opening_route": opening_route,
+		"opening_supply": opening_supply, "rng_state": rng.state}
+
+static func _reserve_relic_sites(tiles: Dictionary, occupied: Dictionary, rng: RandomNumberGenerator) -> void:
+	var terrain_counts := {}
+	for tile in tiles.values():
+		terrain_counts[tile.terrain] = int(terrain_counts.get(tile.terrain, 0)) + 1
+	var free := tiles.keys().filter(func(cell): return not occupied.has(cell) and is_land(tiles, cell))
+	for site in Relics.SITES.values():
+		var terrain: String = site[1]
+		var matching := free.filter(func(cell): return tiles[cell].terrain == terrain)
+		# Keep one tile of every biome when a cache has to claim a different terrain.
+		var candidates := matching if not matching.is_empty() else free.filter(
+			func(cell): return terrain_counts[tiles[cell].terrain] > 1)
+		var cell: String = _pick(candidates, rng)
+		terrain_counts[tiles[cell].terrain] -= 1
+		terrain_counts[terrain] += 1
+		tiles[cell].terrain = terrain
+		occupied[cell] = true
+		free.erase(cell)
 
 static func _add_lake(tiles: Dictionary, occupied: Dictionary, seed_value: int, start: String) -> void:
 	var rng = RandomNumberGenerator.new()
@@ -155,12 +190,12 @@ static func _add_lake(tiles: Dictionary, occupied: Dictionary, seed_value: int, 
 	for id in tiles:
 		var terrain: String = tiles[id].terrain
 		counts[terrain] = int(counts.get(terrain, 0)) + 1
-		if not occupied.has(id) and distance(coord(id), Vector2i.ZERO) <= 6 and distance(coord(id), coord(start)) > 2:
+		if not occupied.has(id) and distance(coord(id), Vector2i.ZERO) < Catalog.RADIUS and distance(coord(id), coord(start)) > 1:
 			var basin = {"swamp": 0.8, "plains": 0.45, "mountain": -0.6}.get(terrain, 0.0)
 			candidates[id] = rng.randf() + basin
 	var centers = candidates.keys()
 	centers.sort_custom(func(a, b): return candidates[a] > candidates[b])
-	var target = rng.randi_range(7, 11)
+	var target = rng.randi_range(2, 3)
 	for center in centers:
 		var shore: Array[String] = [center]
 		var changed: Dictionary = {}
@@ -176,7 +211,7 @@ static func _add_lake(tiles: Dictionary, occupied: Dictionary, seed_value: int, 
 			for next in neighbors(id, tiles):
 				if candidates.has(next) and is_land(tiles, next) and next not in shore and distance(coord(next), coord(center)) <= 2:
 					shore.append(next)
-		if changed.size() >= 5 and _connected_land(tiles, start, tiles.size() - changed.size()):
+		if changed.size() >= 2 and _connected_land(tiles, start, tiles.size() - changed.size()):
 			return
 		for id in changed:
 			tiles[id].terrain = changed[id]
@@ -192,11 +227,7 @@ static func _connected_land(tiles: Dictionary, start: String, expected: int) -> 
 				frontier.append(next)
 	return visited.size() == expected
 
-static func _pick_free(tiles: Dictionary, occupied: Dictionary, rng: RandomNumberGenerator, minimum: int) -> String:
-	var candidates: Array[String] = []
-	for k in tiles:
-		if not occupied.has(k) and distance(coord(k), Vector2i(-7, 0)) >= minimum:
-			candidates.append(k)
+static func _pick(candidates: Array, rng: RandomNumberGenerator) -> Variant:
 	assert(not candidates.is_empty(), "Map placement exhausted")
 	return candidates[rng.randi_range(0, candidates.size() - 1)]
 

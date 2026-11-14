@@ -67,20 +67,21 @@ func check_effects(run: RefCounted) -> void:
 
 func check_battle_drop(run: RefCounted) -> void:
 	var seed_value = 1
-	while roll(seed_value, "battle:0,0:") >= 0.30:
-		seed_value += 1
 	run.new_run(seed_value, "wayfarer")
-	run.actor("hero").position = "0,0"
-	run.reveal("0,0")
-	run.data.tiles["0,0"].enemies = ["archer"]
-	var expected: String = run.relic_offer("battle:0,0:", Relics.DATA.keys(), 0.30)
+	while roll(seed_value, "battle:%s:" % run.data.start) >= 0.30:
+		seed_value += 1
+		run.new_run(seed_value, "wayfarer")
+	var cell: String = run.data.start
+	var source := "battle:%s:" % cell
+	run.data.tiles[cell].enemies = ["archer"]
+	var expected: String = run.relic_offer(source, Relics.DATA.keys(), 0.30)
 	var combat = Battle.new()
-	expect(combat.begin(run, {"position": "0,0", "origin": "0,0", "ambush": false, "npc": "", "movers": []}, run.card_deck()).ok, "Archer encounter begins")
+	expect(combat.begin(run, {"position": cell, "origin": cell, "ambush": false, "npc": "", "movers": []}, run.card_deck()).ok, "Archer encounter begins")
 	combat.commanders[Battle.ENEMY].hp = 0
 	combat._check_outcome()
 	expect(combat.outcome == "victory" and not expected.is_empty() and run.data.relic_inventory.has(expected) and run.relic_intro().id == expected, "Victory rolls once from the shared pool")
-	expect(run.load_game().ok and run.data.relic_claims["battle:0,0:"].relic_id == expected
-		and run.roll_relic("battle:0,0:", ["lamp_badge"], 1.0, "hero", "0,0").is_empty(), "Battle settlement and reward are saved together without a reroll")
+	expect(run.load_game().ok and run.data.relic_claims[source].relic_id == expected
+		and run.roll_relic(source, ["lamp_badge"], 1.0, "hero", cell).is_empty(), "Battle settlement and reward are saved together without a reroll")
 
 func check_victory_receipt(save_path: String) -> void:
 	var game = Main.instantiate()
@@ -135,6 +136,7 @@ func check_exploration() -> void:
 		game.queue_free()
 		return
 	var approach: String = Hex.neighbors(site, run.data.tiles).filter(func(cell): return Hex.is_land(run.data.tiles, cell))[0]
+	run.data.chapter = 3
 	run.data.tiles[approach].enemies.clear()
 	run.actor("hero").position = approach
 	run.reveal(approach)

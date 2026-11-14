@@ -108,18 +108,29 @@ func check_camera_drag(game: Node, start: String, next: String) -> void:
 	game._continue_run()
 	expect(is_equal_approx(view.camera.size, normal_zoom), "Continuing an expedition starts at the default view")
 	expect(view.fog_reveals.get_child_count() == 0, "Loading explored terrain does not animate fog")
+	game.run.data.chapter = 1
 	point = view.camera.unproject_position(Hex.world(next) + Vector3.UP * 0.05)
 	var before_steps = game.run.remaining_steps()
 	var initial_focus: Vector3 = view.focus_point
-	var far_fog = view.board_fog.get_node("Chunk_2_0")
-	var far_mesh = far_fog.mesh
+	var explored: Dictionary = game.run.data.explored
+	var dirtied_chunks := {}
+	for cell in Hex.neighbors(next, game.run.data.tiles):
+		if not explored.has(cell):
+			for affected in view.board_surface._around(cell):
+				dirtied_chunks[view._chunk_name(view.board_surface.chunk_for(affected))] = true
+	var distant_fog := {}
+	for patch in view.board_fog.get_children():
+		if not dirtied_chunks.has(str(patch.name)) and patch.mesh != null:
+			distant_fog[str(patch.name)] = patch.mesh
 	for i in range(2):
 		pointer_button(MOUSE_BUTTON_LEFT, true, point)
 		pointer_button(MOUSE_BUTTON_LEFT, false, point)
 	expect(game.run.actor("hero").position == next and game.run.remaining_steps() == before_steps - 1
 		and not game.move_preview.visible, "Clicking the same hex twice moves and counts one step")
 	expect(view.focus_point.is_equal_approx(initial_focus), "Confirming movement does not jump the camera")
-	expect(far_fog.mesh == far_mesh, "Movement does not rebuild distant fog")
+	expect(not distant_fog.is_empty() and distant_fog.keys().all(
+		func(chunk): return view.board_fog.get_node(chunk).mesh == distant_fog[chunk]),
+		"Movement does not rebuild distant fog")
 	expect(view.fog_reveals.get_child_count() == 1, "A move starts one veil over its newly revealed hexes")
 	expect(game.modal_layer.get_child_count() == 0 and view.visible, "Two real map clicks start walking with the map still visible")
 	var veil = view.fog_reveals.get_child(0) if view.fog_reveals.get_child_count() > 0 else null
