@@ -47,7 +47,6 @@ var hint: Label
 var retreat: Button
 var menu: Button
 var end_turn_button: Button
-var cast_button: Button
 var enemy_deck_back: TextureRect
 var enemy_cards: Label
 var enemy_mana_ratio: Label
@@ -200,16 +199,11 @@ func render() -> void:
 	retreat.disabled = not usable or battle.river
 	end_turn_button.disabled = not usable
 	end_turn_button.text = "敌方回合" if battle.turn == Battle.ENEMY else "结束回合"
-	cast_button.visible = usable and -1 in battle.card_targets(Battle.PLAYER, selected_card)
-	if cast_button.visible:
-		cast_button.tooltip_text = "打出" + battle.definition(battle.hands[Battle.PLAYER][selected_card]).name
 	var legal := _legal()
 	var equipment_slot := _selected_equipment_slot()
 	for square in cells.size():
 		_render_tile(cells[square], square, legal.get(square, ""))
-	if cast_button.visible:
-		hint.text = "点击右侧「确认出牌」%s。" % cast_button.tooltip_text
-	elif selected_square >= 0:
+	if selected_square >= 0:
 		hint.text = "绿格可移动或部署 · 橙格可攻击"
 	elif selected_card >= 0:
 		hint.text = "选择高亮棋子装备，替换下来的装备牌会回到手牌。" if not equipment_slot.is_empty() else "选择高亮目标出牌。"
@@ -251,7 +245,6 @@ func present_action() -> void:
 	retreat.disabled = true
 	end_turn_button.disabled = true
 	end_turn_button.text = "敌方回合" if battle.turn == Battle.ENEMY else "结束回合"
-	cast_button.hide()
 	hint.text = "%s 攻击 %s" % [event.attacker.name, event.defender.name]
 	for square in cells.size():
 		_render_tile(cells[square], square, "", square == event.from or square == event.target)
@@ -280,8 +273,7 @@ func _legal() -> Dictionary:
 	if selected_card >= 0:
 		var card: Dictionary = battle.definition(battle.hands[Battle.PLAYER][selected_card])
 		for square in battle.card_targets(Battle.PLAYER, selected_card):
-			if square >= 0:
-				result[square] = "deploy" if card.kind == "partner" else "spell_hit" if card.has("damage") else "equip"
+			result[square] = "deploy" if card.kind == "partner" else "spell_hit" if card.has("damage") else "equip"
 	return result
 
 func _selected_equipment_slot() -> String:
@@ -555,12 +547,6 @@ func _build_battle_controls(parent: HBoxContainer) -> void:
 	enemy_mana.add_child(crystal)
 	enemy_mana_ratio = UI.label(enemy_mana, "", 15, UI.INK)
 	enemy_mana_ratio.name = "EnemyManaRatio"
-	cast_button = UI.button(rail, "确认出牌", func():
-		if not is_attack_playing() and battle.play(selected_card, -1):
-			_notify_action())
-	cast_button.name = "CastChessSpell"
-	cast_button.add_theme_font_size_override("font_size", 15)
-	UI.accent(cast_button)
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	rail.add_child(spacer)
@@ -1053,9 +1039,6 @@ func _card_stats(card: Dictionary) -> String:
 	if card.kind == "partner":
 		return Cards.stats(card)
 	if card.kind == "spell":
-		if card.has("weather"):
-			var climate: Dictionary = Cards.WEATHER[card.weather]
-			return "天气 · %s · %s" % [climate.name, climate.hint]
 		if card.has("damage"):
 			return "伤害 %d 点%s" % [int(card.damage),
 				" · 施加减速" if card.get("slow", false) else ""]

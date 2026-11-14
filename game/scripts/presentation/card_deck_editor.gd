@@ -141,21 +141,6 @@ func _preparation_controls(parent: VBoxContainer) -> void:
 			run_model.prepared_relic = choices.get_item_metadata(index)
 			detail_label.text = Relics.current_effect(run_model.prepared_relic))
 		detail_label.text = Relics.current_effect(run_model.prepared_relic)
-	var climates := OptionButton.new()
-	climates.add_item("开局天气 · 跟随地图")
-	climates.set_item_metadata(0, "")
-	for id in ["rainstone", "clear_air_reed"]:
-		if run_model.has_relic(id):
-			var index := climates.item_count
-			climates.add_item("开局天气 · " + ("降雨" if id == "rainstone" else "烈日"))
-			climates.set_item_metadata(index, id)
-			if run_model.prepared_weather == id:
-				climates.select(index)
-	if climates.item_count > 1:
-		parent.add_child(climates)
-		climates.item_selected.connect(func(index: int): run_model.prepared_weather = climates.get_item_metadata(index))
-	else:
-		climates.free()
 
 func show_error(message: String) -> void:
 	error.text = message

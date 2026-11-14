@@ -119,7 +119,8 @@ func check_rules() -> void:
 		"Both commanders start in their center rear squares")
 	expect(battle.board[10].element == "ice" and battle.board[1].element == "",
 		"The traveler is an ice unit and the boar is untyped")
-	expect(battle.hands.all(func(hand): return hand.size() == 3) and battle.piles.all(func(pile): return pile.size() == 9),
+	expect(battle.hands.all(func(hand): return hand.size() == 3)
+		and battle.piles[Chess.PLAYER].size() == 8 and battle.piles[Chess.ENEMY].size() == 9,
 		"Both teams draw exactly three opening cards")
 	expect(battle.moves(10).keys() == [6, 7, 8, 9, 11], "Commander can move one square horizontally, vertically or diagonally")
 	battle.hands[Chess.PLAYER] = ["highdrake"]
@@ -168,11 +169,10 @@ func check_rules() -> void:
 	battle._apply_card(Chess.PLAYER, "gear:wayfarer", wayfarer_gear, 10)
 	expect(wayfarer_gear.element == "ice" and battle.board[10].armor == armor_before + 1,
 		"Wayfarer gear preserves its affinity guard on the ice commander")
-	battle.hands[Chess.PLAYER] = ["rain"]
+	battle.hands[Chess.PLAYER] = ["brace"]
 	battle.mana[Chess.PLAYER] = 1
-	expect(battle.play(0, -1) and battle.weather == "rain" and battle.attack_power(battle.board[7]) == 3,
-		"Weather modifies elemental attacks after the board action")
-	expect(battle.take_attack().is_empty(), "Playing a weather card does not create an attack animation")
+	expect(battle.play(0, 7) and battle.take_attack().is_empty(),
+		"Playing a defense card after a board action does not create an attack animation")
 	battle._start_turn(Chess.PLAYER)
 	battle.commanders[Chess.ENEMY].hp = 1
 	battle.commanders[Chess.ENEMY].armor = 0
@@ -357,15 +357,12 @@ func ranged_threat_fixture(card_id: String) -> RefCounted:
 	battle.commanders[Chess.ENEMY].hp = 3
 	battle.commanders[Chess.ENEMY].armor = 0
 	battle.board[7] = battle._piece(Cards.definition("lorne"), Chess.PLAYER)
-	battle.board[7].element = "fire"
 	battle.board[6] = battle._piece(Cards.definition("eve"), Chess.PLAYER)
 	battle.board[6].hp = 1
 	for square in [0, 2, 3, 5]:
 		battle.board[square] = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
 		battle.board[square].move = 0
 	battle.turn = Chess.ENEMY
-	battle.weather = "rain"
-	battle.weather_rounds = 1
 	battle.hands[Chess.ENEMY] = [card_id]
 	battle.mana_capacity[Chess.ENEMY] = 2
 	battle.mana[Chess.ENEMY] = 2
@@ -378,25 +375,25 @@ func check_enemy_strategy() -> void:
 	var save_before := FileAccess.get_file_as_string(battle.run.save_path)
 	var action: Dictionary = battle._choose_enemy_action()
 	expect(action.get("card_index") == 0 and action.get("target") == 4,
-		"Enemy deploys into the firing lane instead of taking a kill when rain is about to expire")
+		"Enemy deploys into the firing lane instead of taking a kill")
 	expect(JSON.stringify(battle.board) == board_before and JSON.stringify(battle.run.data) == run_before
 		and FileAccess.get_file_as_string(battle.run.save_path) == save_before and battle.hands[Chess.ENEMY] == ["foe:boar"],
 		"Trial actions leave the real board, cards, expedition and save untouched")
-	battle.hands[Chess.PLAYER] = ["sun", "blade", "pike"]
+	battle.hands[Chess.PLAYER] = ["ember_spell", "blade", "pike"]
 	battle.piles[Chess.PLAYER].reverse()
 	expect(battle._choose_enemy_action() == action, "The same public position produces the same action with different hidden cards")
 	battle.enemy_turn(true)
-	expect(battle.turn == Chess.ENEMY and battle.weather == "rain" and battle.hands[Chess.ENEMY].is_empty()
+	expect(battle.turn == Chess.ENEMY and battle.hands[Chess.ENEMY].is_empty()
 		and battle.board[4].get("side") == Chess.ENEMY and not battle.moves(7).has(1) and battle.board[6].hp == 1,
 		"The enemy first uses its hand to block the lane and preserves its free board action")
 	battle.enemy_turn()
-	expect(battle.turn == Chess.PLAYER and battle.weather.is_empty() and not battle.moves(7).has(1),
-		"The lane stays blocked when the full turn ends and rain expires")
+	expect(battle.turn == Chess.PLAYER and not battle.moves(7).has(1),
+		"The lane stays blocked when the full turn ends")
 
 	battle = ranged_threat_fixture("coat")
 	battle.enemy_turn(true)
 	expect(battle.commanders[Chess.ENEMY].armor == 3 and battle.board[6].hp == 1
-		and battle.moves(7).has(1) and battle.attack_power(battle.board[7]) == 2,
+		and battle.moves(7).has(1) and battle.attack_power(battle.board[7]) == 3,
 		"Enemy equips armor when it must survive an open firing lane")
 
 	battle = fixture()
@@ -525,12 +522,14 @@ func check_ui() -> void:
 	var game := Main.instantiate()
 	root.add_child(game)
 	await process_frame
+	game.sound.set_volume(0, false)
 	game.run.save_path = "user://test-card-chess-ui.json"
 	game._start_new()
+	game.run.unlock_spell("ice_spell")
 	await process_frame
 	await click(button_named(game.ui, "卡组"))
 	var editor = game.modal_layer.find_child("CardDeckEditor", true, false)
-	expect(editor != null and editor.grid.get_child_count() >= 10, "Map opens the full illustrated collection")
+	expect(editor != null and editor.grid.get_child_count() >= 9, "Map opens the full illustrated collection")
 	if editor == null:
 		game.queue_free()
 		return
@@ -546,24 +545,24 @@ func check_ui() -> void:
 	editor.attribute.select(water_index)
 	editor.attribute.item_selected.emit(water_index)
 	expect(editor.grid.get_child_count() > 0 and editor.grid.get_children().all(
-		func(button): return button.name in ["Collection_rain", "Collection_mend_spell"]),
+		func(button): return button.name in ["Collection_mend_spell"]),
 		"The water icon filters the collection to water cards")
 	editor.attribute.select(0)
 	editor.attribute.item_selected.emit(0)
-	editor.search.text = "唤雨"
+	editor.search.text = "冰针"
 	editor.search.text_changed.emit(editor.search.text)
 	await process_frame
-	await click(editor.find_child("Collection_rain", true, false))
+	await click(editor.find_child("Collection_ice_spell", true, false))
 	await click(editor.find_child("AddDeckCard", true, false))
 	await click(editor.find_child("AddDeckCard", true, false))
 	var capped := editor.find_child("AddDeckCard", true, false) as Button
-	expect(editor.total.text == "14 张" and capped != null and capped.disabled,
-		"The editor adds cards beyond twelve and still enforces the per-card limit")
-	await click(editor.find_child("Remove_rain", true, false))
+	expect(editor.total.text == "13 张" and capped != null and capped.disabled,
+		"The editor adds cards and still enforces the per-card limit")
+	await click(editor.find_child("Remove_ice_spell", true, false))
 	await click(editor.find_child("ConfirmCardDeck", true, false))
 	var saved := Run.new()
-	expect(saved.load_game(game.run.save_path).ok and saved.card_deck().size() == 13 and saved.card_deck().count("rain") == 1,
-		"The thirteen-card deck persists in the expedition save")
+	expect(saved.load_game(game.run.save_path).ok and saved.card_deck().size() == 12 and saved.card_deck().count("ice_spell") == 1,
+		"The edited deck persists in the expedition save")
 	var cell: String = game.run.actor("hero").position
 	game.run.data.tiles[cell].enemies = ["boar"]
 	game._open_current_encounter(false)
@@ -575,8 +574,8 @@ func check_ui() -> void:
 	if view != null:
 		expect(root.get_visible_rect().encloses(view.get_global_rect()) and view.cells.size() == 12 and view.hand_buttons.size() == 3,
 			"Board fits the viewport with twelve squares and a three-card opening hand")
-		expect(game.combat.piles[Chess.PLAYER].size() == 10 and game.combat.piles[Chess.ENEMY].size() == 9,
-			"The battle uses all thirteen player cards and the usual twelve enemy cards")
+		expect(game.combat.piles[Chess.PLAYER].size() == 9 and game.combat.piles[Chess.ENEMY].size() == 9,
+			"The battle uses the saved twelve-card deck and the usual twelve enemy cards")
 		expect(view.enemy_cards.text == "手牌 3\n牌库 9" and view.enemy_mana_ratio.text == "1/1"
 			and view.enemy_deck_back.visible, "The rail shows the opponent's opening resources without showing card faces")
 		var grid := view.find_child("ChessGrid", true, false) as GridContainer
@@ -639,8 +638,8 @@ func check_ui() -> void:
 		expect(game.combat.round_number == 2 and view.hand_buttons.size() == 4, "Enemy responds once and the next card animates into the hand")
 		await create_timer(0.5).timeout
 		await click(view.hand_buttons[-1])
-		expect(view.selected_card == 3 and (not view._legal().is_empty() or view.cast_button.visible),
-			"Clicking the drawn card raises it and offers legal targets or a spell confirmation")
+		expect(view.selected_card == 3,
+			"Clicking the drawn card raises it")
 		expect(is_zero_approx(view.hand_buttons[-1].rotation)
 			and view.hand_buttons[-1].position.y < view.hand_buttons[0].position.y,
 			"The selected hand card straightens and rises above the fan")
@@ -654,7 +653,7 @@ func check_ui() -> void:
 
 func check_hand_layout() -> void:
 	var battle = fixture()
-	var large_hand: Array = Cards.DEFAULT_DECK + Cards.DEFAULT_DECK + ["rain", "sun"]
+	var large_hand: Array = Cards.DEFAULT_DECK + Cards.DEFAULT_DECK + ["ember_spell", "mend_spell"]
 	battle.hands[Chess.PLAYER] = large_hand
 	battle.draw_count = 0
 	var view := ChessView.new()
@@ -724,7 +723,7 @@ func check_mana_display() -> void:
 func check_deck_draw() -> void:
 	var battle = fixture()
 	battle.hands[Chess.PLAYER] = ["brace", "ward", "ember_spell"]
-	battle.piles[Chess.PLAYER] = ["rain"]
+	battle.piles[Chess.PLAYER] = ["mend_spell"]
 	battle.draw_count = 0
 	var view := ChessView.new()
 	root.add_child(view)
@@ -810,12 +809,15 @@ func check_board_badges() -> void:
 	view.render()
 	expect(right.get_node("Health").get_child(0).text == str(battle.board[11].hp)
 		and right.get_node("Armor").get_child(0).text == "0", "Re-rendering shows the latest health and armor")
-	battle.hands[Chess.PLAYER] = ["rain"]
+	battle.hands[Chess.PLAYER] = ["brace"]
 	view.render()
 	await click(view.hand_buttons[0])
-	expect(view.cast_button.visible and view.cast_button.tooltip_text == "打出唤雨", "Selecting a weather card offers confirmation in the right column")
-	await click(view.cast_button)
-	expect(battle.weather == "rain" and not view.cast_button.visible, "Confirming plays the weather card")
+	expect(view._legal().has(10) and view.find_child("CastChessSpell", true, false) == null,
+		"Defense cards target a piece directly")
+	var armor_before: int = battle.board[10].armor
+	await click(left)
+	expect(battle.board[10].armor == armor_before + 3 and battle.hands[Chess.PLAYER].is_empty(),
+		"Clicking the target applies the defense card")
 	expect(battle.can_move_piece() and not view.end_turn_button.disabled, "Playing a card leaves the board action and End Turn available")
 	await click(view.end_turn_button)
 	expect(battle.turn == Chess.ENEMY and view.end_turn_button.disabled, "The player can end even with legal moves")
@@ -860,6 +862,7 @@ func check_hover_details() -> void:
 	var game := Main.instantiate()
 	root.add_child(game)
 	await process_frame
+	game.sound.set_volume(0, false)
 	game.run.save_path = "user://test-hover-details.json"
 	game._start_new()
 	await process_frame
@@ -884,12 +887,12 @@ func check_hover_details() -> void:
 		"The traveler detail shows only the ice icon")
 	expect("移动 · " in text and "攻击 · " in text, "Commander popup lists movement and attack")
 	expect(root.get_visible_rect().encloses(view.hover_detail.get_global_rect()), "The popup stays inside the viewport")
-	game.combat.revealed_enemy = ["rain"]
+	game.combat.revealed_enemy = ["pike"]
 	view._hover_tile(1)
 	await process_frame
 	await process_frame
 	text = _detail_text(view)
-	expect("敌方主战者" in text and "已知敌方手牌" in text and "唤雨" in text,
+	expect("敌方主战者" in text and "已知敌方手牌" in text and "护沿短戟" in text,
 		"Enemy commander popup shows its side and known enemy cards")
 	view._unhover_tile(1)
 	view._hover_tile(7)
