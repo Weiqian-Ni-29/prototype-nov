@@ -46,15 +46,44 @@ func execute() -> void:
 	chess.cells[10].pressed.emit()
 	chess.cells[7].pressed.emit()
 	expect(b.turn == Chess.PLAYER and not b.can_move_piece(), "Moving leaves the player in control with their board action spent")
+	b.hands[Chess.ENEMY] = ["brace", "brace"]
+	b.mana[Chess.ENEMY] = 2
+	b.mana_capacity[Chess.ENEMY] = 2
+	b.commanders[Chess.ENEMY].move = 0
+	b.commanders[Chess.ENEMY].diagonal = false
+	b.commanders[Chess.ENEMY].range = 0
+	b.mana_capacity[Chess.PLAYER] = 10
+	b.mana[Chess.PLAYER] = 10
 	chess.end_turn_button.pressed.emit()
-	await create_timer(0.65).timeout
-	expect(b.enemy_turn_started and b.turn == Chess.ENEMY and not b.last_enemy_action.is_empty()
-		and chess.cells[7].disabled, "The enemy acts while player input is locked")
+	var reveal_deadline := Time.get_ticks_msec() + 2000
+	while chess.reveal_card == null and Time.get_ticks_msec() < reveal_deadline:
+		await process_frame
+	var first_reveal = chess.reveal_card
+	expect(first_reveal != null and b.turn == Chess.ENEMY and chess.cells[7].disabled
+		and b.played_cards.size() == 1 and chess.card_history.shown_count == 0,
+		"The enemy reveals its first card before landing it, with player input locked")
+	if first_reveal != null:
+		var center: Vector2 = first_reveal.position
+		await RenderingServer.frame_post_draw
+		root.get_texture().get_image().save_png("user://chess-enemy-card-reveal.png")
+		await create_timer(1.12).timeout
+		game.battle_timer = 0.0
+		game._process(0.0)
+		expect(chess.reveal_card == first_reveal and first_reveal.position.is_equal_approx(center)
+			and b.played_cards.size() == 1, "The next enemy play waits while the first card holds in the center")
+		reveal_deadline = Time.get_ticks_msec() + 950
+		while chess.card_history.shown_count < 1 and Time.get_ticks_msec() < reveal_deadline:
+			await process_frame
+		expect(chess.card_history.shown_count == 1 and chess.card_history.home.has_node("CardFace")
+			and chess.card_history.recent.text.contains("护甲 +3"), "The first card flies to its recorded result")
+	reveal_deadline = Time.get_ticks_msec() + 4000
+	while b.turn != Chess.PLAYER and Time.get_ticks_msec() < reveal_deadline:
+		await process_frame
+	expect(b.round_number == 2 and b.turn == Chess.PLAYER and b.hands[Chess.PLAYER].size() == 4
+		and chess.card_history.shown_count == 2 and chess.reveal_card == null,
+		"Both identical enemy plays make it into the record before the next turn")
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("user://chess-enemy-turn.png")
-	await create_timer(0.85).timeout
-	expect(b.round_number == 2 and b.turn == Chess.PLAYER and b.hands[Chess.PLAYER].size() == 4,
-		"Native move lets the opponent respond and draws the next card")
 	await create_timer(0.4).timeout
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("user://chess-round-two.png")

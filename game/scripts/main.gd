@@ -1340,7 +1340,7 @@ func _victory_dialog() -> void:
 func _process(delta: float) -> void:
 	if combat == null or modal_layer.get_child_count() > 0:
 		return
-	if is_instance_valid(chess_view) and chess_view.is_attack_playing():
+	if is_instance_valid(chess_view) and chess_view.is_action_playing():
 		return
 	battle_timer -= delta
 	if battle_timer > 0:
@@ -1352,7 +1352,7 @@ func _process(delta: float) -> void:
 	elif combat.turn == Chess.ENEMY:
 		combat.enemy_turn(true)
 		chess_view.present_action()
-		battle_timer = 0.15 if chess_view.is_attack_playing() else 0.45
+		battle_timer = 0.15 if chess_view.is_action_playing() else 0.45
 
 func _chapter_pages() -> Array:
 	return [

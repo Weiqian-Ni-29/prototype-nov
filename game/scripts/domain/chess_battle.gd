@@ -40,6 +40,7 @@ var turns_started: Array[int] = [0, 0]
 var board_action_used: Array[bool] = [false, false]
 var enemy_turn_started := false
 var last_enemy_action := {}
+var played_cards: Array[Dictionary] = []
 var last_attack := {}
 var difficulty := 0
 var exploration := 0
@@ -392,9 +393,53 @@ func play(index: int, target: int, side: int = PLAYER) -> bool:
 		return false
 	last_attack = {}
 	var card := definition(hands[side][index])
+	var before := _card_board_snapshot()
+	var slot := Cards.equipment_slot(card)
+	var replaced: String = equipment_at(board[target], slot).get("name", "") if not slot.is_empty() else ""
 	_play_card(side, index, target)
 	_complete_action(side, "damage_spell" if card.has("damage") else card.kind)
+	var after := _card_board_snapshot()
+	played_cards.append({"side": side, "round": round_number, "card": card.duplicate(true),
+		"target": target, "slot": slot, "effects": _card_effects(target, before, after, slot, replaced)})
 	return true
+
+func _card_board_snapshot() -> Array[Dictionary]:
+	var snapshot: Array[Dictionary] = []
+	for unit in board:
+		snapshot.append({} if unit.is_empty() else {"name": unit.name, "hp": unit.hp, "hp_max": unit.hp_max,
+			"armor": unit.armor, "attack": attack_power(unit), "slow": int(unit.get("slow_until", 0))})
+	return snapshot
+
+func _card_effects(target: int, before: Array[Dictionary], after: Array[Dictionary], slot: String, replaced: String) -> Array[Dictionary]:
+	var results: Array[Dictionary] = []
+	for square in board.size():
+		var old := before[square]
+		var current := after[square]
+		if square != target and old == current:
+			continue
+		var name: String = current.get("name", old.get("name", square_name(square)))
+		var changes: Array[String] = []
+		if old.is_empty():
+			changes.append("部署到%s" % square_name(square))
+		elif current.is_empty():
+			changes.append("倒下")
+		else:
+			for stat in [["hp", "生命"], ["armor", "护甲"], ["attack", "攻击"], ["hp_max", "生命上限"]]:
+				var delta := int(current[stat[0]]) - int(old[stat[0]])
+				if delta != 0:
+					changes.append("%s %+d" % [stat[1], delta])
+			if int(current.slow) > int(old.slow):
+				changes.append("减速")
+		if square == target and not replaced.is_empty():
+			changes.append("「%s」回到手牌" % replaced)
+		if changes.is_empty():
+			changes.append("已装备" if not slot.is_empty() else "选定目标")
+		var result := {"square": square, "name": name, "summary": " · ".join(changes)}
+		if square == target:
+			results.push_front(result)
+		else:
+			results.append(result)
+	return results
 
 func end_turn() -> bool:
 	if not can_act():

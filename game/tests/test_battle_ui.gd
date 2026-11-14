@@ -720,6 +720,34 @@ func check_mana_display() -> void:
 	view.queue_free()
 	await process_frame
 
+func check_card_history() -> void:
+	var battle = fixture()
+	battle.draw_count = 0
+	battle.hands[Chess.PLAYER] = ["ward"]
+	battle.mana[Chess.PLAYER] = 2
+	battle.mana_capacity[Chess.PLAYER] = 10
+	battle.board[7] = battle._piece(Cards.definition("eve"), Chess.PLAYER)
+	var view := ChessView.new()
+	root.add_child(view)
+	view.setup(battle, null)
+	await click(view.hand_buttons[0])
+	await click(view.cells[10])
+	var first: Dictionary = battle.played_cards[0]
+	expect(first.side == Chess.PLAYER and first.effects.size() == 2
+		and first.effects[0].square == 10 and first.effects[1].square == 7
+		and first.effects.all(func(effect): return effect.summary == "护甲 +2"),
+		"A real player area card records both affected pieces and their actual armor gain")
+	expect(view.card_history.shown_count == 1 and "我方 · 列阵" in view.card_history.recent.text
+		and view.reveal_card == null, "Player cards join the history without a central reveal")
+	expect(view.card_history.get_global_rect().end.x <= view.hand.get_global_rect().position.x
+		and view.mana_crystals.size() == 10, "The history occupies a separate column from the hand and mana rail")
+	await click(view.card_history.toggle)
+	expect(view.card_history.popover.visible and view.card_history.rows.get_child_count() == 1,
+		"The full play record can be opened from the latest-card panel")
+	await click(view.card_history.toggle)
+	view.queue_free()
+	await process_frame
+
 func check_deck_draw() -> void:
 	var battle = fixture()
 	battle.hands[Chess.PLAYER] = ["brace", "ward", "ember_spell"]
@@ -979,6 +1007,7 @@ func execute() -> void:
 	await check_ui()
 	await check_hand_layout()
 	await check_mana_display()
+	await check_card_history()
 	await check_deck_draw()
 	await check_board_badges()
 	await check_hover_details()

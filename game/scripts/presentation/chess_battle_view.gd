@@ -7,6 +7,7 @@ signal menu_requested
 
 const Battle = preload("res://scripts/domain/chess_battle.gd")
 const AttackEffect = preload("res://scripts/presentation/chess_attack_effect.gd")
+const CardHistory = preload("res://scripts/presentation/chess_card_history.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const UI = preload("res://scripts/presentation/card_ui.gd")
@@ -34,6 +35,10 @@ const DRAW_REVEAL = 0.22
 const DRAW_LAND = 0.34
 const DRAW_DURATION = 0.45
 const DRAW_STAGGER = 0.08
+const ENEMY_CARD_HOLD = 1.25
+const ENEMY_CARD_FLIGHT = 0.32
+const CARD_TINTS = {"partner": Color("294639"), "weapon": Color("494033"),
+	"equipment": Color("494033"), "defense": Color("344b50"), "spell": Color("3a4659")}
 
 var battle: RefCounted
 var cells: Array[Button] = []
@@ -74,6 +79,9 @@ var detail_kind := ""
 var detail_index := -1
 var detail_slot := ""
 var attack_effect: AttackEffect
+var card_history: CardHistory
+var reveal_card: Panel
+var pending_reveal := false
 
 func setup(model: RefCounted, scene: Texture2D) -> void:
 	name = "ChessBattle"
@@ -136,6 +144,9 @@ func setup(model: RefCounted, scene: Texture2D) -> void:
 	UI.label(hand_header, "点牌抬起 · 选择高亮目标", 14, UI.MUTED)
 	var hand_table := HBoxContainer.new()
 	footer.add_child(hand_table)
+	card_history = CardHistory.new()
+	hand_table.add_child(card_history)
+	card_history.setup(self, _build_readonly_card)
 	hand = Control.new()
 	hand.name = "ChessHand"
 	hand.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -225,22 +236,29 @@ func render() -> void:
 			_hide_detail()
 		else:
 			_show_unit_detail(detail_index, detail_slot)
+	var history_count: int = battle.played_cards.size() - int(pending_reveal)
+	card_history.show_through(battle.played_cards, history_count)
 	_show_turn_banner()
 
 func is_attack_playing() -> bool:
 	return attack_effect != null
 
+func is_action_playing() -> bool:
+	return is_attack_playing() or pending_reveal
+
 func present_action() -> void:
-	if is_attack_playing():
+	if is_action_playing():
 		return
 	var event: Dictionary = battle.take_attack()
 	if event.is_empty():
-		render()
+		var count: int = battle.played_cards.size()
+		if count > card_history.shown_count and battle.played_cards[-1].side == Battle.ENEMY:
+			_present_enemy_card(battle.played_cards[-1])
+		else:
+			render()
 		return
 	_hide_detail()
-	if turn_banner_tween != null:
-		turn_banner_tween.kill()
-	turn_banner.hide()
+	_hide_turn_banner()
 	menu.disabled = true
 	retreat.disabled = true
 	end_turn_button.disabled = true
@@ -257,6 +275,46 @@ func present_action() -> void:
 	attack_effect.impact.connect(attack_impact.emit)
 	attack_effect.finished.connect(_finish_attack)
 	attack_effect.play(event, cells[event.from], cells[event.target], _build_piece_face)
+
+func _hide_turn_banner() -> void:
+	if turn_banner_tween != null:
+		turn_banner_tween.kill()
+	turn_banner.hide()
+
+func _present_enemy_card(play: Dictionary) -> void:
+	pending_reveal = true
+	card_history.close_history()
+	_hide_detail()
+	render()
+	_hide_turn_banner()
+	menu.disabled = true
+	card_history.toggle.disabled = true
+	hint.text = "敌方打出「%s」 · %s" % [play.card.name, CardHistory.summary(play, 1).replace("\n", " · ")]
+	reveal_card = Panel.new()
+	reveal_card.name = "EnemyCardReveal"
+	reveal_card.z_index = 50
+	reveal_card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(reveal_card)
+	_build_readonly_card(reveal_card, play.card, UI.ORANGE, "敌方出牌")
+	_position_reveal(0.0)
+	var animation := create_tween()
+	animation.tween_interval(ENEMY_CARD_HOLD)
+	animation.tween_method(_position_reveal, 0.0, 1.0, ENEMY_CARD_FLIGHT).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	animation.tween_callback(_finish_card_reveal)
+
+func _position_reveal(progress: float) -> void:
+	var large_scale := clampf(size.y / 435.0, 1.3, 2.0)
+	var start := (size - reveal_card.size * large_scale) * 0.5
+	var landing := get_global_transform().affine_inverse() * card_history.home.global_position
+	var small_scale := card_history.home.size.x / reveal_card.size.x
+	reveal_card.position = start.lerp(landing, progress)
+	reveal_card.scale = Vector2.ONE * lerpf(large_scale, small_scale, progress)
+
+func _finish_card_reveal() -> void:
+	reveal_card.queue_free()
+	reveal_card = null
+	pending_reveal = false
+	render()
 
 func _finish_attack() -> void:
 	attack_effect.hide()
@@ -283,7 +341,7 @@ func _selected_equipment_slot() -> String:
 	return Cards.equipment_slot(battle.definition(cards[selected_card]))
 
 func _select_tile(square: int) -> void:
-	if is_attack_playing() or not battle.can_act():
+	if is_action_playing() or not battle.can_act():
 		return
 	if _legal().has(square):
 		var accepted: bool = battle.play(selected_card, square) if selected_card >= 0 else battle.move(selected_square, square)
@@ -296,7 +354,7 @@ func _select_tile(square: int) -> void:
 		render()
 
 func _select_card(index: int) -> void:
-	if is_attack_playing() or not battle.can_act() or _card_is_drawing(index):
+	if is_action_playing() or not battle.can_act() or _card_is_drawing(index):
 		return
 	var card: Dictionary = battle.definition(hand_ids[index])
 	if card.cost > battle.mana[Battle.PLAYER]:
@@ -335,6 +393,7 @@ func _render_tile(tile: Button, square: int, action: String, hide_face: bool = f
 	var tint := (Color("5b493b") if light else Color("483a31")) if row < 2 else (Color("375648") if light else Color("29453b"))
 	var border := Color("a48a69") if row < 2 else Color("7f9b86")
 	var enemy_action: Dictionary = battle.last_enemy_action
+	var showcased: bool = pending_reveal and battle.played_cards[-1].effects.any(func(result): return result.square == square)
 	if not empty and not hide_face:
 		tint = tint.lightened(0.05)
 		border = UI.GOLD
@@ -346,7 +405,7 @@ func _render_tile(tile: Button, square: int, action: String, hide_face: bool = f
 	elif not action.is_empty():
 		tint = Color("426e56")
 		border = UI.GREEN
-	elif not hide_face and square == enemy_action.get("target", -1):
+	elif showcased or not hide_face and square == enemy_action.get("target", -1):
 		tint = tint.lightened(0.14)
 		border = UI.ORANGE
 	elif not hide_face and square == enemy_action.get("from", -1):
@@ -362,6 +421,8 @@ func _render_tile(tile: Button, square: int, action: String, hide_face: bool = f
 	style.border_width_right = GRID_LINE if right_edge else 0
 	style.border_width_top = GRID_LINE if top_edge else 0
 	style.border_width_bottom = GRID_LINE + 1 if row == 1 else GRID_LINE if bottom_edge else 0
+	if showcased:
+		style.set_border_width_all(GRID_LINE + 1)
 	for state in ["normal", "pressed", "disabled"]:
 		tile.add_theme_stylebox_override(state, style)
 	var hover_style := style.duplicate() as StyleBoxFlat
@@ -428,6 +489,8 @@ func _build_piece_face(tile: Control, unit: Dictionary, action: String) -> void:
 	rack.add_theme_constant_override("separation", 5)
 	content.add_child(rack)
 	var targeted_slot := _selected_equipment_slot() if action == "equip" else ""
+	if pending_reveal and tile == cells[battle.played_cards[-1].target]:
+		targeted_slot = battle.played_cards[-1].slot
 	for slot in Gear.SLOTS:
 		_build_equipment_slot(rack, slot, battle.equipment_at(unit, slot), targeted_slot == slot)
 	var size_identity := func():
@@ -563,7 +626,7 @@ func _build_battle_controls(parent: HBoxContainer) -> void:
 	mana_ratio.name = "ManaRatio"
 	mana_ratio.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	end_turn_button = UI.button(rail, "结束回合", func():
-		if not is_attack_playing() and battle.end_turn():
+		if not is_action_playing() and battle.end_turn():
 			_notify_action())
 	end_turn_button.name = "ChessEndTurn"
 	end_turn_button.custom_minimum_size.y = 42
@@ -666,35 +729,7 @@ func _render_hand() -> void:
 			button.accessibility_name = "%s，%d 费" % [entry.name, entry.cost]
 			button.mouse_entered.connect(_hover_card.bind(i))
 			button.mouse_exited.connect(_unhover_card.bind(i))
-			var face := Control.new()
-			UI.button_body(button, face, 0)
-			var content := VBoxContainer.new()
-			content.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			face.add_child(content)
-			content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-			content.offset_left = 8
-			content.offset_right = -8
-			content.offset_top = 12
-			content.offset_bottom = -8
-			content.add_theme_constant_override("separation", 2)
-			UI.art(content, entry, Vector2.ZERO).size_flags_vertical = Control.SIZE_EXPAND_FILL
-			var short_name: String = entry.name.get_slice(" · ", 0) if entry.kind == "equipment" else entry.name
-			var title := UI.label(content, short_name, 16)
-			title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-			var kind := UI.label(content, ("临时 · " if entry.get("temporary", false) else "") + Cards.KINDS[entry.kind], 13, UI.MUTED)
-			kind.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			var cost_badge := _crystal()
-			cost_badge.name = "ManaCost"
-			cost_badge.size = Vector2(25, 32)
-			face.add_child(cost_badge)
-			cost_badge.position = Vector2(4, 4)
-			var cost := UI.label(cost_badge, str(entry.cost), 19, Color("fff8e8"))
-			cost.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-			cost.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			cost.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-			cost.add_theme_color_override("font_outline_color", Color("172433"))
-			cost.add_theme_constant_override("outline_size", 4)
+			_build_card_face(button, entry)
 			hand_buttons.append(button)
 		pending_animation = mini(int(battle.draw_count), hand_ids.size())
 		draws_before_departure = pending_animation
@@ -703,7 +738,7 @@ func _render_hand() -> void:
 	for i in hand_buttons.size():
 		var button := hand_buttons[i]
 		var card: Dictionary = battle.definition(hand_ids[i])
-		var tint: Color = {"partner": Color("294639"), "weapon": Color("494033"), "equipment": Color("494033"), "defense": Color("344b50"), "spell": Color("3a4659")}[card.kind]
+		var tint: Color = CARD_TINTS[card.kind]
 		var affordable: bool = card.cost <= battle.mana[Battle.PLAYER]
 		var face := button.get_child(0) as Control
 		var cost_badge := face.get_node("ManaCost") as TextureRect
@@ -722,6 +757,47 @@ func _render_hand() -> void:
 			button.hide()
 		elif not in_flight:
 			_pose_card(i)
+
+func _build_card_face(parent: Control, entry: Dictionary, header: String = "") -> void:
+	var face := Control.new()
+	UI.button_body(parent, face, 0)
+	var content := VBoxContainer.new()
+	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	face.add_child(content)
+	content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	content.offset_left = 8
+	content.offset_right = -8
+	content.offset_top = 12 if header.is_empty() else 23
+	content.offset_bottom = -8
+	content.add_theme_constant_override("separation", 2)
+	if not header.is_empty():
+		var heading := UI.label(content, header, 11, UI.ORANGE)
+		heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	UI.art(content, entry, Vector2.ZERO).size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var short_name: String = entry.name.get_slice(" · ", 0)
+	var title := UI.label(content, short_name, 16)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	var kind := UI.label(content, ("临时 · " if entry.get("temporary", false) else "") + Cards.KINDS[entry.kind], 13, UI.MUTED)
+	kind.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var cost_badge := _crystal()
+	cost_badge.name = "ManaCost"
+	cost_badge.size = Vector2(25, 32)
+	face.add_child(cost_badge)
+	cost_badge.position = Vector2(4, 4)
+	var cost := UI.label(cost_badge, str(entry.cost), 19, Color("fff8e8"))
+	cost.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	cost.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cost.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	cost.add_theme_color_override("font_outline_color", Color("172433"))
+	cost.add_theme_constant_override("outline_size", 4)
+
+func _build_readonly_card(frame: Panel, entry: Dictionary, border: Color, header: String = "") -> void:
+	frame.size = Vector2(HAND_CARD_WIDTH, HAND_CARD_HEIGHT)
+	frame.add_theme_stylebox_override("panel", UI.box(CARD_TINTS[entry.kind], border, 0, 8))
+	_build_card_face(frame, entry, header)
+	if header.is_empty():
+		frame.scale = Vector2.ONE * (frame.get_parent().size.x / HAND_CARD_WIDTH)
 
 func _queue_fan() -> void:
 	hand_generation += 1
@@ -832,7 +908,7 @@ func _fan_curve(index: int, count: float) -> float:
 	return (index - center) / maxf(1.0, center)
 
 func _hover_card(index: int) -> void:
-	if is_attack_playing() or _card_is_drawing(index):
+	if is_action_playing() or _card_is_drawing(index):
 		return
 	if battle.can_act():
 		hovered = index
@@ -854,7 +930,7 @@ func _tile_mouse_input(event: InputEvent, square: int) -> void:
 		_inspect_tile_at(square, cells[square].get_global_transform() * event.position)
 
 func _inspect_tile_at(square: int, point: Vector2) -> void:
-	if is_attack_playing() or battle.board[square].is_empty():
+	if is_action_playing() or battle.board[square].is_empty():
 		return
 	var slot := ""
 	var rack := cells[square].get_node_or_null("PieceFace/EquipmentSlots")
