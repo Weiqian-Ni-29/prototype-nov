@@ -45,6 +45,7 @@ var battle: RefCounted
 var cells: Array[Button] = []
 var selected_square := -1
 var selected_card := -1
+var spell_source := -1
 var turn_banner: PanelContainer
 var turn_banner_text: Label
 var turn_banner_tween: Tween
@@ -212,8 +213,8 @@ func render(hold_square: int = -1) -> void:
 	end_turn_button.disabled = not usable
 	end_turn_button.text = "敌方回合" if battle.turn == Battle.ENEMY else "结束回合"
 	var legal := _legal()
-	var selected_equipment := _selected_card_definition()
-	var equipment_slot := Cards.equipment_slot(selected_equipment)
+	var picked := _selected_card_definition()
+	var equipment_slot := Cards.equipment_slot(picked)
 	for square in cells.size():
 		if square == hold_square:
 			cells[square].disabled = true
@@ -223,9 +224,13 @@ func render(hold_square: int = -1) -> void:
 		hint.text = "绿格可移动或部署 · 橙格可攻击"
 	elif selected_card >= 0:
 		if equipment_slot == "weapon":
-			var required := Cards.attack_type(selected_equipment)
+			var required := Cards.attack_type(picked)
 			hint.text = "当前没有可装备的%s棋子。" % required if legal.is_empty() \
 				else "仅%s棋子可装备。替换下来的武器牌会回到手牌。" % required
+		elif picked.has("relocate"):
+			hint.text = "选择高亮的友方棋子。" if spell_source < 0 else "选择高亮空格施法，点击原棋子可重选。"
+			if legal.is_empty():
+				hint.text = "当前没有可移动的友方棋子。"
 		else:
 			hint.text = "选择高亮棋子装备，替换下来的装备牌会回到手牌。" if not equipment_slot.is_empty() else "选择高亮目标出牌。"
 	elif not usable:
@@ -355,8 +360,22 @@ func _legal() -> Dictionary:
 	var result := {}
 	if selected_card >= 0:
 		var card: Dictionary = battle.definition(battle.hands[Battle.PLAYER][selected_card])
+		if card.has("relocate"):
+			for square in battle.card_targets(Battle.PLAYER, selected_card):
+				result[square] = "spell_source"
+			if spell_source >= 0:
+				for destination in battle.card_targets(Battle.PLAYER, selected_card, spell_source):
+					result[destination] = "move"
+			return result
+		var target_kind := "support"
+		if card.kind == "partner":
+			target_kind = "deploy"
+		elif card.has("damage"):
+			target_kind = "spell_hit"
+		elif not Cards.equipment_slot(card).is_empty():
+			target_kind = "equip"
 		for square in battle.card_targets(Battle.PLAYER, selected_card):
-			result[square] = "deploy" if card.kind == "partner" else "spell_hit" if card.has("damage") else "equip"
+			result[square] = target_kind
 	return result
 
 func _selected_card_definition() -> Dictionary:
@@ -371,8 +390,14 @@ func _selected_equipment_slot() -> String:
 func _select_tile(square: int) -> void:
 	if is_action_playing() or not battle.can_act():
 		return
-	if _legal().has(square):
-		var accepted: bool = battle.play(selected_card, square) if selected_card >= 0 else battle.move(selected_square, square)
+	var legal := _legal()
+	if legal.get(square) == "spell_source":
+		spell_source = -1 if spell_source == square else square
+		render()
+		return
+	if legal.has(square):
+		var accepted: bool = battle.play(selected_card, square, Battle.PLAYER, spell_source) \
+			if selected_card >= 0 else battle.move(selected_square, square)
 		if accepted:
 			_notify_action()
 		return
@@ -382,6 +407,7 @@ func _select_tile(square: int) -> void:
 		hint.text = "「%s」仅%s棋子可装备。" % [picked.name.get_slice(" · ", 0), Cards.attack_type(picked)]
 		return
 	if not unit.is_empty():
+		spell_source = -1
 		selected_card = -1
 		selected_square = square if battle.can_move_piece() and selected_square != square and battle.board[square].side == Battle.PLAYER else -1
 		render()
@@ -394,11 +420,13 @@ func _select_card(index: int) -> void:
 		hint.text = "法力不足 · 需要 %d 点，当前 %d 点。" % [card.cost, battle.mana[Battle.PLAYER]]
 		return
 	selected_square = -1
+	spell_source = -1
 	selected_card = -1 if selected_card == index else index
 	render()
 
 func _notify_action() -> void:
 	selected_square = -1
+	spell_source = -1
 	selected_card = -1
 	hovered = -1
 	present_action()
@@ -430,7 +458,7 @@ func _render_tile(tile: Button, square: int, action: String, hide_face: bool = f
 	if not empty and not hide_face:
 		tint = tint.lightened(0.05)
 		border = UI.GOLD
-	if square == selected_square:
+	if square == selected_square or square == spell_source:
 		tint = Color("4a6656")
 	elif action in ["attack", "spell_hit"]:
 		tint = Color("76513c")
@@ -1189,6 +1217,8 @@ func _card_stats(card: Dictionary) -> String:
 				" · 施加减速" if card.get("slow", false) else ""]
 		if card.has("heal"):
 			return "治疗 %d 点生命" % int(card.heal)
+		if card.has("relocate"):
+			return "立即直移最多 2 格" if card.relocate == "straight" else "立即斜移 1 格"
 	if card.kind == "defense":
 		var guard: Array[String] = ["护甲 + %d" % int(card.get("armor", 0))]
 		if card.has("heal"):

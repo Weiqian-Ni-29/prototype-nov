@@ -371,6 +371,57 @@ func check_spell_feedback() -> void:
 	view.queue_free()
 	await process_frame
 
+func check_mobility_spells() -> void:
+	var battle = fixture()
+	var ally: Dictionary = battle._piece(Cards.definition("lorne"), Chess.PLAYER)
+	battle.board[9] = ally
+	battle.hands[Chess.PLAYER] = ["tailwind_spell", "sidestep_spell"]
+	battle.mana[Chess.PLAYER] = 2
+	battle.draw_count = 0
+	expect(not battle.play(0, 9) and not battle.play(0, 4, Chess.PLAYER, 1) and battle.mana[Chess.PLAYER] == 2,
+		"Missing and enemy spell sources are rejected without spending mana")
+	var view := ChessView.new()
+	root.add_child(view)
+	view.setup(battle, null)
+	await process_frame
+	await process_frame
+	await click(view.cells[9])
+	await click(view.cells[6])
+	expect(battle.board[6] == ally and not battle.can_move_piece(), "The archer spends the ordinary board action first")
+	await click(view.hand_buttons[0])
+	expect(view._legal().get(6) == "spell_source" and not view._legal().has(1),
+		"The movement spell highlights friendly pieces and excludes enemy targets")
+	await click(view.cells[6])
+	expect(battle.mana[Chess.PLAYER] == 2 and battle.board[6] == ally and view._legal().get(0) == "move",
+		"Selecting the spell source previews the destination before committing")
+	battle.board[3] = battle._piece(Cards.definition("eve"), Chess.PLAYER)
+	expect(not view._legal().has(0) and not battle.play(0, 0, Chess.PLAYER, 6), "Tailwind cannot cross a blocked square")
+	battle.board[3] = {}
+	ally.slow_until = battle.round_number
+	expect(not view._legal().has(0) and view._legal().has(3), "Slow limits Tailwind to one square")
+	ally.erase("slow_until")
+	await click(view.cells[0])
+	expect(battle.board[0] == ally and battle.board[6].is_empty() and battle.mana[Chess.PLAYER] == 1
+		and not battle.can_move_piece() and "移动到左路后排" in view.card_history.recent.text,
+		"Tailwind immediately moves the archer again and records the destination")
+	expect(battle.played_cards[-1].effects.size() == 1, "Departure from the source square is not logged as a defeat")
+	await click(view.hand_buttons[0])
+	expect(view._legal().get(10) == "spell_source", "Sidestep can also move an ally that already walks diagonally")
+	await click(view.cells[0])
+	battle.board[4] = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
+	expect(not view._legal().has(4) and not battle.play(0, 4, Chess.PLAYER, 0), "Sidestep cannot land on an enemy")
+	battle.board[4] = {}
+	await click(view.cells[4])
+	expect(battle.board[4] == ally and battle.board[0].is_empty() and battle.mana[Chess.PLAYER] == 0
+		and battle.hands[Chess.PLAYER].is_empty() and not battle.can_move_piece(),
+		"The same unit can move a third time by spending its second spell and mana")
+	battle = fixture()
+	battle.hands[Chess.PLAYER] = ["tailwind_spell"]
+	expect(battle.play(0, 4, Chess.PLAYER, 10) and battle.can_move_piece() and battle.move(4, 7),
+		"Using a movement spell first preserves the ordinary board action")
+	view.queue_free()
+	await process_frame
+
 func check_attack_feedback() -> void:
 	var battle = fixture("archer")
 	var enemy: Dictionary = battle.board[1]
@@ -1123,6 +1174,7 @@ func execute() -> void:
 	check_battle_income()
 	await check_attack_feedback()
 	await check_spell_feedback()
+	await check_mobility_spells()
 	await check_ui()
 	await check_hand_layout()
 	await check_mana_display()

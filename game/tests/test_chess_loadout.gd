@@ -83,10 +83,34 @@ func execute() -> void:
 	expect(loaded.load_game(run.save_path).ok and "ice_spell" in Cards.collection(loaded.data.actors, loaded.data),
 		"A relic spell unlock survives reloading")
 	check_progression()
+	check_mobility_spell_shop()
 	check_legacy_loadout()
 	check_weather_migration()
 	print("CHESS LOADOUT: %d checks, %d failures" % [checks, failures])
 	quit(1 if failures > 0 else 0)
+
+func check_mobility_spell_shop() -> void:
+	var run := Run.new()
+	run.save_path = "user://test-mobility-spell-shop.json"
+	run.new_run(81, "wayfarer")
+	var cell: String = run.actor("hero").position
+	run.data.pending_victory = {"enemies": 1, "members": ["hero"], "revived": [], "relic": ""}
+	run.data.lamp_coins = 40
+	run.open_battle_shop()
+	var mobility := ["tailwind_spell", "sidestep_spell"]
+	var deck := run.card_deck() + mobility
+	expect(not run.save_card_deck(deck).ok, "The movement spells must be unlocked before adding them to the deck")
+	for i in 3:
+		var offers := run.spell_shop_offers(cell)
+		expect(offers.size() == 1, "The post-battle shop stocks one remaining spell blueprint")
+		if offers.is_empty():
+			return
+		expect(run.buy_spell("hero", offers[0]).ok, "The spell can be bought from the current shop stock")
+		if i < 2:
+			expect(run.refresh_shop("hero").ok, "Refreshing shop stock offers another locked spell")
+	expect(run.save_card_deck(deck).ok and run.load_game().ok and run.card_deck() == deck
+		and mobility.all(func(id): return id in run.data.spell_collection),
+		"Both purchased movement spells remain unlocked and in the saved deck after reloading")
 
 
 func check_progression() -> void:

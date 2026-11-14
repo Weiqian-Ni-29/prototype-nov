@@ -350,12 +350,33 @@ func moves(from: int) -> Dictionary:
 		options[target] = "attack" if strike else "move"
 	return options
 
-func card_targets(side: int, index: int) -> Array[int]:
+func _relocation_targets(side: int, from: int, pattern: String) -> Array[int]:
+	var targets: Array[int] = []
+	if from < 0 or from >= board.size() or board[from].get("side", -1) != side:
+		return targets
+	var reach := 1 if int(board[from].get("slow_until", 0)) >= round_number else 2
+	for target in board.size():
+		if not board[target].is_empty():
+			continue
+		if pattern == "straight" and _open_line(from, target, reach):
+			targets.append(target)
+		elif pattern == "diagonal" and absi(_row(from) - _row(target)) == 1 and absi(from % COLS - target % COLS) == 1:
+			targets.append(target)
+	return targets
+
+func card_targets(side: int, index: int, from: int = -1) -> Array[int]:
 	var targets: Array[int] = []
 	if index < 0 or index >= hands[side].size():
 		return targets
 	var card := definition(hands[side][index])
 	if card.is_empty() or card.cost > mana[side]:
+		return targets
+	if card.has("relocate"):
+		if from != -1:
+			return _relocation_targets(side, from, card.relocate)
+		for square in board.size():
+			if not _relocation_targets(side, square, card.relocate).is_empty():
+				targets.append(square)
 		return targets
 	for square in board.size():
 		var piece: Dictionary = board[square]
@@ -399,19 +420,21 @@ func move(from: int, target: int, side: int = PLAYER) -> bool:
 	_complete_action(side, kind)
 	return true
 
-func play(index: int, target: int, side: int = PLAYER) -> bool:
-	if not can_act(side) or target not in card_targets(side, index):
+func play(index: int, target: int, side: int = PLAYER, from: int = -1) -> bool:
+	if not can_act(side) or target not in card_targets(side, index, from):
+		return false
+	var card := definition(hands[side][index])
+	if card.has("relocate") != (from != -1):
 		return false
 	last_attack = {}
-	var card := definition(hands[side][index])
 	var before := _card_board_snapshot()
 	var slot := Cards.equipment_slot(card)
 	var replaced: String = equipment_at(board[target], slot).get("name", "") if not slot.is_empty() else ""
-	_play_card(side, index, target)
+	_play_card(side, index, target, from)
 	_complete_action(side, "damage_spell" if card.has("damage") else card.kind)
 	var after := _card_board_snapshot()
 	played_cards.append({"side": side, "round": round_number, "card": card.duplicate(true),
-		"target": target, "slot": slot, "effects": _card_effects(target, before, after, slot, replaced)})
+		"target": target, "slot": slot, "effects": _card_effects(target, before, after, slot, replaced, from)})
 	return true
 
 func _card_board_snapshot() -> Array[Dictionary]:
@@ -421,15 +444,20 @@ func _card_board_snapshot() -> Array[Dictionary]:
 			"armor": unit.armor, "attack": attack_power(unit), "slow": int(unit.get("slow_until", 0))})
 	return snapshot
 
-func _card_effects(target: int, before: Array[Dictionary], after: Array[Dictionary], slot: String, replaced: String) -> Array[Dictionary]:
+func _card_effects(target: int, before: Array[Dictionary], after: Array[Dictionary], slot: String, replaced: String, from: int) -> Array[Dictionary]:
 	var results: Array[Dictionary] = []
 	for square in board.size():
-		var old := before[square]
+		if square == from:
+			continue
+		var relocated := square == target and from >= 0
+		var old := before[from] if relocated else before[square]
 		var current := after[square]
 		if square != target and old == current:
 			continue
 		var name: String = current.get("name", old.get("name", square_name(square)))
 		var changes: Array[String] = []
+		if relocated:
+			changes.append("移动到%s" % square_name(square))
 		if old.is_empty():
 			changes.append("部署到%s" % square_name(square))
 		elif current.is_empty():
@@ -492,7 +520,7 @@ func _enemy_step() -> void:
 	elif action.has("card_index"):
 		var card: Dictionary = action.card
 		last_enemy_action = {"message": "打出「%s」" % card.name, "target": action.target, "card": card}
-		play(action.card_index, action.target, ENEMY)
+		play(action.card_index, action.target, ENEMY, action.get("source", -1))
 	else:
 		enemy_turn_started = false
 		_start_turn(PLAYER)
@@ -520,7 +548,11 @@ func _choose_enemy_action() -> Dictionary:
 		seen_cards[id] = true
 		var card := definition(id)
 		for target in card_targets(ENEMY, index):
-			options.append({"card_index": index, "id": id, "card": card, "target": target})
+			if card.has("relocate"):
+				for destination in card_targets(ENEMY, index, target):
+					options.append({"card_index": index, "id": id, "card": card, "source": target, "target": destination})
+			else:
+				options.append({"card_index": index, "id": id, "card": card, "target": target})
 
 	var best := {}
 	var best_reply_score := -COMMANDER_DEFEAT_SCORE - 1
@@ -533,7 +565,7 @@ func _choose_enemy_action() -> Dictionary:
 		if option.has("from"):
 			preview._move_piece(option.from, option.target)
 		else:
-			preview._apply_card(ENEMY, option.id, option.card, option.target)
+			preview._apply_card(ENEMY, option.id, option.card, option.target, option.get("source", -1))
 			# Keep the enemy from cycling between sidegrades for no board benefit.
 			var slot := Cards.equipment_slot(option.card)
 			if not slot.is_empty() and not equipment_at(board[option.target], slot).is_empty() \
@@ -793,7 +825,7 @@ func _deal_hit(base: int, context: Dictionary) -> void:
 	_apply_hit(_hit_damage(base, context), context)
 	_finish_hit(context)
 
-func _play_card(side: int, index: int, target: int) -> void:
+func _play_card(side: int, index: int, target: int, from: int) -> void:
 	var id: String = hands[side].pop_at(index)
 	if side == ENEMY:
 		revealed_enemy.erase(id)
@@ -810,13 +842,13 @@ func _play_card(side: int, index: int, target: int) -> void:
 		hands[side].append(previous_id)
 		if side == ENEMY:
 			revealed_enemy.append(previous_id)
-	_apply_card(side, id, card, target)
+	_apply_card(side, id, card, target, from)
 	if not previous_id.is_empty():
 		_log("「%s」已回到%s手牌。" % [previous.name, "敌方" if side == ENEMY else "己方"])
 	if side == PLAYER and card.kind == "partner" and run.actor(id).get("joined", false) and id not in participants:
 		participants.append(id)
 
-func _apply_card(side: int, id: String, card: Dictionary, target: int) -> void:
+func _apply_card(side: int, id: String, card: Dictionary, target: int, from: int = -1) -> void:
 	var piece := board[target]
 	match card.kind:
 		"partner":
@@ -849,6 +881,8 @@ func _apply_card(side: int, id: String, card: Dictionary, target: int) -> void:
 					last_attack.slowed = slowed
 			elif card.has("heal"):
 				_heal(piece, int(card.heal), "spell")
+			elif card.has("relocate"):
+				_move_piece(from, target)
 		"weapon", "equipment":
 			_equip_card(side, id, card, target)
 		"defense":
