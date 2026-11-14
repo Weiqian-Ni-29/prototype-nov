@@ -478,18 +478,14 @@ func _crew_panel() -> void:
 		return
 	_text(box, "点相邻格预览 · 再点确认", 13, muted)
 	_crew_stamina(box)
-	var actions := GridContainer.new()
-	actions.columns = 2
-	actions.add_theme_constant_override("h_separation", 6)
-	actions.add_theme_constant_override("v_separation", 6)
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", 6)
 	box.add_child(actions)
 	var codex_button := _button(actions, "角色", _show_character_codex)
 	if not character_codex_state.is_empty():
 		codex_button.add_theme_stylebox_override("normal", _style(Color("34483a"), gold, 6))
 		codex_button.add_theme_color_override("font_color", gold)
-	var action := _button(actions, "行动", _cell_actions)
-	action.tooltip_text = _node_title(run.actor(selected_id).position)
-	_button(actions, "卡组", _deck_dialog)
+	_button(actions, "卡组", _deck_dialog if run.data.pending_battle.is_empty() else _show_encounter_intro)
 	_button(actions, "背包", _inventory_dialog.bind(selected_id))
 	for button in actions.get_children():
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -518,76 +514,51 @@ func _crew_stamina(parent: VBoxContainer) -> void:
 	caption.size_flags_horizontal = Control.SIZE_SHRINK_END
 	caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 
-func _cell_actions() -> void:
-	var actor = run.actor(selected_id)
-	var cell: String = actor.position
-	var t = run.data.tiles[cell]
-	var node = run.node_at(cell)
-	var title = _node_title(cell)
-	var has_encounter: bool = run.knows_encounter(cell) or (run.data.pending_battle.get("position") == cell and not t.enemies.is_empty())
-	var dialog = _modal(title, 570, 580)
-	var box = _scroll_content(dialog)
-	_text(box, "%s · 坐标 %s" % [Catalog.terrain_name(t.terrain), cell], 14, muted)
-	var route: Dictionary = run.data.route_records.get(selected_id, {})
-	if not route.is_empty():
-		_text(box, "引路绳路线 · %d 步 · %s" % [route.path.size() - 1, " → ".join(route.path)], 15, muted)
-	for key in run.data.map_intel:
-		if str(key).begins_with("cache:"):
-			_text(box, "藏物点标记 · " + str(key).trim_prefix("cache:"), 15, muted)
-		elif str(key).begins_with("encounter:"):
-			var info = run.data.map_intel[key]
-			var elements: Array = info.elements.map(func(element): return Catalog.ELEMENT_NAMES.get(element, element))
-			_text(box, "遭遇拓片 · %s · %d 个敌人 · %s" % [str(key).trim_prefix("encounter:"), info.count, "、".join(elements)], 15, muted)
-	if not has_encounter and (t.site.is_empty() or (t.site == "boss" and not run.boss_known())) and not Nodes.story(node).is_empty():
-		if not _node_resolved(node, t):
-			for option in _node_actions(node):
-				_button(box, option.text, _node_choice.bind(option.id))
-		if node.kind != "supply":
-			_button(box, "查看节点剧情", _node_dialog)
-	if has_encounter:
-		var kind := "精英险地" if node.get("kind") == "elite" else "普通遭遇"
-		_text(box, "决战 · 已平定 %d 处遭遇" % run.data.peace.size() if t.enemies.has("war_god") else kind, 18, Color("e4ab87"))
-		var commander: String = "war_god" if t.enemies.has("war_god") else t.enemies[0]
-		_text(box, "敌方主战者 · " + Catalog.ENEMIES[commander].name, 15, muted)
-		if run.actor("grit").joined and run.actor("grit").hp > 0 and run.actor("grit").position == cell:
-			_text(box, "砾牙辨识：" + Cards.stats(Chess.enemy_definition(run, commander, true)), 13, gold)
-		var requires_hero = t.enemies.has("war_god") and "hero" not in run.same_cell(cell, true)
-		if requires_hero:
-			_text(box, "旅人必须亲自迎战。", 15, muted)
-		_button(box, "查看决战剧情" if t.enemies.has("war_god") else "备战", _open_current_encounter, run.same_cell(cell, true).is_empty() or requires_hero)
-	if t.npc != "" and t.npc != selected_id and run.actor(t.npc).position == cell and t.enemies.is_empty():
-		var npc = run.actor(t.npc)
-		_text(box, npc.name + " · " + npc.title, 18)
-		if npc.joined:
-			_button(box, "交谈 / 个人故事", _talk.bind(t.npc))
-		else:
-			_text(box, "可在商店招募伙伴。", 15, muted)
-	elif t.site == "start":
-		_button(box, "看看村庄", _site_impression)
-	for id in run.same_cell(cell):
-		if id != "hero" and id != t.npc and id != selected_id:
-			_button(box, "与 " + run.actor(id).name + " 交谈", _talk.bind(id))
-	if t.quantity > 0 and (node.get("kind") != "supply" or not t.site.is_empty()):
-		_text(box, "可采集：%s ×%d" % [Catalog.item_name(t.resource), t.quantity], 16, muted)
-		_button(box, "采集", func(): _close_modal(); _run_action(run.collect(selected_id)))
-	var relic: String = run.relic_sites.get(cell, "")
-	if node.get("kind") != "cache" and not relic.is_empty() and t.enemies.is_empty() and not run.data.relic_claims.has("site:" + cell):
-		_button(box, "调查" + Relics.SITES[relic][0], func():
-			_close_modal()
-			var result = run.investigate_relic(selected_id)
-			var found: String = result.get("relic", "")
-			if not found.is_empty():
-				_queue_story_rewards(_node_title(cell), [{"kind": "relic", "id": found, "count": 1}])
-			_run_action(result)
-			if not found.is_empty():
-				_show_pending_story_rewards()
-			elif result.ok:
-				_notice(result.message))
-	_button(box, "使用道具", _item_dialog.bind(selected_id))
-	_button(dialog, "关闭", _close_modal)
-
 func _node_title(cell: String) -> String:
 	return run.location_name(cell)
+
+func _node_interaction(cell: String) -> String:
+	var tile: Dictionary = run.data.tiles[cell]
+	if not tile.enemies.is_empty():
+		return ""
+	var node := run.node_at(cell)
+	if tile.site.is_empty() or (tile.site == "boss" and not run.boss_known()):
+		if node.get("result", "").is_empty():
+			match node.get("kind"):
+				"trade":
+					return "trade"
+				"supply":
+					return "collect"
+				"cache":
+					return "search"
+	if tile.quantity > 0 and (node.get("kind") != "supply" or not tile.site.is_empty()):
+		return "gather"
+	if node.get("kind") != "cache" and run.relic_sites.has(cell) and not run.data.relic_claims.has("site:" + cell):
+		return "investigate"
+	return ""
+
+func _enter_node(cell: String, interaction: String) -> void:
+	if interaction == "trade":
+		run.save_game()
+		_shop_dialog()
+		return
+	var result: Dictionary
+	match interaction:
+		"collect", "search":
+			result = run.use_node(selected_id, interaction)
+		"gather":
+			result = run.collect(selected_id)
+		"investigate":
+			result = run.investigate_relic(selected_id)
+			var relic: String = result.get("relic", "")
+			if not relic.is_empty():
+				result.items = [{"kind": "relic", "id": relic, "count": 1}]
+	var has_items: bool = result.ok and _queue_story_rewards(_node_title(cell), result.get("items", []))
+	_run_action(result)
+	if has_items:
+		_show_pending_story_rewards()
+	elif result.ok:
+		_notice(result.message)
 
 func _site_impression() -> void:
 	var cell: String = run.actor(selected_id).position
@@ -596,67 +567,13 @@ func _site_impression() -> void:
 		STORY_TERRAIN[terrain], [], [_node_option("leave", "谢谢，我得继续赶路了。", true)], func(_choice: String): _close_modal(),
 		{"结束交谈": _close_modal}, _node_tint())
 
-func _node_resolved(node: Dictionary, tile: Dictionary) -> bool:
-	return not node.result.is_empty() or (node.kind in ["battle", "elite"] and tile.enemies.is_empty())
-
 func _node_tint() -> Color:
 	if run.data.weather == "rain":
 		return Color(0.78, 0.88, 1.0)
 	return Color.WHITE
 
-func _node_description(node: Dictionary, tile: Dictionary, event: Dictionary) -> String:
-	if _node_resolved(node, tile):
-		return Nodes.resolution(node)
-	return str(event.intro)
-
 func _node_option(id: String, label: String, spoken: bool = false) -> Dictionary:
 	return {"id": id, "text": label, "spoken": spoken}
-
-func _node_actions(node: Dictionary) -> Array:
-	match node.kind:
-		"trade":
-			return [_node_option("trade", "查看货物 · 持有 %d 灯铢" % run.data.lamp_coins)]
-		"supply":
-			return [_node_option("collect", "领取补给")]
-		"cache":
-			return [_node_option("search", "搜寻旧物")]
-	return []
-
-func _node_dialog() -> void:
-	var cell: String = run.actor(selected_id).position
-	var tile = run.data.tiles[cell]
-	var node = run.node_at(cell)
-	var event = Nodes.story(node)
-	if event.is_empty():
-		_cell_actions()
-		return
-	var text = _node_description(node, tile, event)
-	var after_flag: String = event.get("after_flag", "")
-	if not after_flag.is_empty() and run.data.flags.get(after_flag, false):
-		text += "\n" + str(event.get("after_text", ""))
-	var speaker: String = event.get("reaction_actor", "")
-	if speaker in run.same_cell(cell, true) and event.has("reaction"):
-		text += "\n%s说「%s」" % [run.actor(speaker).name, event.reaction]
-	var title = "%s · %s" % [_node_title(cell), event.title]
-	var options := [] if _node_resolved(node, tile) else _node_actions(node)
-	options.append(_node_option("leave", "返回地图"))
-	_show_story(title, "旁白", text, STORY_TERRAIN[tile.terrain], [], options, _node_choice, {}, _node_tint())
-
-func _node_choice(option: String) -> void:
-	match option:
-		"leave":
-			if not _show_relic_intro():
-				_close_modal()
-		"trade":
-			_shop_dialog()
-		_:
-			_close_modal()
-			var result = run.use_node(selected_id, option)
-			var cell: String = run.actor(selected_id).position
-			var has_items: bool = result.ok and _queue_story_rewards(_node_title(cell), result.get("items", []))
-			_run_action(result)
-			if has_items:
-				_show_pending_story_rewards()
 
 func _queue_story_rewards(source: String, items: Array) -> bool:
 	if items.is_empty():
@@ -781,7 +698,7 @@ func _shop_dialog(feedback: String = "", resume: Dictionary = {}) -> void:
 	shop.refresh_requested.connect(func():
 		if shop.is_inside_tree() and shop.buying and not shop.refresh.disabled:
 			_shop_action(restock, shop.selection()))
-	shop.return_requested.connect(_cell_actions)
+	shop.return_requested.connect(_close_modal)
 
 func _shop_action(action: Callable, resume: Dictionary) -> void:
 	sound.play("click")
@@ -874,9 +791,26 @@ func _select_cell(id: String) -> void:
 		_move_selected()
 		return
 	var source: String = run.actor("hero").position
+	if id == source:
+		_reopen_current_node(source)
+		return
 	selected_cell = id
 	move_target = id if Hex.is_land(run.data.tiles, id) and id in Hex.neighbors(source, run.data.tiles) else ""
 	_refresh()
+
+func _reopen_current_node(cell: String) -> void:
+	if not run.data.tiles[cell].enemies.is_empty():
+		_open_current_encounter()
+		return
+	var interaction := _node_interaction(cell)
+	if not interaction.is_empty():
+		_enter_node(cell, interaction)
+	elif cell == run.data.start:
+		_site_impression()
+	else:
+		_clear_map_move()
+		selected_cell = cell
+		_refresh()
 
 func _show_move_preview() -> void:
 	var caption = "移动 1 格"
@@ -890,7 +824,6 @@ func _move_selected() -> void:
 	if map_traveling:
 		return
 	var destination = move_target
-	var first_visit = not run.has_visited(destination)
 	var previous_clock := {"day": run.data.day, "weather": run.data.weather, "steps": run.remaining_steps()}
 	_clear_map_move()
 	var result = run.move(destination)
@@ -902,9 +835,8 @@ func _move_selected() -> void:
 			travel_clock = previous_clock
 		selected_id = "hero"
 		selected_cell = destination
-		var resident: Dictionary = run.actor(run.data.tiles[destination].npc)
-		if first_visit and not resident.is_empty() and not resident.joined and resident.position == destination:
-			run.data.pending_arrival = {"actor": "hero", "cell": destination}
+		if not _node_interaction(destination).is_empty():
+			run.data.pending_arrival = {"actor": selected_id, "cell": destination}
 	_run_action(result)
 	if not result.ok:
 		return
@@ -950,7 +882,13 @@ func _show_arrival() -> void:
 func _show_arrival_node() -> void:
 	if not run.data.has("pending_arrival"):
 		return
+	var arrival: Dictionary = run.data.pending_arrival
 	run.data.erase("pending_arrival")
+	if selected_id == arrival.actor and run.actor(selected_id).position == arrival.cell:
+		var interaction := _node_interaction(arrival.cell)
+		if not interaction.is_empty():
+			_enter_node(arrival.cell, interaction)
+			return
 	run.save_game()
 
 func _run_action(result: Dictionary) -> void:
@@ -1117,15 +1055,8 @@ func _inventory_consumables(page: InventoryPage, id: String, selection: String) 
 		_text(content, purpose, 16)
 		if definition.has("story"):
 			_text(content, definition.story, 15, muted)
-		var actions := HFlowContainer.new()
-		actions.add_theme_constant_override("h_separation", 8)
-		content.add_child(actions)
-		if definition.has("hp") or definition.has("mp"):
-			var use := _button(actions, "使用", _item_dialog.bind(id, item), a.hp <= 0 or run.data.status != "exploring")
-			use.custom_minimum_size.x = 144
-			use.add_theme_stylebox_override("normal", _style(Color("50563c"), gold.darkened(0.38), 6))
 		if run.same_cell(a.position).size() > 1:
-			_button(actions, "交接", _transfer_dialog.bind(id, item)))
+			_button(content, "交接", _transfer_dialog.bind(id, item)).size_flags_horizontal = Control.SIZE_SHRINK_BEGIN)
 	page.set_items(entries, selection)
 
 func _inventory_gear(page: InventoryPage, id: String, selection: String, feedback: String) -> void:
@@ -1260,45 +1191,6 @@ func _transfer_dialog(owner: String, item: String) -> void:
 					_text(content, result.message, 16, gold))
 	_button(box, "返回背包", _inventory_dialog.bind(owner, 0, item))
 
-func _item_dialog(user_id: String, item_id: String = "") -> void:
-	var from_backpack = not item_id.is_empty()
-	var box = _modal("使用道具 · " + run.actor(user_id).name, 650, 460)
-	if from_backpack:
-		_text(box, "要把背包里的「%s」给谁用？只能选在场的人。" % Catalog.item_name(item_id), 16, gold)
-	var targets: Array = []
-	for id in run.data.actors:
-		var a = run.actor(id)
-		if a.position == run.actor(user_id).position and (a.joined or run.data.story.get(id, {}).get("met", false)):
-			targets.append(id)
-	var select = OptionButton.new()
-	for id in targets:
-		select.add_item("%s · HP %d/%d · MP %d/%d" % [run.actor(id).name, run.actor(id).hp, run.actor(id).hp_max, run.actor(id).mp, run.actor(id).mp_max])
-	if from_backpack and user_id in targets:
-		select.select(targets.find(user_id))
-	box.add_child(select)
-	var feedback = _text(box, "", 16, gold)
-	feedback.hide()
-	for item in ([item_id] if from_backpack else ["salve", "ether"]):
-		var quantity = int(run.actor(user_id).inventory.get(item, 0))
-		var name = Catalog.item_name(item)
-		var button_text = "确认使用 %s ×1" % name if from_backpack else "%s ×%d" % [name, quantity]
-		_button(box, button_text, func():
-			var target = targets[select.selected]
-			var result = run.use_item(user_id, target, item)
-			if not result.ok:
-				feedback.text = result.message
-				feedback.show()
-				return
-			_run_action(result)
-			if from_backpack:
-				_inventory_dialog(user_id, 0, item_id)
-			else:
-				_item_dialog(user_id), quantity <= 0 or targets.is_empty())
-	if from_backpack:
-		_button(box, "返回背包", _inventory_dialog.bind(user_id, 0, item_id))
-	else:
-		_button(box, "用完了，返回", _close_modal)
-
 func _open_current_encounter(show_intro: bool = true) -> void:
 	var cell: String = run.actor(selected_id).position
 	if run.data.pending_battle.is_empty():
@@ -1364,13 +1256,7 @@ func _deck_dialog(encounter: bool = false, back_to_rewards: Callable = Callable(
 		else:
 			_close_modal()
 			_refresh())
-	editor.cancelled.connect(func():
-		if encounter:
-			_cell_actions()
-		elif back_to_rewards.is_valid():
-			back_to_rewards.call()
-		else:
-			_close_modal())
+	editor.cancelled.connect(back_to_rewards if back_to_rewards.is_valid() else _close_modal)
 
 func _show_chess_view() -> void:
 	chess_view = ChessView.new()
@@ -1526,6 +1412,8 @@ func _talk(id: String) -> void:
 	if not intro.ok:
 		_notice(intro.message)
 		return
+	if not character_codex_state.is_empty():
+		_close_character_codex()
 	_begin_dialogue(id)
 
 func _begin_dialogue(id: String) -> void:
@@ -1982,8 +1870,6 @@ func _story_choice(option_id: String) -> void:
 		_refresh()
 	elif result.get("quest", false):
 		_personal_quest()
-	elif result.has("rescue"):
-		_item_dialog(selected_id)
 	else:
 		_refresh()
 		_render_dialogue(response, option_id == "past")
@@ -2067,7 +1953,7 @@ func _to_menu() -> void:
 		_show_opening(Screen.MENU)
 
 func _guide() -> void:
-	_notice("点相邻格预览，再点一次确认。伙伴跟随旅人一起移动，每走五格自动进入第二天。\n\n点「行动」可以查看脚下的地点。疗伤和回魔需要消耗补给，灯铢由全队共享。\n\n在「卡组」里选满 12 张牌。对战开局抽 3 张，之后每回合抽 1 张，只能走子、部署或用牌一次。攻击先扣护甲，击倒才占格。击倒对方主战者获胜。")
+	_notice("点相邻格预览，再点一次确认。伙伴跟随旅人一起移动，每走五格自动进入第二天。\n\n抵达商店会打开货架，抵达补给或寻宝地点会显示获得的物品。可点击脚下的商店重新查看货架。灯铢由全队共享。\n\n在「卡组」里选满 12 张牌。对战开局抽 3 张，之后每回合抽 1 张，只能走子、部署或用牌一次。攻击先扣护甲，击倒才占格。击倒对方主战者获胜。")
 
 func _settings_dialog() -> void:
 	var box = _modal("设置与操作", 650, 430)

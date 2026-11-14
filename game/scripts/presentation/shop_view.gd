@@ -121,7 +121,7 @@ func setup(expedition: RefCounted, actor_id: String, stock: Dictionary, width: f
 	var footer := HBoxContainer.new()
 	footer.add_theme_constant_override("separation", 12)
 	add_child(footer)
-	_button(footer, "返回节点", func(): return_requested.emit())
+	_button(footer, "返回地图", func(): return_requested.emit())
 	if not feedback.is_empty():
 		_label(footer, feedback, 15, GOLD, true).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_render_catalog(resume.get("id", ""))

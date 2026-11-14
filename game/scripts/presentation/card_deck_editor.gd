@@ -114,9 +114,7 @@ func setup(actors: Dictionary, current: Array, encounter: bool, width: float, op
 	done = UI.button(right, "开始战斗" if encounter else "保存卡组", func(): completed.emit(deck.duplicate()))
 	done.name = "ConfirmCardDeck"
 	UI.accent(done)
-	if back_label.is_empty():
-		back_label = "返回遭遇" if encounter else "返回地图"
-	UI.button(right, back_label, func(): cancelled.emit())
+	UI.button(right, "返回地图" if back_label.is_empty() else back_label, func(): cancelled.emit())
 	_filter()
 	_render_deck()
 

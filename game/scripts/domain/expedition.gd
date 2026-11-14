@@ -537,7 +537,7 @@ func movement_preview(destination: String) -> Dictionary:
 		return fail("战斗或结算期间不能移动。")
 	var hero = actor("hero")
 	if hero.hp <= 0:
-		return fail("旅人重伤了，需要队友先用疗伤药救治。")
+		return fail("旅人重伤了，无法继续移动。")
 	var source: String = hero.position
 	if not data.tiles[source].enemies.is_empty() and source != data.boss:
 		return fail("敌人拦住了路。你可以迎战，也可以在战斗中撤退。")

@@ -375,8 +375,7 @@ func dialogue(visitor: String, subject: String) -> Dictionary:
 	var choices: Array = []
 	if person.hp <= 0:
 		speaker = run.actor(visitor).name
-		body = "还有呼吸。伤得这么重，得先止血。"
-		choices.append(_choice("rescue", "我来找药，你撑住。"))
+		body = "还有呼吸，但现在没法交谈。"
 	else:
 		if _personal_context(visitor, subject).ok:
 			var chosen = _personal_choice(subject)
@@ -405,8 +404,6 @@ func choose(visitor: String, subject: String, option_id: String) -> Dictionary:
 			return {"ok": true, "response": BACKGROUNDS[subject]}
 		"echo":
 			return {"ok": true, "response": HERO_LINES[subject]}
-		"rescue":
-			return {"ok": true, "rescue": true}
 	return {"ok": true, "close": true}
 
 func main_ending() -> Dictionary:

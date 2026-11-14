@@ -140,9 +140,9 @@ func check_camera_drag(game: Node, start: String, next: String) -> void:
 				dissolve_seen = true
 				await RenderingServer.frame_post_draw
 				root.get_texture().get_image().save_png("user://fog-reveal-mid.png")
-	expect(game.modal_layer.has_node("StoryScreen") and not mover.is_moving(), "The first-arrival story waits for walking to finish")
+	expect(game.modal_layer.has_node("StoryRewards") and not mover.is_moving(), "The supply receipt waits for walking to finish")
 	for button in game.modal_layer.find_children("*", "Button", true, false):
-		if button.text == "返回地图":
+		if button.text.begins_with("返回地图"):
 			button.pressed.emit()
 			break
 	await process_frame
@@ -157,12 +157,13 @@ func execute() -> void:
 	root.add_child(game)
 	await process_frame
 	game.run.save_path = "user://test-map-motion.json"
+	game.chosen_seed = "20261104"
 	game._start_new()
 	game.set_process(false)
 	var run = game.run
 	var start = run.actor("hero").position
 	var safe_neighbors = Hex.neighbors(start, run.data.tiles).filter(func(cell):
-		return Hex.is_land(run.data.tiles, cell) and run.data.tiles[cell].npc.is_empty() and run.data.tiles[cell].enemies.is_empty())
+		return run.node_at(cell).get("kind") == "supply" and run.data.tiles[cell].enemies.is_empty())
 	var next = safe_neighbors[0]
 	await process_frame
 	await check_camera_drag(game, start, next)

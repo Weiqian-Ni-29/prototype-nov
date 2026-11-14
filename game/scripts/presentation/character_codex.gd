@@ -554,6 +554,9 @@ func _breakthroughs(id: String) -> void:
 		upgrade.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 func _stories(id: String) -> void:
+	if id != "hero" and game.run.actor(id).joined and game.run.data.status == "exploring" \
+			and game.narrative.encounter_intro(game.selected_id, id).ok:
+		game._button(footer, "交谈", game._talk.bind(id)).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var records: Array = game.narrative.character_records(id)
 	for record in records:
 		game._text(details, record.title, 18, game.gold)

@@ -349,24 +349,33 @@ func capture_node_examples() -> void:
 	game.chosen_seed = str(seed_value)
 	game._start_new()
 	var rest: String = forest_rest[0]
-	run.actor("hero").position = rest
-	run.reveal(rest)
+	var approach: String = Hex.neighbors(rest, run.data.tiles).filter(func(cell): return Hex.is_land(run.data.tiles, cell))[0]
+	run.data.tiles[approach].enemies.clear()
+	run.actor("hero").position = approach
+	run.reveal(approach)
 	game._select_actor("hero")
-	game._cell_actions()
-	await capture("node-forest-supply")
-	game._node_choice("collect")
+	game._select_cell(rest)
+	game._select_cell(rest)
+	var deadline := Time.get_ticks_msec() + 5000
+	while game.map_traveling and Time.get_ticks_msec() < deadline:
+		await process_frame
+	expect(game.modal_layer.has_node("StoryRewards"), "Walking to the forest supply stop opens the receipt")
 	await capture("node-supply-reward")
 	await click_story_button("返回地图")
-	game._close_modal()
 	var shop: String = shops[0]
-	run.actor("hero").position = shop
-	run.reveal(shop)
+	approach = Hex.neighbors(shop, run.data.tiles).filter(func(cell): return Hex.is_land(run.data.tiles, cell))[0]
+	run.data.tiles[approach].enemies.clear()
+	run.actor("hero").position = approach
+	run.reveal(approach)
 	game._select_actor("hero")
-	game._node_dialog()
-	await capture("node-trader-story")
-	game._node_choice("trade")
+	game._select_cell(shop)
+	game._select_cell(shop)
+	deadline = Time.get_ticks_msec() + 5000
+	while game.map_traveling and Time.get_ticks_msec() < deadline:
+		await process_frame
+	expect(game.modal_layer.find_child("ShopView", true, false) != null, "Walking to the shop opens the stock")
 	await capture("node-trader-stock")
-	game._close_modal()
+	await click_story_button("返回地图")
 	game.chosen_seed = original_seed
 
 func story_button(prefix: String) -> Button:
@@ -641,15 +650,16 @@ func execute() -> void:
 	await capture("02-exploration")
 	var arrival_run = game.run
 	var first_tile: String = Hex.neighbors(arrival_run.data.start, arrival_run.data.tiles).filter(func(cell):
-		return Hex.is_land(arrival_run.data.tiles, cell) and arrival_run.data.tiles[cell].enemies.is_empty() and arrival_run.data.tiles[cell].npc.is_empty())[0]
+		return arrival_run.node_at(cell).get("kind") == "supply" and arrival_run.data.tiles[cell].enemies.is_empty())[0]
 	game._select_cell(first_tile)
 	game._select_cell(first_tile)
 	var arrival_deadline = Time.get_ticks_msec() + 5000
 	while game.map_traveling and Time.get_ticks_msec() < arrival_deadline:
 		await process_frame
-	expect(game.modal_layer.get_child_count() == 0 and arrival_run.actor("hero").position == first_tile,
-		"First arrival keeps the map visible")
+	expect(game.modal_layer.has_node("StoryRewards") and arrival_run.actor("hero").position == first_tile,
+		"First arrival shows the supplies received at the destination")
 	await capture("node-first-arrival")
+	await click_story_button("返回地图")
 	await create_timer(0.9).timeout
 	await capture("map-visited-locations")
 	game.crew_collapsed = true
