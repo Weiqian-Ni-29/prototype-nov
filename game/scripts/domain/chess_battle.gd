@@ -9,9 +9,17 @@ const COLS = 3
 const ROWS = 4
 const PLAYER = 0
 const ENEMY = 1
-const ENEMY_DECK_SIZE = 12
 const MANA_LIMIT = 10
 const COMMANDER_DEFEAT_SCORE = 1000000
+const ENEMY_DECK_SPECIALTIES = {
+	"guard": ["ward", "brace"],
+	"charge": ["pike", "ember_spell"],
+	"slow": ["ice_spell", "fog_spell"],
+	"wet": ["rain", "ice_spell"],
+	"ignite": ["sun", "ember_spell"],
+	"heal": ["mend_spell", "bandage_card"],
+	"madness": ["ember_spell", "fog_spell"],
+}
 
 var run: RefCounted
 var pending: Dictionary
@@ -28,10 +36,9 @@ var round_number := 1
 var mana: Array[int] = [1, 1]
 var mana_capacity: Array[int] = [1, 1]
 var turn := PLAYER
-var player_has_played := false
-var enemy_has_played := false
-var enemy_drew := false
-var enemy_action_resolved := false
+var turns_started: Array[int] = [0, 0]
+var board_action_used: Array[bool] = [false, false]
+var enemy_turn_started := false
 var last_enemy_action := {}
 var last_attack := {}
 var difficulty := 0
@@ -148,7 +155,7 @@ func begin(expedition: RefCounted, encounter: Dictionary, deck: Array) -> Dictio
 	run.note("战棋对战开始。")
 	turn = ENEMY if pending.get("ambush", false) else PLAYER
 	if turn == PLAYER:
-		_relic("turn_start")
+		_start_turn(PLAYER)
 	return {"ok": true}
 
 func _shuffle(pile: Array, roller: RandomNumberGenerator) -> void:
@@ -182,27 +189,26 @@ func _ensure_opening_attack() -> void:
 			return
 
 func _enemy_deck(types: Array, lead: String, roller: RandomNumberGenerator) -> Array:
-	var support := types.duplicate()
-	support.erase(lead)
-	for id in ["boar", "archer", "spider", "apothecary"]:
+	var support: Array[String] = []
+	for id in types + ["boar", "archer", "spider", "apothecary", "swarm"]:
 		if id != lead and id not in support:
 			support.append(id)
 	var deck: Array = []
-	for i in difficulty:
-		deck.append("foe:" + str(support[i % support.size()]))
+	for id in support.slice(0, difficulty):
+		deck.append("foe:" + id)
 	deck.append_array(["blade", "brace", "ward", "mend_spell"])
-	if difficulty >= 2:
-		if lead in ["furnace", "furnace_elite", "lamp_boss", "war_god"]:
-			deck.append_array(["sun", "ember_spell"])
-		elif lead in ["canal", "lurker"]:
-			deck.append_array(["rain", "ice_spell"])
-		else:
-			deck.append_array(["ice_spell", "ember_spell"])
-	var filler := ["pike", "ward", "ember_spell", "brace", "rain", "sun", "ice_spell", "ward"]
-	var i := 0
-	while deck.size() < ENEMY_DECK_SIZE:
-		deck.append(filler[i])
-		i += 1
+	var leader: Dictionary = run.actor(lead.trim_prefix("npc:")) if lead.begins_with("npc:") else Catalog.ENEMIES[lead]
+	var specialty: String = leader.get("skill", "")
+	if lead.begins_with("npc:"):
+		specialty = {"fire": "ignite", "water": "wet", "ice": "slow", "earth": "guard"}.get(
+			Cards.chess_element(leader), "charge" if leader.get("attack_delivery") == "ranged" else "guard")
+	deck.append_array(ENEMY_DECK_SPECIALTIES.get(specialty, ["blade", "rain"]))
+	var filler := ["pike", "ward", "ember_spell", "brace", "rain", "sun", "ice_spell", "mend_spell", "fog_spell"]
+	for id in filler:
+		if deck.size() == Cards.MIN_DECK_SIZE:
+			break
+		if deck.count(id) < 2:
+			deck.append(id)
 	_shuffle(deck, roller)
 	return deck
 
@@ -367,97 +373,80 @@ func card_targets(side: int, index: int) -> Array[int]:
 						targets.append(square)
 	return targets
 
-func can_act() -> bool:
-	return turn == PLAYER and outcome.is_empty() and not reveal_pending
+func can_act(side: int = PLAYER) -> bool:
+	return turn == side and outcome.is_empty() and not reveal_pending
+
+func can_move_piece(side: int = PLAYER) -> bool:
+	return can_act(side) and not board_action_used[side]
 
 func take_attack() -> Dictionary:
 	var attack := last_attack
 	last_attack = {}
 	return attack
 
-func move(from: int, target: int) -> bool:
-	if not can_act() or not moves(from).has(target) or board[from].side != PLAYER:
+func move(from: int, target: int, side: int = PLAYER) -> bool:
+	if not can_move_piece(side) or not moves(from).has(target) or board[from].side != side:
 		return false
 	last_attack = {}
-	action_kind = "move" if board[target].is_empty() else "attack"
+	var kind := "move" if board[target].is_empty() else "attack"
 	_move_piece(from, target)
-	_end_player_action()
+	board_action_used[side] = true
+	_complete_action(side, kind)
 	return true
 
-func play(index: int, target: int) -> bool:
-	if not can_act() or target not in card_targets(PLAYER, index):
+func play(index: int, target: int, side: int = PLAYER) -> bool:
+	if not can_act(side) or target not in card_targets(side, index):
 		return false
 	last_attack = {}
-	var card := definition(hands[PLAYER][index])
-	action_kind = "damage_spell" if card.has("damage") else card.kind
-	_play_card(PLAYER, index, target)
-	_end_player_action()
+	var card := definition(hands[side][index])
+	_play_card(side, index, target)
+	_complete_action(side, "damage_spell" if card.has("damage") else card.kind)
 	return true
 
-func must_pass() -> bool:
-	for square in board.size():
-		if board[square].get("side", -1) == PLAYER and not moves(square).is_empty():
-			return false
-	for i in hands[PLAYER].size():
-		if not card_targets(PLAYER, i).is_empty():
-			return false
-	return true
-
-func pass_turn() -> bool:
-	if not can_act() or not must_pass():
+func end_turn() -> bool:
+	if not can_act():
 		return false
 	last_attack = {}
-	action_kind = "pass"
-	_log("己方没有可走的棋子或可出的牌。")
-	_end_player_action()
-	return true
-
-func _end_player_action() -> void:
-	player_actions += 1
 	_relic("turn_end")
-	previous_action = action_kind
-	player_has_played = true
 	turn = ENEMY
 	last_enemy_action = {}
+	return true
+
+func _complete_action(side: int, kind: String) -> void:
+	if side == PLAYER:
+		action_kind = kind
+		player_actions += 1
+		_relic("action_end")
+		previous_action = kind
 	_check_outcome()
 
 func enemy_turn(hold_for_display: bool = false) -> void:
-	if turn != ENEMY or not outcome.is_empty() or reveal_pending:
-		return
-	if enemy_action_resolved:
-		_end_enemy_turn()
-		return
-	last_attack = {}
-	if enemy_has_played and not enemy_drew:
-		_grow_mana(ENEMY)
-		enemy_drew = true
-		_draw(ENEMY)
-		if _check_outcome():
+	while can_act(ENEMY):
+		_enemy_step()
+		if hold_for_display:
 			return
-	enemy_has_played = true
+
+func _enemy_step() -> void:
+	last_attack = {}
+	if not enemy_turn_started:
+		enemy_turn_started = true
+		_start_turn(ENEMY)
+		if not can_act(ENEMY):
+			return
 	var action := _choose_enemy_action()
 	if action.has("from"):
 		var unit: Dictionary = board[action.from]
 		var target: Dictionary = board[action.target]
 		var message := "%s 移动到%s" % [unit.name, square_name(action.target)] if target.is_empty() else "%s 攻击 %s" % [unit.name, target.name]
 		last_enemy_action = {"message": message, "from": action.from, "target": action.target}
-		_move_piece(action.from, action.target)
+		move(action.from, action.target, ENEMY)
 	elif action.has("card_index"):
 		var card: Dictionary = action.card
 		last_enemy_action = {"message": "打出「%s」" % card.name, "target": action.target, "card": card}
-		_play_card(ENEMY, action.card_index, action.target)
+		play(action.card_index, action.target, ENEMY)
 	else:
-		last_enemy_action = {"message": "无可用行动，结束回合"}
-		_log("敌方无可用行动，结束回合。")
-	enemy_action_resolved = true
-	if _check_outcome() or hold_for_display:
-		return
-	_end_enemy_turn()
-
-func _end_enemy_turn() -> void:
-	enemy_action_resolved = false
-	enemy_drew = false
-	_start_player_turn()
+		enemy_turn_started = false
+		_start_turn(PLAYER)
 
 func _enemy_tempo(option: Dictionary) -> int:
 	if option.has("from") and board[option.target].is_empty():
@@ -469,10 +458,11 @@ func _enemy_tempo(option: Dictionary) -> int:
 
 func _choose_enemy_action() -> Dictionary:
 	var options: Array[Dictionary] = []
-	for square in board.size():
-		if board[square].get("side", -1) == ENEMY:
-			for target in moves(square):
-				options.append({"from": square, "target": target})
+	if can_move_piece(ENEMY):
+		for square in board.size():
+			if board[square].get("side", -1) == ENEMY:
+				for target in moves(square):
+					options.append({"from": square, "target": target})
 	var seen_cards := {}
 	for index in hands[ENEMY].size():
 		var id: String = hands[ENEMY][index]
@@ -486,7 +476,8 @@ func _choose_enemy_action() -> Dictionary:
 	var best := {}
 	var best_reply_score := -COMMANDER_DEFEAT_SCORE - 1
 	var best_position_score := -COMMANDER_DEFEAT_SCORE - 1
-	var player_draws_fatigue: bool = player_has_played and piles[PLAYER].is_empty()
+	var next_player_round := turns_started[PLAYER] > 0
+	var player_draws_fatigue: bool = next_player_round and piles[PLAYER].is_empty()
 	for option in options:
 		var preview := _copy_public_position()
 		if option.has("from"):
@@ -495,7 +486,7 @@ func _choose_enemy_action() -> Dictionary:
 			preview._apply_card(ENEMY, option.id, option.card, option.target)
 		if preview.commanders[PLAYER].hp <= 0:
 			return option
-		if player_has_played:
+		if next_player_round:
 			preview.round_number += 1
 			preview._advance_weather()
 			if player_draws_fatigue:
@@ -531,6 +522,7 @@ func _copy_public_position() -> RefCounted:
 	preview.relic_used = relic_used.duplicate(true)
 	preview.prep = prep
 	preview.round_number = round_number
+	preview.turns_started = turns_started.duplicate()
 	preview.player_actions = player_actions
 	preview.previous_action = previous_action
 	preview.ally_losses = ally_losses
@@ -576,16 +568,17 @@ func _position_score() -> int:
 		score += value if piece.side == ENEMY else -value
 	return score
 
-func _start_player_turn() -> void:
-	turn = PLAYER
-	if not player_has_played:
-		_relic("turn_start")
-		return
-	round_number += 1
-	_grow_mana(PLAYER)
-	_advance_weather()
-	_draw(PLAYER)
-	if not _check_outcome():
+func _start_turn(side: int) -> void:
+	turn = side
+	board_action_used[side] = false
+	turns_started[side] += 1
+	if turns_started[side] > 1:
+		_grow_mana(side)
+		if side == PLAYER:
+			round_number += 1
+			_advance_weather()
+		_draw(side)
+	if not _check_outcome() and side == PLAYER:
 		_relic("turn_start")
 
 func _grow_mana(side: int) -> void:
@@ -749,7 +742,7 @@ func _apply_card(side: int, id: String, card: Dictionary, target: int) -> void:
 				var climate: Dictionary = Cards.WEATHER.get(weather, {}).get("damage", {})
 				_deal_hit(target, int(card.damage) + int(climate.get(element, 0)), context)
 				if card.get("slow", false) and piece.hp > 0:
-					piece.slow_until = round_number + int(side == ENEMY and player_has_played)
+					piece.slow_until = round_number + int(side == ENEMY and turns_started[PLAYER] > 0)
 			elif card.has("heal"):
 				_heal(piece, int(card.heal), "spell")
 		"weapon", "equipment":

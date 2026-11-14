@@ -493,6 +493,7 @@ func execute() -> void:
 	expect(b.river and b.weather == "river" and r.actor("hero").name == "伊文洛"
 		and hero.hp == hero.hp_max, "Remembering restores Ivenlo and summons the river")
 	expect(b.attack_power(enemy) < attack and not b.retreat(), "The river strips Kadran's strength and prevents retreat")
+	b.end_turn()
 	b.enemy_turn()
 	if b.can_act() and b.moves(4).has(1):
 		b.move(4, 1)

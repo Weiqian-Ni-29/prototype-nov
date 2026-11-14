@@ -43,8 +43,11 @@ var displayed_turn := -1
 var hint: Label
 var retreat: Button
 var menu: Button
-var wait_button: Button
+var end_turn_button: Button
 var cast_button: Button
+var enemy_deck_back: TextureRect
+var enemy_cards: Label
+var enemy_mana_ratio: Label
 var mana_ratio: Label
 var mana_row: VBoxContainer
 var mana_crystals: Array[TextureRect] = []
@@ -94,36 +97,6 @@ func setup(model: RefCounted, scene: Texture2D) -> void:
 	var layout := VBoxContainer.new()
 	layout.add_theme_constant_override("separation", 9)
 	frame.add_child(layout)
-	var actions := HBoxContainer.new()
-	actions.alignment = BoxContainer.ALIGNMENT_END
-	actions.add_theme_constant_override("separation", 4)
-	layout.add_child(actions)
-	wait_button = UI.button(actions, "让过", func():
-		if not is_attack_playing() and battle.pass_turn():
-			_notify_action())
-	cast_button = UI.button(actions, "", func():
-		if not is_attack_playing() and battle.play(selected_card, -1):
-			_notify_action())
-	cast_button.name = "CastChessSpell"
-	UI.accent(cast_button)
-	retreat = _icon_button(actions, "ChessRetreat", "撤退", RETREAT_ICON, func():
-		if not is_attack_playing():
-			retreat_requested.emit())
-	menu = _icon_button(actions, "ChessMainMenu", "主菜单", MENU_ICON, func():
-		if not is_attack_playing():
-			menu_requested.emit())
-	for button in [wait_button, cast_button, retreat, menu]:
-		if button.icon == null:
-			button.custom_minimum_size.y = 30
-		button.add_theme_font_size_override("font_size", 15)
-		for state in ["normal", "hover", "pressed", "disabled"]:
-			var style := button.get_theme_stylebox(state).duplicate() as StyleBox
-			style.content_margin_left = 8
-			style.content_margin_right = 8
-			style.content_margin_top = 3
-			style.content_margin_bottom = 3
-			button.add_theme_stylebox_override(state, style)
-
 	var battlefield := HBoxContainer.new()
 	battlefield.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	battlefield.add_theme_constant_override("separation", 10)
@@ -148,7 +121,7 @@ func setup(model: RefCounted, scene: Texture2D) -> void:
 		tile.mouse_exited.connect(_unhover_tile.bind(square))
 		cells.append(tile)
 	hint = UI.label(board_panel, "", 15, UI.GOLD, true)
-	_build_mana_display(battlefield)
+	_build_battle_controls(battlefield)
 
 	var footer := UI.panel(layout)
 	var hand_header := HBoxContainer.new()
@@ -220,22 +193,31 @@ func render() -> void:
 	var usable: bool = battle.can_act()
 	menu.disabled = false
 	retreat.disabled = not usable or battle.river
-	wait_button.visible = usable and battle.must_pass()
+	end_turn_button.disabled = not usable
+	end_turn_button.text = "敌方回合" if battle.turn == Battle.ENEMY else "结束回合"
 	cast_button.visible = usable and -1 in battle.card_targets(Battle.PLAYER, selected_card)
 	if cast_button.visible:
-		cast_button.text = "打出" + battle.definition(battle.hands[Battle.PLAYER][selected_card]).name
+		cast_button.tooltip_text = "打出" + battle.definition(battle.hands[Battle.PLAYER][selected_card]).name
 	var legal := _legal()
 	for square in cells.size():
 		_render_tile(cells[square], square, legal.get(square, ""))
 	if cast_button.visible:
-		hint.text = "点击右上角「%s」完成这一手。" % cast_button.text
+		hint.text = "点击右侧「确认出牌」%s。" % cast_button.tooltip_text
 	elif selected_square >= 0:
 		hint.text = "绿格可移动或部署 · 橙格可攻击"
 	elif selected_card >= 0:
-		hint.text = "选择高亮目标完成这一手"
+		hint.text = "选择高亮目标出牌。"
+	elif not usable:
+		hint.text = ""
+		if battle.turn == Battle.ENEMY:
+			var message: String = battle.last_enemy_action.get("message", "")
+			hint.text = "敌方行动中。" if message.is_empty() else "敌方 · " + message
+	elif not battle.can_move_piece():
+		hint.text = "本回合已走棋。可继续出牌，或结束回合。"
 	else:
-		hint.text = "选择一张手牌或一枚己方棋子。"
+		hint.text = "可出牌，或选一枚己方棋子移动或普攻。"
 	_render_hand()
+	_update_enemy_resources()
 	_update_draw_counts()
 	_update_mana_display()
 	if detail_kind == "unit" and hover_detail.visible:
@@ -261,13 +243,16 @@ func present_action() -> void:
 	turn_banner.hide()
 	menu.disabled = true
 	retreat.disabled = true
-	wait_button.hide()
+	end_turn_button.disabled = true
+	end_turn_button.text = "敌方回合" if battle.turn == Battle.ENEMY else "结束回合"
 	cast_button.hide()
 	hint.text = "%s 攻击 %s" % [event.attacker.name, event.defender.name]
 	for square in cells.size():
 		_render_tile(cells[square], square, "", square == event.from or square == event.target)
+		cells[square].disabled = true
 	for button in hand_buttons:
 		button.disabled = true
+	_update_enemy_resources()
 	attack_effect = AttackEffect.new()
 	add_child(attack_effect)
 	attack_effect.impact.connect(attack_impact.emit)
@@ -284,7 +269,7 @@ func _legal() -> Dictionary:
 	if not battle.can_act():
 		return {}
 	if selected_square >= 0:
-		return battle.moves(selected_square)
+		return battle.moves(selected_square) if battle.can_move_piece() else {}
 	var result := {}
 	if selected_card >= 0:
 		var card: Dictionary = battle.definition(battle.hands[Battle.PLAYER][selected_card])
@@ -303,7 +288,7 @@ func _select_tile(square: int) -> void:
 		return
 	if not battle.board[square].is_empty():
 		selected_card = -1
-		selected_square = square if selected_square != square and battle.board[square].side == Battle.PLAYER else -1
+		selected_square = square if battle.can_move_piece() and selected_square != square and battle.board[square].side == Battle.PLAYER else -1
 		render()
 
 func _select_card(index: int) -> void:
@@ -472,13 +457,55 @@ func _mark_commander(tile: Control) -> void:
 	plate.add_child(crown)
 	plate.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT, Control.PRESET_MODE_MINSIZE, STAT_INSET)
 
-func _build_mana_display(parent: HBoxContainer) -> void:
+func _build_battle_controls(parent: HBoxContainer) -> void:
 	var rail := VBoxContainer.new()
 	rail.name = "ChessMana"
-	rail.custom_minimum_size.x = 78
-	rail.alignment = BoxContainer.ALIGNMENT_END
 	rail.add_theme_constant_override("separation", 5)
 	parent.add_child(rail)
+	var navigation := HBoxContainer.new()
+	navigation.add_theme_constant_override("separation", 4)
+	rail.add_child(navigation)
+	retreat = _icon_button(navigation, "ChessRetreat", "撤退", RETREAT_ICON, func():
+		if not is_attack_playing():
+			retreat_requested.emit())
+	menu = _icon_button(navigation, "ChessMainMenu", "主菜单", MENU_ICON, func():
+		if not is_attack_playing():
+			menu_requested.emit())
+	var enemy := UI.panel(rail, Color("352e29"), Color("8b7057"))
+	enemy.get_parent().name = "ChessEnemyResources"
+	enemy.add_theme_constant_override("separation", 3)
+	var enemy_title := UI.label(enemy, "敌方", 15, UI.ORANGE)
+	enemy_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var cards := HBoxContainer.new()
+	cards.alignment = BoxContainer.ALIGNMENT_CENTER
+	cards.add_theme_constant_override("separation", 6)
+	enemy.add_child(cards)
+	var back_slot := Control.new()
+	back_slot.custom_minimum_size = Vector2(29, 40)
+	cards.add_child(back_slot)
+	enemy_deck_back = _card_back()
+	back_slot.add_child(enemy_deck_back)
+	enemy_deck_back.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	enemy_cards = UI.label(cards, "", 12, UI.INK)
+	enemy_cards.name = "EnemyCardCounts"
+	enemy_cards.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	var enemy_mana := HBoxContainer.new()
+	enemy_mana.alignment = BoxContainer.ALIGNMENT_CENTER
+	enemy.add_child(enemy_mana)
+	var crystal := _crystal()
+	crystal.custom_minimum_size = Vector2(16, 19)
+	enemy_mana.add_child(crystal)
+	enemy_mana_ratio = UI.label(enemy_mana, "", 15, UI.INK)
+	enemy_mana_ratio.name = "EnemyManaRatio"
+	cast_button = UI.button(rail, "确认出牌", func():
+		if not is_attack_playing() and battle.play(selected_card, -1):
+			_notify_action())
+	cast_button.name = "CastChessSpell"
+	cast_button.add_theme_font_size_override("font_size", 15)
+	UI.accent(cast_button)
+	var spacer := Control.new()
+	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	rail.add_child(spacer)
 	var title := UI.label(rail, "法力水晶", 15, UI.GOLD)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	mana_row = VBoxContainer.new()
@@ -491,6 +518,23 @@ func _build_mana_display(parent: HBoxContainer) -> void:
 	mana_ratio = UI.label(ratio_plate, "", 21, UI.INK)
 	mana_ratio.name = "ManaRatio"
 	mana_ratio.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	end_turn_button = UI.button(rail, "结束回合", func():
+		if not is_attack_playing() and battle.end_turn():
+			_notify_action())
+	end_turn_button.name = "ChessEndTurn"
+	end_turn_button.custom_minimum_size.y = 42
+	end_turn_button.add_theme_font_size_override("font_size", 16)
+	UI.accent(end_turn_button)
+
+func _update_enemy_resources() -> void:
+	var held: int = battle.hands[Battle.ENEMY].size()
+	var remaining: int = battle.piles[Battle.ENEMY].size()
+	var current: int = battle.mana[Battle.ENEMY]
+	var capacity: int = battle.mana_capacity[Battle.ENEMY]
+	enemy_cards.text = "手牌 %d\n牌库 %d" % [held, remaining]
+	enemy_deck_back.visible = remaining > 0
+	enemy_mana_ratio.text = "%d/%d" % [current, capacity]
+	enemy_mana_ratio.accessibility_name = "敌方法力 %d，本回合上限 %d" % [current, capacity]
 
 func _update_mana_display() -> void:
 	var capacity: int = battle.mana_capacity[Battle.PLAYER]
@@ -691,7 +735,7 @@ func _start_draw(index: int, delay: float) -> void:
 		fan_expansion = 0.0
 		for i in _resting_card_count():
 			_pose_card(i)
-		button.disabled = not battle.can_act()
+		button.disabled = is_attack_playing() or not battle.can_act()
 		_update_draw_counts())
 
 func _animate_draw(time: float, index: int, front: Control, back: TextureRect) -> void:
