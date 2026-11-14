@@ -486,6 +486,8 @@ func _choose_enemy_action() -> Dictionary:
 			preview._apply_card(ENEMY, option.id, option.card, option.target)
 		if preview.commanders[PLAYER].hp <= 0:
 			return option
+		if preview.commanders[ENEMY].hp <= 0:
+			continue
 		if next_player_round:
 			preview.round_number += 1
 			preview._advance_weather()
@@ -650,24 +652,10 @@ func _damage(piece: Dictionary, damage: int, pierce: int = 0) -> int:
 func _move_piece(from: int, target: int) -> void:
 	var piece: Dictionary = board[from]
 	var opponent: Dictionary = board[target]
-	var context := {"unit": piece, "victim": opponent, "from": from, "square": target,
-		"distance": maxi(absi(from % COLS - target % COLS), absi(_row(from) - _row(target))), "element": piece.element, "kind": "attack",
-		"armor_before": opponent.get("armor", 0), "bonus": 0, "pierce": 0, "block": 0}
+	var context := _attack_context(from, target)
 	if not opponent.is_empty():
-		if not public_preview:
-			last_attack = {"from": from, "target": target, "attacker": piece.duplicate(true),
-				"defender": opponent.duplicate(true), "distance": context.distance}
-		var damage := attack_power(piece)
-		if weather == "fog" and context.distance >= 2 and not (piece.element == "wind" and piece.side == PLAYER and "crossed_wind_chimes" in relic_ids):
-			damage -= 1
-		if piece.side == PLAYER:
-			_relic("attack", context)
-		piece.erase("sight")
-		_deal_hit(target, damage, context)
-		if not public_preview:
-			last_attack.merge({"hp_loss": context.hp_loss, "armor_loss": context.armor_loss,
-				"hp": context.hp_after, "armor": context.armor_after, "lethal": opponent.hp <= 0})
-		if opponent.hp > 0:
+		_exchange_hits(from, target, context)
+		if piece.hp <= 0 or opponent.hp > 0:
 			return
 		_log("%s占据%s。" % [piece.name, square_name(target)])
 	else:
@@ -683,12 +671,49 @@ func _move_piece(from: int, target: int) -> void:
 		_relic("enemy_advance")
 	_heal_adjacent(target)
 
-func _deal_hit(target: int, base: int, context: Dictionary) -> void:
+func _attack_context(from: int, target: int) -> Dictionary:
+	var unit: Dictionary = board[from]
 	var victim: Dictionary = board[target]
-	var old_hp: int = victim.hp
-	if victim.side == PLAYER:
+	return {"unit": unit, "victim": victim, "from": from, "square": target, "kind": "attack",
+		"distance": maxi(absi(from % COLS - target % COLS), absi(_row(from) - _row(target))),
+		"element": unit.element, "armor_before": victim.get("armor", 0), "bonus": 0, "pierce": 0, "block": 0}
+
+func _exchange_hits(from: int, target: int, strike: Dictionary) -> void:
+	var counter := _attack_context(target, from)
+	var attacker: Dictionary = strike.unit
+	var defender: Dictionary = strike.victim
+	if not public_preview:
+		last_attack = {"from": from, "target": target, "attacker": attacker.duplicate(true),
+			"defender": defender.duplicate(true), "distance": strike.distance}
+	if attacker.side == PLAYER:
+		_relic("attack", strike)
+	attacker.erase("sight")
+	var damage := _hit_damage(_basic_damage(strike), strike)
+	var retaliation := _hit_damage(_basic_damage(counter), counter)
+	# Resolve both hits before either one can trigger healing, extra armor, or removal.
+	_apply_hit(damage, strike)
+	_apply_hit(retaliation, counter)
+	_finish_hit(strike)
+	_finish_hit(counter)
+	if not public_preview:
+		last_attack.merge(_hit_result(strike))
+		last_attack.retaliation = _hit_result(counter)
+
+func _basic_damage(context: Dictionary) -> int:
+	var unit: Dictionary = context.unit
+	var damage := attack_power(unit)
+	if weather == "fog" and context.distance >= 2 and not (unit.element == "wind" and unit.side == PLAYER and "crossed_wind_chimes" in relic_ids):
+		damage -= 1
+	return damage
+
+func _hit_damage(base: int, context: Dictionary) -> int:
+	if context.victim.side == PLAYER:
 		_relic("incoming", context)
-	var damage := maxi(0, base + mini(2, int(context.bonus)) - int(context.block))
+	return maxi(0, base + mini(2, int(context.bonus)) - int(context.block))
+
+func _apply_hit(damage: int, context: Dictionary) -> void:
+	var victim: Dictionary = context.victim
+	var old_hp: int = victim.hp
 	var absorbed := _damage(victim, damage, int(context.pierce))
 	context.hp_loss = old_hp - int(victim.hp)
 	context.armor_loss = absorbed
@@ -696,12 +721,23 @@ func _deal_hit(target: int, base: int, context: Dictionary) -> void:
 	context.armor_after = victim.armor
 	_log("%s受到%d 点%s伤害%s。" % [victim.name, damage,
 		Cards.ELEMENTS.get(context.element, ""), "（护甲吸收 %d）" % absorbed if absorbed > 0 else ""])
+
+func _finish_hit(context: Dictionary) -> void:
+	var victim: Dictionary = context.victim
 	if victim.side == PLAYER and victim.hp > 0:
 		_relic("survive", context)
 	if victim.side == ENEMY:
 		_relic("hit", context)
 	if victim.hp <= 0:
-		_remove_piece(target, context)
+		_remove_piece(context.square, context)
+
+func _hit_result(context: Dictionary) -> Dictionary:
+	return {"hp_loss": context.hp_loss, "armor_loss": context.armor_loss,
+		"hp": context.hp_after, "armor": context.armor_after, "lethal": context.hp_after <= 0}
+
+func _deal_hit(base: int, context: Dictionary) -> void:
+	_apply_hit(_hit_damage(base, context), context)
+	_finish_hit(context)
 
 func _play_card(side: int, index: int, target: int) -> void:
 	var id: String = hands[side].pop_at(index)
@@ -740,7 +776,7 @@ func _apply_card(side: int, id: String, card: Dictionary, target: int) -> void:
 				if side == PLAYER:
 					_relic("spell", context)
 				var climate: Dictionary = Cards.WEATHER.get(weather, {}).get("damage", {})
-				_deal_hit(target, int(card.damage) + int(climate.get(element, 0)), context)
+				_deal_hit(int(card.damage) + int(climate.get(element, 0)), context)
 				if card.get("slow", false) and piece.hp > 0:
 					piece.slow_until = round_number + int(side == ENEMY and turns_started[PLAYER] > 0)
 			elif card.has("heal"):

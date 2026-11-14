@@ -493,11 +493,9 @@ func execute() -> void:
 	expect(b.river and b.weather == "river" and r.actor("hero").name == "伊文洛"
 		and hero.hp == hero.hp_max, "Remembering restores Ivenlo and summons the river")
 	expect(b.attack_power(enemy) < attack and not b.retreat(), "The river strips Kadran's strength and prevents retreat")
-	b.end_turn()
-	b.enemy_turn()
-	if b.can_act() and b.moves(4).has(1):
-		b.move(4, 1)
-	expect(r.data.status == "won" and story.main_ending().text.contains("卡德兰"), "Only beating Kadran completes the run")
+	b.hands[Chess.PLAYER] = ["ember_spell"]
+	expect(b.play(0, 1) and r.data.status == "won" and story.main_ending().text.contains("卡德兰"),
+		"Beating Kadran after the memory completes the run")
 	var loaded = Run.new()
 	expect(loaded.load_game(r.save_path).ok and loaded.data.status == "won" and loaded.data.chapter == 4, "Victory and chapter state survive reload")
 	print("STORY TESTS: %d checks, %d failures" % [checks, failures])
