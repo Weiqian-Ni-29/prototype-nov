@@ -9,6 +9,7 @@ const COLS = 3
 const ROWS = 4
 const PLAYER = 0
 const ENEMY = 1
+const MANA_LIMIT = 10
 const COMMANDER_DEFEAT_SCORE = 1000000
 
 var run: RefCounted
@@ -23,6 +24,8 @@ var draw_count := 0
 var weather := ""
 var weather_rounds := 0
 var round_number := 1
+var mana: Array[int] = [1, 1]
+var mana_capacity: Array[int] = [1, 1]
 var turn := PLAYER
 var player_has_played := false
 var enemy_has_played := false
@@ -168,7 +171,7 @@ func _ensure_opening_attack() -> void:
 	var deck: Array = piles[PLAYER]
 	for i in deck.size():
 		var card := definition(deck[i])
-		if card.has("damage") or card.get("slot") == "weapon":
+		if card.cost <= mana[PLAYER] and (card.has("damage") or card.get("slot") == "weapon"):
 			if i >= Cards.OPENING_HAND:
 				var replaced: String = deck[Cards.OPENING_HAND - 1]
 				deck[Cards.OPENING_HAND - 1] = deck[i]
@@ -237,7 +240,7 @@ static func enemy_definition(expedition: RefCounted, id: String, leader: bool = 
 		movement += "可沿无阻挡的直线攻击两格。"
 	if healer:
 		movement += "落位时治疗相邻友方。"
-	return {"name": source.name, "kind": "partner", "portrait": actor_id if npc or id == "war_god" else "",
+	return {"name": source.name, "kind": "partner", "cost": 2, "portrait": actor_id if npc or id == "war_god" else "",
 		"enemy_art": "" if npc or id == "war_god" else id, "element": "fire" if id == "war_god" else Cards.chess_element(source),
 		"attack": attack, "hp": hp, "armor": armor, "move": 1, "range": reach, "heal": 2 if healer else 0,
 		"diagonal": leader, "trait": movement}
@@ -331,7 +334,7 @@ func card_targets(side: int, index: int) -> Array[int]:
 	if index < 0 or index >= hands[side].size():
 		return targets
 	var card := definition(hands[side][index])
-	if card.is_empty():
+	if card.is_empty() or card.cost > mana[side]:
 		return targets
 	if card.has("weather"):
 		return [] if river else [-1]
@@ -412,6 +415,7 @@ func enemy_turn(hold_for_display: bool = false) -> void:
 		_end_enemy_turn()
 		return
 	if enemy_has_played and not enemy_drew:
+		_grow_mana(ENEMY)
 		enemy_drew = true
 		_draw(ENEMY)
 		if _check_outcome():
@@ -564,10 +568,15 @@ func _start_player_turn() -> void:
 		_relic("turn_start")
 		return
 	round_number += 1
+	_grow_mana(PLAYER)
 	_advance_weather()
 	_draw(PLAYER)
 	if not _check_outcome():
 		_relic("turn_start")
+
+func _grow_mana(side: int) -> void:
+	mana_capacity[side] = mini(MANA_LIMIT, mana_capacity[side] + 1)
+	mana[side] = mana_capacity[side]
 
 func _advance_weather() -> void:
 	if weather_rounds > 0:
@@ -683,6 +692,7 @@ func _play_card(side: int, index: int, target: int) -> void:
 	if side == ENEMY:
 		revealed_enemy.erase(id)
 	var card := definition(id)
+	mana[side] -= int(card.cost)
 	_apply_card(side, id, card, target)
 	if side == PLAYER and card.kind == "partner" and run.actor(id).get("joined", false) and id not in participants:
 		participants.append(id)

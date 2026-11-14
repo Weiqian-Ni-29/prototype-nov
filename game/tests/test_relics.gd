@@ -49,6 +49,8 @@ func check_effects(run: RefCounted) -> void:
 		and not run.data.relic_inventory.has("rain_bell") and run.data.weather == "sun", "The bell changes only battle weather and is spent once")
 	expect(combat.board[10].hp_max == 14 and combat.board[10].armor == 3, "Life seed and lamp badge modify the actual commander")
 	combat.hands[0] = ["support_vanguard"]
+	combat.mana_capacity[Battle.PLAYER] = 2
+	combat.mana[Battle.PLAYER] = 2
 	expect(combat.play(0, 6) and combat.board[6].hp_max == 8 and combat.board[6].armor == 4,
 		"The seeded earth partner gets its starting armor and the rain deployment bonus")
 	for id in Relics.DATA:

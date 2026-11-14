@@ -14,6 +14,9 @@ const ARMOR_ICON = preload("res://assets/ui/chess-armor.png")
 const RETREAT_ICON = preload("res://assets/ui/chess-retreat.svg")
 const MENU_ICON = preload("res://assets/ui/story-main-menu.svg")
 const CARD_BACK = preload("res://assets/ui/lantern-card-back.webp")
+const MANA_CRYSTAL = preload("res://assets/ui/mana-crystal.png")
+const MANA_LIT = Color("8deaff")
+const MANA_SPENT = Color("63798d")
 const STAT_SIZE = 38
 const STAT_INSET = 6
 const GRID_LINE = 2
@@ -39,6 +42,9 @@ var hint: Label
 var retreat: Button
 var wait_button: Button
 var cast_button: Button
+var mana_ratio: Label
+var mana_row: VBoxContainer
+var mana_crystals: Array[TextureRect] = []
 var hand: Control
 var pile: Label
 var deck_layers: Array[TextureRect] = []
@@ -110,9 +116,13 @@ func setup(model: RefCounted, scene: Texture2D) -> void:
 			style.content_margin_bottom = 3
 			button.add_theme_stylebox_override(state, style)
 
-	var board_panel := UI.panel(layout, Color("203b32"))
+	var battlefield := HBoxContainer.new()
+	battlefield.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	battlefield.add_theme_constant_override("separation", 10)
+	layout.add_child(battlefield)
+	var board_panel := UI.panel(battlefield, Color("203b32"))
 	var board_frame := board_panel.get_parent() as Control
-	board_frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	board_frame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var grid := GridContainer.new()
 	grid.name = "ChessGrid"
 	grid.columns = Battle.COLS
@@ -130,6 +140,7 @@ func setup(model: RefCounted, scene: Texture2D) -> void:
 		tile.mouse_exited.connect(_unhover_tile.bind(square))
 		cells.append(tile)
 	hint = UI.label(board_panel, "", 15, UI.GOLD, true)
+	_build_mana_display(battlefield)
 
 	var footer := UI.panel(layout)
 	var hand_header := HBoxContainer.new()
@@ -215,6 +226,7 @@ func render() -> void:
 		hint.text = "选择一张手牌或一枚己方棋子。"
 	_render_hand()
 	_update_draw_counts()
+	_update_mana_display()
 	if detail_kind == "unit" and hover_detail.visible:
 		if battle.board[detail_index].is_empty():
 			_hide_detail()
@@ -250,6 +262,10 @@ func _select_tile(square: int) -> void:
 
 func _select_card(index: int) -> void:
 	if not battle.can_act() or _card_is_drawing(index):
+		return
+	var card: Dictionary = battle.definition(hand_ids[index])
+	if card.cost > battle.mana[Battle.PLAYER]:
+		hint.text = "法力不足 · 需要 %d 点，当前 %d 点。" % [card.cost, battle.mana[Battle.PLAYER]]
 		return
 	selected_square = -1
 	selected_card = -1 if selected_card == index else index
@@ -401,6 +417,50 @@ func _mark_commander(tile: Button) -> void:
 	plate.add_child(crown)
 	plate.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT, Control.PRESET_MODE_MINSIZE, STAT_INSET)
 
+func _build_mana_display(parent: HBoxContainer) -> void:
+	var rail := VBoxContainer.new()
+	rail.name = "ChessMana"
+	rail.custom_minimum_size.x = 78
+	rail.alignment = BoxContainer.ALIGNMENT_END
+	rail.add_theme_constant_override("separation", 5)
+	parent.add_child(rail)
+	var title := UI.label(rail, "法力水晶", 15, UI.GOLD)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	mana_row = VBoxContainer.new()
+	mana_row.name = "ManaCrystals"
+	mana_row.add_theme_constant_override("separation", 2)
+	rail.add_child(mana_row)
+	var ratio_plate := PanelContainer.new()
+	ratio_plate.add_theme_stylebox_override("panel", UI.box(Color("233c35"), Color("83856b"), 3, 5))
+	rail.add_child(ratio_plate)
+	mana_ratio = UI.label(ratio_plate, "", 21, UI.INK)
+	mana_ratio.name = "ManaRatio"
+	mana_ratio.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+
+func _update_mana_display() -> void:
+	var capacity: int = battle.mana_capacity[Battle.PLAYER]
+	var current: int = battle.mana[Battle.PLAYER]
+	while mana_crystals.size() < capacity:
+		var crystal := _crystal()
+		crystal.custom_minimum_size.y = 24
+		mana_row.add_child(crystal)
+		mana_row.move_child(crystal, 0)
+		mana_crystals.append(crystal)
+	for index in mana_crystals.size():
+		var crystal := mana_crystals[index]
+		crystal.visible = index < capacity
+		crystal.self_modulate = Color.WHITE if index < current else MANA_SPENT
+	mana_ratio.text = "%d/%d" % [current, capacity]
+	mana_ratio.accessibility_name = "可用法力 %d，本回合上限 %d" % [current, capacity]
+
+func _crystal() -> TextureRect:
+	var crystal := TextureRect.new()
+	crystal.texture = MANA_CRYSTAL
+	crystal.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	crystal.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	crystal.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return crystal
+
 func _build_deck(parent: HBoxContainer) -> void:
 	var column := VBoxContainer.new()
 	column.name = "ChessDeck"
@@ -459,11 +519,19 @@ func _render_hand() -> void:
 			var entry: Dictionary = battle.definition(hand_ids[i])
 			var button := UI.button(hand, "", _select_card.bind(i))
 			button.name = "HandCard%d" % i
-			button.accessibility_name = entry.name
+			button.accessibility_name = "%s，%d 费" % [entry.name, entry.cost]
 			button.mouse_entered.connect(_hover_card.bind(i))
 			button.mouse_exited.connect(_unhover_card.bind(i))
+			var face := Control.new()
+			UI.button_body(button, face, 0)
 			var content := VBoxContainer.new()
-			UI.button_body(button, content, 8)
+			content.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			face.add_child(content)
+			content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			content.offset_left = 8
+			content.offset_right = -8
+			content.offset_top = 12
+			content.offset_bottom = -8
 			content.add_theme_constant_override("separation", 2)
 			UI.art(content, entry, Vector2.ZERO).size_flags_vertical = Control.SIZE_EXPAND_FILL
 			var short_name: String = entry.name.get_slice(" · ", 0) if entry.kind == "equipment" else entry.name
@@ -472,6 +540,17 @@ func _render_hand() -> void:
 			title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 			var kind := UI.label(content, ("临时 · " if entry.get("temporary", false) else "") + Cards.KINDS[entry.kind], 13, UI.MUTED)
 			kind.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			var cost_badge := _crystal()
+			cost_badge.name = "ManaCost"
+			cost_badge.size = Vector2(25, 32)
+			face.add_child(cost_badge)
+			cost_badge.position = Vector2(4, 4)
+			var cost := UI.label(cost_badge, str(entry.cost), 19, Color("fff8e8"))
+			cost.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			cost.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			cost.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			cost.add_theme_color_override("font_outline_color", Color("172433"))
+			cost.add_theme_constant_override("outline_size", 4)
 			hand_buttons.append(button)
 		pending_animation = mini(int(battle.draw_count), hand_ids.size())
 		draws_before_departure = pending_animation
@@ -481,9 +560,18 @@ func _render_hand() -> void:
 		var button := hand_buttons[i]
 		var card: Dictionary = battle.definition(hand_ids[i])
 		var tint: Color = {"partner": Color("294639"), "weapon": Color("494033"), "equipment": Color("494033"), "defense": Color("344b50"), "spell": Color("3a4659")}[card.kind]
+		var affordable: bool = card.cost <= battle.mana[Battle.PLAYER]
+		var face := button.get_child(0) as Control
+		var cost_badge := face.get_node("ManaCost") as TextureRect
+		cost_badge.self_modulate = Color.WHITE if affordable else MANA_SPENT
+		if not affordable:
+			tint = tint.darkened(0.22)
 		for state in ["normal", "disabled", "hover", "pressed"]:
 			var highlighted: bool = i == selected_card or state in ["hover", "pressed"]
-			button.add_theme_stylebox_override(state, UI.box(tint, UI.GOLD if highlighted else Color("96957a"), 6, 8))
+			var border := Color("68736e")
+			if affordable:
+				border = UI.GOLD if highlighted else MANA_LIT if battle.can_act() else Color("96957a")
+			button.add_theme_stylebox_override(state, UI.box(tint, border, 6, 8))
 		var in_flight := _card_is_drawing(i)
 		button.disabled = in_flight or not battle.can_act()
 		if i >= hand_buttons.size() - pending_animation:
@@ -713,6 +801,9 @@ func _fill_unit_detail(unit: Dictionary) -> void:
 
 func _fill_card_detail(card: Dictionary) -> void:
 	_detail_header(card, ("临时 · " if card.get("temporary", false) else "") + Cards.KINDS[card.kind] + "牌", UI.MUTED)
+	var cost_text := "费用 %d" % card.cost
+	var affordable: bool = card.cost <= battle.mana[Battle.PLAYER]
+	UI.label(hover_detail_body, cost_text if affordable else cost_text + " · 法力不足", 14, MANA_LIT if affordable else UI.ORANGE)
 	var summary := _card_stats(card)
 	if not summary.is_empty():
 		UI.element_summary(hover_detail_body, card.get("element", ""), summary)
