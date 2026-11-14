@@ -360,12 +360,36 @@ func check_ui() -> void:
 		await click(view.hand_buttons[-1])
 		expect(view.selected_card == 3 and (not view._legal().is_empty() or view.cast_button.visible),
 			"Clicking the drawn card raises it and offers legal targets or a spell confirmation")
+		expect(is_zero_approx(view.hand_buttons[-1].rotation)
+			and view.hand_buttons[-1].position.y < view.hand_buttons[0].position.y,
+			"The selected hand card straightens and rises above the fan")
 		await click(menu)
 		await click(button_named(game.modal_layer, "确认"))
 		game._continue_run()
 		expect(game.modal_layer.find_child("CardDeckEditor", true, false) != null and not game.run.data.pending_battle.is_empty(),
 			"Continuing resumes the saved encounter before the board")
 	game.queue_free()
+	await process_frame
+
+func check_hand_layout() -> void:
+	var battle = fixture()
+	battle.hands[Chess.PLAYER] = Cards.DEFAULT_DECK.duplicate()
+	battle.draw_count = 0
+	var view := ChessView.new()
+	root.add_child(view)
+	view.setup(battle, null)
+	await process_frame
+	await process_frame
+	var hand_bounds := Rect2(Vector2.ZERO, view.hand.size).grow(0.1)
+	var all_inside := true
+	for button in view.hand_buttons:
+		var card_transform := view.hand.get_global_transform().affine_inverse() * button.get_global_transform()
+		for corner in [Vector2.ZERO, Vector2(button.size.x, 0), button.size, Vector2(0, button.size.y)]:
+			all_inside = all_inside and hand_bounds.has_point(card_transform * corner)
+	expect(view.hand_buttons.size() == Cards.DECK_SIZE and all_inside, "A full hand fits inside its panel")
+	expect(view.hand_buttons.all(func(button): return is_equal_approx(button.size.aspect(), 5.0 / 7.0)),
+		"Every hand card has a five-by-seven portrait aspect ratio")
+	view.queue_free()
 	await process_frame
 
 func check_board_badges() -> void:
@@ -513,6 +537,7 @@ func execute() -> void:
 	check_companion_growth()
 	check_battle_income()
 	await check_ui()
+	await check_hand_layout()
 	await check_board_badges()
 	await check_hover_details()
 	print("CHESS BATTLE: %d checks, %d failures" % [checks, failures])

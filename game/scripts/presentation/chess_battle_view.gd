@@ -14,6 +14,8 @@ const ARMOR_ICON = preload("res://assets/ui/chess-armor.png")
 const STAT_SIZE = 38
 const STAT_INSET = 6
 const GRID_LINE = 2
+const HAND_CARD_WIDTH = 114.0
+const HAND_CARD_HEIGHT = HAND_CARD_WIDTH * 7.0 / 5.0
 
 var battle: RefCounted
 var cells: Array[Button] = []
@@ -382,10 +384,15 @@ func _render_hand() -> void:
 			button.mouse_entered.connect(_hover_card.bind(i))
 			button.mouse_exited.connect(_unhover_card.bind(i))
 			var content := VBoxContainer.new()
-			UI.button_body(button, content)
-			UI.art(content, entry, Vector2(0, 83))
-			UI.label(content, entry.name, 16)
-			UI.label(content, ("临时 · " if entry.get("temporary", false) else "") + Cards.KINDS[entry.kind], 13, UI.MUTED)
+			UI.button_body(button, content, 8)
+			content.add_theme_constant_override("separation", 2)
+			UI.art(content, entry, Vector2.ZERO).size_flags_vertical = Control.SIZE_EXPAND_FILL
+			var short_name: String = entry.name.get_slice(" · ", 0) if entry.kind == "equipment" else entry.name
+			var title := UI.label(content, short_name, 16)
+			title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+			var kind := UI.label(content, ("临时 · " if entry.get("temporary", false) else "") + Cards.KINDS[entry.kind], 13, UI.MUTED)
+			kind.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			hand_buttons.append(button)
 		pending_animation = mini(int(battle.draw_count), hand_ids.size())
 		battle.draw_count = 0
@@ -394,8 +401,9 @@ func _render_hand() -> void:
 		var button := hand_buttons[i]
 		var card: Dictionary = battle.definition(hand_ids[i])
 		var tint: Color = {"partner": Color("294639"), "weapon": Color("494033"), "equipment": Color("494033"), "defense": Color("344b50"), "spell": Color("3a4659")}[card.kind]
-		for state in ["normal", "disabled", "hover"]:
-			button.add_theme_stylebox_override(state, UI.box(tint, UI.GOLD if i == selected_card or state == "hover" else Color("78917c")))
+		for state in ["normal", "disabled", "hover", "pressed"]:
+			var highlighted: bool = i == selected_card or state in ["hover", "pressed"]
+			button.add_theme_stylebox_override(state, UI.box(tint, UI.GOLD if highlighted else Color("96957a"), 6, 8))
 		button.disabled = not battle.can_act()
 		if i not in animating:
 			_pose_card(i)
@@ -410,6 +418,8 @@ func _layout_fan(generation: int) -> void:
 	var drawn := pending_animation
 	pending_animation = 0
 	for i in hand_buttons.size():
+		if i in animating:
+			continue
 		_pose_card(i)
 		if i < hand_buttons.size() - drawn:
 			continue
@@ -434,16 +444,19 @@ func _pose_card(index: int) -> void:
 	if index >= hand_buttons.size():
 		return
 	var button := hand_buttons[index]
-	var card_width := clampf(hand.size.x * 0.13, 82, 138)
-	var span := minf(83, maxf(12, (hand.size.x - card_width - 22) / maxi(1, hand_buttons.size() - 1)))
+	# Allow room for the two outside corners when the cards tilt.
+	var available := maxf(0.0, hand.size.x - HAND_CARD_WIDTH - 48.0)
+	var span := minf(HAND_CARD_WIDTH * 0.92, available / maxi(1, hand_buttons.size() - 1))
 	var center := float(hand_buttons.size() - 1) / 2.0
 	var offset := float(index) - center
 	var curve := offset / maxf(1.0, center)
 	var raised := index == hovered or index == selected_card
-	button.size = Vector2(card_width, 139)
-	button.pivot_offset = Vector2(card_width / 2.0, 122)
-	button.position = Vector2(hand.size.x / 2.0 - card_width / 2.0 + offset * span, 1.0 if raised else 17.0 + curve * curve * 14.0)
-	button.rotation = 0.0 if raised else deg_to_rad(curve * 10)
+	var resting_y := hand.size.y - HAND_CARD_HEIGHT - 13.0
+	button.size = Vector2(HAND_CARD_WIDTH, HAND_CARD_HEIGHT)
+	button.pivot_offset = Vector2(HAND_CARD_WIDTH * 0.5, HAND_CARD_HEIGHT - 12.0)
+	button.position = Vector2((hand.size.x - HAND_CARD_WIDTH) * 0.5 + offset * span,
+		resting_y - 16.0 if raised else resting_y + curve * curve * 4.0)
+	button.rotation = 0.0 if raised else deg_to_rad(curve * 8.0)
 	button.z_index = 24 if raised else index
 
 func _hover_card(index: int) -> void:
