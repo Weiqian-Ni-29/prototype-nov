@@ -1261,7 +1261,7 @@ func _deck_dialog(encounter: bool = false, back_to_rewards: Callable = Callable(
 func _show_chess_view() -> void:
 	chess_view = ChessView.new()
 	ui.add_child(chess_view)
-	chess_view.setup(combat, _node_title(combat.position), _story_texture(_story_scene_at(combat.position)))
+	chess_view.setup(combat, _story_texture(_story_scene_at(combat.position)))
 	chess_view.acted.connect(func():
 		sound.play("click")
 		battle_timer = 0.55)

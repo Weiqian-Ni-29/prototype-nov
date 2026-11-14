@@ -15,7 +15,6 @@ var selected_square := -1
 var selected_card := -1
 var inspected_square := 10
 var phase: Label
-var enemy_action_label: Label
 var turn_banner: PanelContainer
 var turn_banner_text: Label
 var turn_banner_tween: Tween
@@ -41,7 +40,7 @@ var detail_serial := 0
 var detail_kind := ""
 var detail_index := -1
 
-func setup(model: RefCounted, title: String, scene: Texture2D) -> void:
+func setup(model: RefCounted, scene: Texture2D) -> void:
 	name = "ChessBattle"
 	battle = model
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -66,20 +65,22 @@ func setup(model: RefCounted, title: String, scene: Texture2D) -> void:
 	var layout := VBoxContainer.new()
 	layout.add_theme_constant_override("separation", 9)
 	frame.add_child(layout)
-	var header := UI.panel(layout)
-	var headline := HBoxContainer.new()
-	header.add_child(headline)
-	UI.label(headline, title, 26, UI.GOLD).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	phase = UI.label(headline, "", 18, UI.GREEN)
-	phase.name = "ChessTurn"
-	var target := HBoxContainer.new()
-	header.add_child(target)
-	UI.label(target, "击倒%s获胜 · 旅人倒下即失败" % battle.commanders[Battle.ENEMY].name, 16, UI.GOLD, true).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	retreat = UI.button(target, "撤退", func(): retreat_requested.emit())
-	UI.button(target, "主菜单", func(): menu_requested.emit())
-	enemy_action_label = UI.label(header, "", 15, UI.ORANGE, true)
-	enemy_action_label.name = "ChessEnemyAction"
-	enemy_action_label.custom_minimum_size.y = 20
+	var actions := HBoxContainer.new()
+	actions.alignment = BoxContainer.ALIGNMENT_END
+	actions.add_theme_constant_override("separation", 4)
+	layout.add_child(actions)
+	retreat = UI.button(actions, "撤退", func(): retreat_requested.emit())
+	var menu := UI.button(actions, "主菜单", func(): menu_requested.emit())
+	for button in [retreat, menu]:
+		button.custom_minimum_size.y = 30
+		button.add_theme_font_size_override("font_size", 15)
+		for state in ["normal", "hover", "pressed", "disabled"]:
+			var style := button.get_theme_stylebox(state).duplicate() as StyleBox
+			style.content_margin_left = 8
+			style.content_margin_right = 8
+			style.content_margin_top = 3
+			style.content_margin_bottom = 3
+			button.add_theme_stylebox_override(state, style)
 
 	var body := HBoxContainer.new()
 	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -91,37 +92,28 @@ func setup(model: RefCounted, title: String, scene: Texture2D) -> void:
 	board_frame.size_flags_stretch_ratio = 2.7
 	var grid := GridContainer.new()
 	grid.name = "ChessGrid"
-	grid.columns = 4
+	grid.columns = Battle.COLS
 	grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	grid.add_theme_constant_override("h_separation", 4)
 	grid.add_theme_constant_override("v_separation", 4)
 	board_panel.add_child(grid)
-	UI.label(grid, "")
-	for lane in ["左路", "中路", "右路"]:
-		var label := UI.label(grid, lane, 15, UI.MUTED)
-		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	for row in Battle.ROWS:
-		var rank := UI.label(grid, ["敌方\n后排", "敌方\n前排", "己方\n前排", "己方\n后排"][row],
-			15, UI.ORANGE if row < 2 else UI.GREEN)
-		rank.custom_minimum_size.x = 58
-		rank.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		for col in Battle.COLS:
-			var square := row * Battle.COLS + col
-			var tile := UI.button(grid, "", _select_tile.bind(square))
-			tile.name = "ChessSquare%d" % square
-			tile.custom_minimum_size = Vector2(102, 88)
-			tile.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			tile.size_flags_vertical = Control.SIZE_EXPAND_FILL
-			tile.mouse_entered.connect(_hover_tile.bind(square))
-			tile.mouse_exited.connect(_unhover_tile.bind(square))
-			cells.append(tile)
+	for square in Battle.ROWS * Battle.COLS:
+		var tile := UI.button(grid, "", _select_tile.bind(square))
+		tile.name = "ChessSquare%d" % square
+		tile.custom_minimum_size = Vector2(102, 88)
+		tile.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tile.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		tile.mouse_entered.connect(_hover_tile.bind(square))
+		tile.mouse_exited.connect(_unhover_tile.bind(square))
+		cells.append(tile)
 	hint = UI.label(board_panel, "", 15, UI.GOLD, true)
 	var side := VBoxContainer.new()
 	side.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	side.custom_minimum_size.x = 245
 	body.add_child(side)
 	var env := UI.panel(side)
+	phase = UI.label(env, "", 18, UI.GREEN, true)
+	phase.name = "ChessTurn"
 	weather = UI.label(env, "", 16, UI.MUTED, true)
 	weather.name = "ChessWeather"
 	var relic := UI.panel(side)
@@ -224,7 +216,6 @@ func _show_turn_banner() -> void:
 func render() -> void:
 	var usable: bool = battle.can_act()
 	var turn_text := "我方回合 · 可走 1 手" if usable else "敌方回合"
-	enemy_action_label.text = "敌方上一手 · " + battle.last_enemy_action.message if not battle.last_enemy_action.is_empty() else ""
 	if not battle.outcome.is_empty():
 		turn_text = {"victory": "敌方主战者倒下", "defeat": "己方主战者倒下", "retreat": "已撤退"}[battle.outcome]
 	phase.text = "第 %d 轮 · %s" % [battle.round_number, turn_text]
@@ -306,6 +297,7 @@ func _render_tile(tile: Button, square: int, action: String) -> void:
 	var unit: Dictionary = battle.board[square]
 	var empty := unit.is_empty()
 	var row := floori(float(square) / Battle.COLS)
+	var square_label := ("敌方" if row < 2 else "己方") + Battle.square_name(square)
 	var light := (row + square % Battle.COLS) % 2 == 0
 	var tint := (Color("5b493b") if light else Color("483a31")) if row < 2 else (Color("375648") if light else Color("29453b"))
 	var border := Color("886d58") if row < 2 else Color("638473")
@@ -330,7 +322,7 @@ func _render_tile(tile: Button, square: int, action: String) -> void:
 	UI.clear(tile)
 	if empty:
 		tile.text = "+" if action == "deploy" else "●" if action == "move" else "·"
-		tile.accessibility_name = Battle.square_name(square) + "空格"
+		tile.accessibility_name = square_label + "空格"
 		return
 	tile.text = ""
 	var content := HBoxContainer.new()
@@ -344,16 +336,16 @@ func _render_tile(tile: Button, square: int, action: String) -> void:
 	text.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content.add_child(text)
 	UI.label(text, unit.name, 17).text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	var attribute: String = Cards.ELEMENTS.get(unit.element, "物理")
-	var role := ("主战者 · " if unit.leader else "") + attribute
+	var details: String = Cards.ELEMENTS.get(unit.element, "物理")
 	if not unit.weapon.is_empty():
-		role += " · " + battle._weapon(unit).name
-	UI.label(text, role, 13, UI.GOLD if unit.leader else UI.MUTED, true)
+		details += " · " + battle._weapon(unit).name
+	UI.label(text, details, 13, UI.GOLD if unit.leader else UI.MUTED, true)
 	var stats := "攻 %d · 血 %d/%d · 甲 %d" % [battle.attack_power(unit), unit.hp, unit.hp_max, unit.armor]
 	UI.label(text, stats, 14, UI.INK, true)
 	if action == "attack":
 		UI.label(text, "可攻击 · %d 伤害" % battle.attack_power(battle.board[selected_square]), 13, UI.ORANGE)
-	tile.accessibility_name = "%s %s %s" % [unit.name, role, stats]
+	var accessible_name: String = unit.name + (" 主战者" if unit.leader else "")
+	tile.accessibility_name = "%s %s %s %s" % [square_label, accessible_name, details, stats]
 
 func _mark_commander(tile: Button) -> void:
 	var plate := PanelContainer.new()
