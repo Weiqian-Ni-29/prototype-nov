@@ -2,7 +2,7 @@ extends RefCounted
 
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
-const DECK_SIZE = 12
+const MIN_DECK_SIZE = 12
 const OPENING_HAND = 3
 const STARTING_PARTNER_HP_BONUS = 2
 const RECRUIT_PRICE = 8
@@ -148,8 +148,8 @@ static func migrate_deck(deck: Array, actors: Dictionary) -> Array:
 static func limit(id: String) -> int:
 	return 2 if ACTIONS.has(id) else 1
 
-static func valid_deck(deck: Variant, actors: Dictionary, require_full: bool = false, state: Dictionary = {}, legacy_support: bool = false) -> bool:
-	if not deck is Array or deck.size() > DECK_SIZE or (require_full and deck.size() != DECK_SIZE):
+static func valid_deck(deck: Variant, actors: Dictionary, require_minimum: bool = false, state: Dictionary = {}, legacy_support: bool = false) -> bool:
+	if not deck is Array or (require_minimum and deck.size() < MIN_DECK_SIZE):
 		return false
 	var available := collection(actors, state, legacy_support)
 	var counts := {}
