@@ -211,13 +211,19 @@ func render() -> void:
 	end_turn_button.disabled = not usable
 	end_turn_button.text = "敌方回合" if battle.turn == Battle.ENEMY else "结束回合"
 	var legal := _legal()
-	var equipment_slot := _selected_equipment_slot()
+	var selected_equipment := _selected_card_definition()
+	var equipment_slot := Cards.equipment_slot(selected_equipment)
 	for square in cells.size():
 		_render_tile(cells[square], square, legal.get(square, ""))
 	if selected_square >= 0:
 		hint.text = "绿格可移动或部署 · 橙格可攻击"
 	elif selected_card >= 0:
-		hint.text = "选择高亮棋子装备，替换下来的装备牌会回到手牌。" if not equipment_slot.is_empty() else "选择高亮目标出牌。"
+		if equipment_slot == "weapon":
+			var required := Cards.attack_type(selected_equipment)
+			hint.text = "当前没有可装备的%s棋子。" % required if legal.is_empty() \
+				else "仅%s棋子可装备。替换下来的武器牌会回到手牌。" % required
+		else:
+			hint.text = "选择高亮棋子装备，替换下来的装备牌会回到手牌。" if not equipment_slot.is_empty() else "选择高亮目标出牌。"
 	elif not usable:
 		hint.text = ""
 		if battle.turn == Battle.ENEMY:
@@ -334,11 +340,14 @@ func _legal() -> Dictionary:
 			result[square] = "deploy" if card.kind == "partner" else "spell_hit" if card.has("damage") else "equip"
 	return result
 
-func _selected_equipment_slot() -> String:
+func _selected_card_definition() -> Dictionary:
 	var cards: Array = battle.hands[Battle.PLAYER]
 	if selected_card < 0 or selected_card >= cards.size():
-		return ""
-	return Cards.equipment_slot(battle.definition(cards[selected_card]))
+		return {}
+	return battle.definition(cards[selected_card])
+
+func _selected_equipment_slot() -> String:
+	return Cards.equipment_slot(_selected_card_definition())
 
 func _select_tile(square: int) -> void:
 	if is_action_playing() or not battle.can_act():
@@ -348,7 +357,12 @@ func _select_tile(square: int) -> void:
 		if accepted:
 			_notify_action()
 		return
-	if not battle.board[square].is_empty():
+	var unit: Dictionary = battle.board[square]
+	var picked := _selected_card_definition()
+	if unit.get("side", -1) == Battle.PLAYER and not Cards.weapon_fits(picked, unit):
+		hint.text = "「%s」仅%s棋子可装备。" % [picked.name.get_slice(" · ", 0), Cards.attack_type(picked)]
+		return
+	if not unit.is_empty():
 		selected_card = -1
 		selected_square = square if battle.can_move_piece() and selected_square != square and battle.board[square].side == Battle.PLAYER else -1
 		render()
@@ -441,7 +455,7 @@ func _render_tile(tile: Button, square: int, action: String, hide_face: bool = f
 	tile.text = ""
 	_build_piece_face(tile, unit, action)
 	var stats := "攻 %d · 血 %d/%d · 甲 %d" % [battle.attack_power(unit), unit.hp, unit.hp_max, unit.armor]
-	var accessible_parts: Array[String] = [square_label, unit.name]
+	var accessible_parts: Array[String] = [square_label, unit.name, Cards.attack_type(unit)]
 	if unit.leader:
 		accessible_parts.append("主战者")
 	var element_name: String = Cards.ELEMENTS.get(unit.element, "")
@@ -492,7 +506,7 @@ func _build_piece_face(tile: Control, unit: Dictionary, action: String) -> void:
 	if pending_reveal and tile == cells[battle.played_cards[-1].target]:
 		targeted_slot = battle.played_cards[-1].slot
 	for slot in Gear.SLOTS:
-		_build_equipment_slot(rack, slot, battle.equipment_at(unit, slot), targeted_slot == slot)
+		_build_equipment_slot(rack, slot, battle.equipment_at(unit, slot), _slot_icon(unit, slot), targeted_slot == slot)
 	var size_identity := func():
 		identity.custom_minimum_size.x = clampf(tile.size.x * 0.26, 54.0, 144.0)
 	content.resized.connect(size_identity)
@@ -503,8 +517,17 @@ func _build_piece_face(tile: Control, unit: Dictionary, action: String) -> void:
 	_stat_badge(tile, "Attack", ATTACK_ICON, attack, Control.PRESET_BOTTOM_LEFT)
 	_stat_badge(tile, "Health", HEALTH_ICON, unit.hp, Control.PRESET_BOTTOM_RIGHT, 4)
 	_stat_badge(tile, "Armor", ARMOR_ICON, unit.armor, Control.PRESET_TOP_RIGHT)
+	var tag := UI.attack_tag(tile, unit)
+	tag.set_anchors_and_offsets_preset(Control.PRESET_CENTER_RIGHT, Control.PRESET_MODE_MINSIZE, STAT_INSET + 2)
+	# At the minimum tile height the two stat shields nearly meet.
+	var fit_tag := func(): tag.visible = tile.size.y >= 2 * (STAT_SIZE + STAT_INSET) + tag.get_combined_minimum_size().y + 4
+	tile.resized.connect(fit_tag)
+	fit_tag.call()
 
-func _build_equipment_slot(rack: HBoxContainer, slot: String, item: Dictionary, targeted: bool) -> void:
+func _slot_icon(unit: Dictionary, slot: String) -> String:
+	return "chess_bow" if slot == "weapon" and Cards.is_ranged(unit) else SLOT_ICONS[slot]
+
+func _build_equipment_slot(rack: HBoxContainer, slot: String, item: Dictionary, empty_icon: String, targeted: bool) -> void:
 	var equipped := not item.is_empty()
 	var cell := VBoxContainer.new()
 	cell.name = slot
@@ -526,7 +549,7 @@ func _build_equipment_slot(rack: HBoxContainer, slot: String, item: Dictionary, 
 	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content.add_theme_constant_override("separation", 0)
 	frame.add_child(content)
-	var art := UI.art(content, item if equipped else {"icon": SLOT_ICONS[slot]}, Vector2.ZERO)
+	var art := UI.art(content, item if equipped else {"icon": empty_icon}, Vector2.ZERO)
 	art.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	if not equipped:
 		art.self_modulate = Color(0.88, 0.85, 0.76, 0.28)
@@ -778,8 +801,17 @@ func _build_card_face(parent: Control, entry: Dictionary, header: String = "") -
 	var title := UI.label(content, short_name, 16)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	var kind := UI.label(content, ("临时 · " if entry.get("temporary", false) else "") + Cards.KINDS[entry.kind], 13, UI.MUTED)
-	kind.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var kind_text: String = ("临时 · " if entry.get("temporary", false) else "") + Cards.KINDS[entry.kind]
+	if not Cards.card_attack_type(entry).is_empty():
+		var footer := HBoxContainer.new()
+		footer.alignment = BoxContainer.ALIGNMENT_CENTER
+		footer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		content.add_child(footer)
+		UI.label(footer, kind_text, 12, UI.MUTED)
+		UI.attack_tag(footer, entry, 11)
+	else:
+		var kind := UI.label(content, kind_text, 13, UI.MUTED)
+		kind.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var cost_badge := _crystal()
 	cost_badge.name = "ManaCost"
 	cost_badge.size = Vector2(25, 32)
@@ -1048,11 +1080,14 @@ func _fill_equipment_detail(unit: Dictionary, square: int, slot: String) -> void
 	var item: Dictionary = battle.equipment_at(unit, slot)
 	var category: String = SLOT_LABELS[slot]
 	if item.is_empty():
-		_detail_header({"name": "空槽", "icon": SLOT_ICONS[slot]}, category, UI.MUTED)
+		_detail_header({"name": "空槽", "icon": _slot_icon(unit, slot)}, category, UI.MUTED)
 		if unit.side == Battle.PLAYER:
-			UI.label(hover_detail_body, "可打出一张%s牌来装备。" % category, 13, UI.INK, true)
+			var weapon_type := Cards.attack_type(unit) if slot == "weapon" else ""
+			UI.label(hover_detail_body, "可打出一张%s%s牌来装备。" % [weapon_type, category], 13, UI.INK, true)
 		return
 	var status := category + " · 已装备"
+	if slot == "weapon":
+		status = "%s%s · 已装备" % [Cards.attack_type(item), category]
 	if item.get("temporary", false):
 		status += " · 临时"
 	_detail_header(item, status, UI.GREEN)
@@ -1064,7 +1099,11 @@ func _fill_equipment_detail(unit: Dictionary, square: int, slot: String) -> void
 		UI.label(hover_detail_body, "点击替换，原装备牌回到手牌。", 13, UI.GREEN, true)
 
 func _fill_card_detail(card: Dictionary) -> void:
-	_detail_header(card, ("临时 · " if card.get("temporary", false) else "") + Cards.KINDS[card.kind] + "牌", UI.MUTED)
+	var kind: String = ("临时 · " if card.get("temporary", false) else "") + Cards.KINDS[card.kind] + "牌"
+	var type := Cards.card_attack_type(card)
+	if not type.is_empty():
+		kind += " · " + type
+	_detail_header(card, kind, UI.MUTED)
 	var cost_text := "费用 %d" % card.cost
 	var affordable: bool = card.cost <= battle.mana[Battle.PLAYER]
 	UI.label(hover_detail_body, cost_text if affordable else cost_text + " · 法力不足", 14, MANA_LIT if affordable else UI.ORANGE)
@@ -1101,11 +1140,13 @@ func _movement_text(entry: Dictionary, live: bool) -> String:
 	if slowed:
 		move_text += "（减速中）"
 	var reach: int = battle._attack_range(entry) if live else maxi(int(entry.get("range", 1)), int(entry.get("move", 1)))
-	var attack_text := "攻击 · 横竖直线 %d 格" % reach
+	var ranged := Cards.is_ranged(entry)
+	var attack_text := "攻击 · %s，横竖直线 %d 格" % [Cards.attack_type(entry), reach]
 	if reach > 1:
 		attack_text += "，路径须畅通"
 	if diagonal:
 		attack_text += "，可斜攻 1 格"
+	attack_text += "。主动普攻免反伤" if ranged else "。主动普攻会受到反伤"
 	var healing := int(entry.get("heal", 0))
 	if healing > 0:
 		attack_text += "；落位时治疗相邻缺血最多的友方 %d 点" % healing

@@ -3,6 +3,7 @@ extends RefCounted
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const InventoryPage = preload("res://scripts/presentation/inventory_page.gd")
 const SHIELD = preload("res://assets/ui/shield-badge.svg")
+const BOW = preload("res://assets/ui/chess-bow.svg")
 const ELEMENT_ICONS = {
 	"earth": preload("res://assets/ui/chess-elements/earth.svg"),
 	"fire": preload("res://assets/ui/chess-elements/fire.svg"),
@@ -117,11 +118,27 @@ static func art(parent: Node, entry: Dictionary, minimum: Vector2) -> Control:
 			texture = load(art_path) as Texture2D
 	var icon: String = entry.get("icon", "")
 	if texture == null:
-		texture = SHIELD if icon == "shield" else InventoryPage.icon(icon)
+		texture = SHIELD if icon == "shield" else BOW if icon == "chess_bow" else InventoryPage.icon(icon)
 	var image := InventoryPage.item_image(texture, int(entry.get("level", 0)))
 	image.custom_minimum_size = minimum
 	parent.add_child(image)
 	return image
+
+static func attack_tag(parent: Node, entry: Dictionary, font_size: int = 12) -> PanelContainer:
+	var ranged := Cards.is_ranged(entry)
+	var ink := Color("acdce6") if ranged else Color("f0cda2")
+	var tag := PanelContainer.new()
+	tag.name = "AttackType"
+	tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var style := box(Color("253c42") if ranged else Color("493729"),
+		Color("517783") if ranged else Color("82654b"), 0, 3)
+	style.content_margin_left = 3
+	style.content_margin_right = 3
+	tag.add_theme_stylebox_override("panel", style)
+	parent.add_child(tag)
+	var caption := label(tag, Cards.attack_type(entry), font_size, ink)
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	return tag
 
 static func clear(parent: Node) -> void:
 	for child in parent.get_children():

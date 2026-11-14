@@ -168,7 +168,7 @@ func _filter() -> void:
 	for id in available:
 		var card := Cards.owned_definition(id, roster, _card_state())
 		if (kind == "all" or card.kind == kind) and (element.is_empty() or card.get("element") == element) \
-				and (query.is_empty() or query in (str(card.name) + str(card.trait)).to_lower()):
+				and (query.is_empty() or query in (str(card.name) + str(card.trait) + Cards.card_attack_type(card)).to_lower()):
 			results.append(id)
 	if selected not in results:
 		selected = results[0] if not results.is_empty() else ""
@@ -194,7 +194,12 @@ func _add_tile(id: String) -> void:
 	content.add_theme_constant_override("separation", 3)
 	UI.art(content, card, Vector2(0, 62))
 	UI.label(content, card.name, 16).text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	UI.label(content, "%s · %d/%d" % [Cards.KINDS[card.kind], deck.count(id), Cards.limit(id)], 14, UI.MUTED)
+	var footer := HBoxContainer.new()
+	footer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.add_child(footer)
+	UI.label(footer, "%s · %d/%d" % [Cards.KINDS[card.kind], deck.count(id), Cards.limit(id)], 13, UI.MUTED)
+	if not Cards.card_attack_type(card).is_empty():
+		UI.attack_tag(footer, card, 11)
 
 func _choose(id: String) -> void:
 	selected = id
@@ -215,7 +220,11 @@ func _render_selection() -> void:
 	var text := VBoxContainer.new()
 	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(text)
-	UI.label(text, card.name, 19, UI.GOLD)
+	var title := HBoxContainer.new()
+	text.add_child(title)
+	UI.label(title, card.name, 19, UI.GOLD)
+	if not Cards.card_attack_type(card).is_empty():
+		UI.attack_tag(title, card)
 	if card.kind == "partner":
 		UI.element_summary(text, card.element, Cards.stats(card))
 	else:

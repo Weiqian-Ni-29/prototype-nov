@@ -28,8 +28,9 @@ const PARTNERS = {
 	"oathguard": {"attack": 3, "hp": 7, "armor": 3, "element": "earth", "trait": "横竖走一格，带着 3 点护甲登场。"},
 }
 const ACTIONS = {
-	"blade": {"cost": 1, "name": "巡路短刃", "kind": "weapon", "icon": "trail_blade", "attack": 2, "trait": "装备后攻击 +2。替换下来的武器牌回到手牌。"},
-	"pike": {"cost": 2, "name": "护沿短戟", "kind": "weapon", "icon": "frontier_guard_weapon", "attack": 1, "range": 2, "trait": "装备后攻击 +1，可沿无阻挡的直线攻击两格。替换下来的武器牌回到手牌。"},
+	"blade": {"cost": 1, "name": "巡路短刃", "kind": "weapon", "attack_delivery": "melee", "icon": "trail_blade", "attack": 2, "trait": "仅近战棋子可装备。攻击 +2。替换下来的武器牌回到手牌。"},
+	"pike": {"cost": 2, "name": "护沿短戟", "kind": "weapon", "attack_delivery": "melee", "icon": "frontier_guard_weapon", "attack": 1, "range": 2, "trait": "仅近战棋子可装备。攻击 +1，可沿无阻挡的直线攻击两格。替换下来的武器牌回到手牌。"},
+	"staff": {"cost": 2, "name": "分枝诊杖", "kind": "weapon", "attack_delivery": "ranged", "icon": "grove_mender_weapon", "attack": 2, "trait": "仅远程棋子可装备。攻击 +2。替换下来的武器牌回到手牌。"},
 	"coat": {"cost": 1, "name": "夹棉旅衣", "kind": "defense", "icon": "padded_coat", "armor": 3, "trait": "选一枚友方棋子，增加 3 点护甲。"},
 	"brace": {"cost": 1, "name": "护身", "kind": "defense", "icon": "shield", "armor": 3, "trait": "选一枚友方棋子，增加 3 点护甲。"},
 	"ward": {"cost": 2, "name": "列阵", "kind": "defense", "icon": "shield", "armor": 2, "column": true, "trait": "选一枚友方棋子，同列所有己方棋子各获得 2 点护甲。"},
@@ -61,11 +62,12 @@ static func definition(id: String, rank: int = 0) -> Dictionary:
 		support.kind = "partner"
 		support.cost = 2
 		support.hp += STARTING_PARTNER_HP_BONUS
+		balance_ranged(support)
 		return support
 	if not Catalog.COMPANIONS.has(id):
 		return {}
 	var actor: Dictionary = Catalog.COMPANIONS[id]
-	var ranged: bool = actor.get("attack_delivery") == "ranged"
+	var ranged := is_ranged(actor)
 	var entry := {"name": actor.name, "kind": "partner", "portrait": id, "cost": 2,
 		"attack_delivery": actor.get("attack_delivery", "melee"),
 		"attack_projectile": "arrow" if is_archer(actor) else "energy",
@@ -74,6 +76,7 @@ static func definition(id: String, rank: int = 0) -> Dictionary:
 		"trait": "横竖走一格，可沿无阻挡的直线攻击两格。" if ranged else "横竖移动或攻击一格。"}
 	entry.merge(PARTNERS.get(id, {}), true)
 	entry.hp += STARTING_PARTNER_HP_BONUS
+	balance_ranged(entry)
 	if entry.move > 1:
 		entry.range = maxi(entry.range, entry.move)
 	if rank >= 1:
@@ -88,6 +91,27 @@ static func definition(id: String, rank: int = 0) -> Dictionary:
 		entry.merge(talent.changes, true)
 		entry.trait += "\n天赋 · %s。%s" % [talent.name, talent.text]
 	return entry
+
+static func is_ranged(piece: Dictionary) -> bool:
+	return piece.get("attack_delivery", "melee") == "ranged"
+
+static func attack_type(entry: Dictionary) -> String:
+	return "远程" if is_ranged(entry) else "近战"
+
+static func card_attack_type(card: Dictionary) -> String:
+	return attack_type(card) if card.get("kind") == "partner" or equipment_slot(card) == "weapon" else ""
+
+static func weapon_fits(card: Dictionary, piece: Dictionary) -> bool:
+	return equipment_slot(card) != "weapon" or is_ranged(card) == is_ranged(piece)
+
+static func balance_ranged(piece: Dictionary, starts_on_board: bool = false) -> void:
+	if not is_ranged(piece):
+		return
+	if not starts_on_board:
+		piece.cost += 1
+	piece.hp -= 1
+	if piece.attack >= 3:
+		piece.attack -= 1
 
 static func equipment_slot(card: Dictionary) -> String:
 	if card.get("kind") == "weapon":

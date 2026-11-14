@@ -4,6 +4,7 @@ signal impact(cue: String)
 signal finished
 
 const UI = preload("res://scripts/presentation/card_ui.gd")
+const Cards = preload("res://scripts/domain/card_catalog.gd")
 const PLATE_INSET = 4.0
 const WINDUP = 0.105
 const MELEE_CONTACT = 0.185
@@ -32,16 +33,18 @@ var direction: Vector2
 var muzzle: Vector2
 var strike_point: Vector2
 var retaliation_point: Vector2
+var retaliation: Dictionary
 
 func play(event: Dictionary, source: Control, target: Control, face: Callable) -> void:
 	attack = event
 	source_tile = source
 	target_tile = target
 	build_face = face
-	ranged = attack.attacker.get("attack_delivery", "melee") == "ranged"
+	ranged = Cards.is_ranged(attack.attacker)
+	retaliation = attack.retaliation
 	arrow = ranged and attack.attacker.get("attack_projectile") == "arrow"
 	contact_time = 0.235 + 0.035 * float(attack.distance - 1) if ranged else MELEE_CONTACT
-	duration = contact_time + (0.54 if attack.lethal or attack.retaliation.lethal else 0.475)
+	duration = contact_time + (0.54 if attack.lethal or retaliation.get("lethal", false) else 0.475)
 	name = "ChessAttackEffect"
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	z_index = 10
@@ -78,8 +81,9 @@ func _plate(node_name: String, unit: Dictionary) -> Panel:
 func _on_contact() -> void:
 	contacted = true
 	_show_hit(defender, attack.defender, attack, losses)
-	_show_hit(attacker, attack.attacker, attack.retaliation, retaliation_losses)
-	var lost_health: bool = attack.hp_loss > 0 or attack.retaliation.hp_loss > 0
+	if not retaliation.is_empty():
+		_show_hit(attacker, attack.attacker, retaliation, retaliation_losses)
+	var lost_health: bool = attack.hp_loss > 0 or retaliation.get("hp_loss", 0) > 0
 	impact.emit("chess_block" if not lost_health else "chess_shot" if ranged else "chess_strike")
 	_animate(contact_time)
 
@@ -168,7 +172,7 @@ func _animate(time: float) -> void:
 		if attack.lethal:
 			defender_alpha = 1.0 - _progress(age, hold, 0.19)
 			defender_scale -= 0.09 * (1.0 - defender_alpha)
-		if attack.retaliation.lethal:
+		if retaliation.get("lethal", false):
 			attacker_alpha = 1.0 - _progress(age, hold, 0.19)
 			attacker_scale -= 0.09 * (1.0 - attacker_alpha)
 		elif attack.lethal:
@@ -176,7 +180,8 @@ func _animate(time: float) -> void:
 			attacker_pos = (start if ranged else collision).lerp(end, occupy)
 			tilt = 0.028 * tilt_sign * (1.0 - occupy) if not ranged else 0.0
 		_float_losses(losses, target, time)
-		_float_losses(retaliation_losses, source, time)
+		if retaliation_losses.visible:
+			_float_losses(retaliation_losses, source, time)
 
 	_pose(attacker, attacker_pos, source.size, attacker_scale, tilt)
 	_pose(defender, defender_pos, target.size, defender_scale)
@@ -204,8 +209,8 @@ func _draw_particles() -> void:
 	if contacted:
 		var age := elapsed - contact_time
 		_draw_burst(strike_point, age, ranged, attack.hp_loss == 0)
-		if attack.retaliation.hp_loss > 0 or attack.retaliation.armor_loss > 0:
-			_draw_burst(retaliation_point, age, false, attack.retaliation.hp_loss == 0)
+		if retaliation.get("hp_loss", 0) > 0 or retaliation.get("armor_loss", 0) > 0:
+			_draw_burst(retaliation_point, age, false, retaliation.hp_loss == 0)
 	elif ranged:
 		_draw_projectile()
 	elif elapsed >= WINDUP:
