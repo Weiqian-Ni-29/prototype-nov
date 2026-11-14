@@ -158,7 +158,7 @@ func refresh(run: RefCounted, _selected_id: String, selected_cell: String) -> vo
 			var point = Hex.world(id)
 			map_min = map_min.min(point)
 			map_max = map_max.max(point)
-	if ocean.sea_cells.is_empty(): ocean.build(current_tiles)
+		ocean.build(current_tiles)
 	var visible_layout: Dictionary = {}
 	var pending_sight: Array = run.relic_intro().get("new_sight", [])
 	for id in run.data.explored:

@@ -3,7 +3,7 @@ extends RefCounted
 ## Balance values for terrain, characters, items, and combat.
 
 const VERSION = 1
-const RADIUS = 8
+const RADIUS = 3
 const ENERGY_MAX = 100
 const TERRAIN = {
 	"plains": {"name": "平原", "color": "91a577"},

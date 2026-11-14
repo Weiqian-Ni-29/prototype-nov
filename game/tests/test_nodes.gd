@@ -37,7 +37,7 @@ func check_generation() -> void:
 		var compatible = true
 		var elite_count := 0
 		var original = Hex.generate(seed_value)
-		var layout = Nodes.generate(original.tiles, seed_value, run.relic_sites, {}, {})
+		var layout = Nodes.generate(original.tiles, seed_value, run.relic_sites, {}, {}, original.opening_supply)
 		for cell in run.data.tiles:
 			var tile = run.data.tiles[cell]
 			var node = run.node_at(cell)
@@ -60,6 +60,9 @@ func check_generation() -> void:
 				if node.kind == "elite":
 					expect(Hex.distance(Hex.coord(cell), Hex.coord(run.data.start)) > 2 and Nodes.is_elite(tile.enemies),
 						"Promoted supplies host a real elite encounter away from the village")
+			elif layout[cell].kind == "battle" and node.kind == "elite":
+				expect(Hex.distance(Hex.coord(cell), Hex.coord(run.data.start)) > 2 and Nodes.is_elite(tile.enemies),
+					"An ordinary encounter can be promoted after available supplies")
 			elif layout[cell].kind not in ["haunt", "choice"]:
 				expect(layout[cell].kind == node.kind, "Replacement preserves other node types")
 			if node.kind != "story":

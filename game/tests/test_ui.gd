@@ -293,6 +293,7 @@ func wait_for_map_arrival() -> void:
 func check_node_arrival() -> void:
 	game._start_new()
 	var run = game.run
+	run.data.chapter = 1
 	var start: String = run.data.start
 	var cells = Hex.neighbors(start, run.data.tiles).filter(func(cell):
 		return run.node_at(cell).get("kind") == "supply" and run.data.tiles[cell].enemies.is_empty())
@@ -367,6 +368,7 @@ func check_node_arrival() -> void:
 func check_arrival_checkpoint() -> void:
 	game._start_new()
 	var run = game.run
+	run.data.chapter = 1
 	var cell: String = Hex.neighbors(run.data.start, run.data.tiles).filter(func(id):
 		return run.node_at(id).get("kind") == "supply" and run.data.tiles[id].enemies.is_empty())[0]
 	var coins: int = run.node_at(cell).coins
@@ -392,6 +394,7 @@ func check_arrival_after_victory() -> void:
 		return
 	var cell: String = cells[0]
 	var from: String = Hex.neighbors(cell, run.data.tiles).filter(func(id): return Hex.is_land(run.data.tiles, id))[0]
+	run.data.chapter = 2
 	run.data.tiles[from].enemies.clear()
 	run.data.tiles[cell].hidden = true
 	run.data.tiles[cell].discovered_enemy = false

@@ -3,6 +3,7 @@ const Catalog = preload("res://scripts/domain/catalog.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Run = preload("res://scripts/domain/expedition.gd")
 const Chess = preload("res://scripts/domain/chess_battle.gd")
+const Relics = preload("res://scripts/domain/relic_catalog.gd")
 var checks = 0
 var failures: Array[String] = []
 
@@ -33,16 +34,27 @@ func execute() -> void:
 	for seed_value in range(seed_count):
 		var generated = Hex.generate(seed_value)
 		var tiles = generated.tiles
-		expect(tiles.size() == 217, "217 cells seed %d" % seed_value)
-		expect(Hex.distance(Hex.coord(generated.start), Hex.coord(generated.boss)) >= 11, "Distant boss seed %d" % seed_value)
+		expect(tiles.size() == 37, "37 cells seed %d" % seed_value)
+		var opening: Array = generated.opening_route
+		expect(opening.size() == 2 and opening[0] in Hex.neighbors(generated.start, tiles)
+			and opening[1] in Hex.neighbors(opening[0], tiles)
+			and opening.all(func(cell): return Hex.is_land(tiles, cell) and tiles[cell].npc.is_empty() and tiles[cell].site.is_empty()),
+			"Both opening battles have reserved land on a route from the village")
+		expect(generated.opening_supply in Hex.neighbors(generated.start, tiles)
+			and generated.opening_supply not in opening and tiles[generated.opening_supply].npc.is_empty(),
+			"Supplies have their own spot next to the village")
+		var relic_sites := Relics.exploration_sites(tiles, seed_value)
+		expect(Relics.SITES.keys().all(func(id): return id in relic_sites.values()),
+			"Each field relic has a location on the small map")
+		expect(Hex.distance(Hex.coord(generated.start), Hex.coord(generated.boss)) >= 4, "Distant boss seed %d" % seed_value)
 		var route = Hex.path(tiles, generated.start, generated.boss, true)
 		expect(not route.is_empty(), "Safe boss approach seed %d" % seed_value)
-		expect(route.size() - 1 >= 11, "Boss route distance seed %d" % seed_value)
+		expect(route.size() - 1 >= 4, "Boss route distance seed %d" % seed_value)
 		var counts = {}
 		var terrains = {}
 		var lake: Array[String] = []
 		for k in tiles:
-			expect(Hex.distance(Hex.coord(k), Vector2i.ZERO) <= 8, "Hex boundary " + k)
+			expect(Hex.distance(Hex.coord(k), Vector2i.ZERO) <= 3, "Hex boundary " + k)
 			terrains[tiles[k].terrain] = true
 			if tiles[k].terrain == "lake":
 				lake.append(k)
@@ -59,7 +71,7 @@ func execute() -> void:
 		for id in Catalog.COMPANIONS:
 			expect(counts.get(id, 0) == 1, "Exactly one companion " + id)
 		expect(terrains.size() == 7, "Six land biomes plus a lake seed %d" % seed_value)
-		expect(lake.size() >= 5 and lake.size() <= 11, "Lake is a multi-tile feature seed %d" % seed_value)
+		expect(lake.size() >= 2 and lake.size() <= 3, "Lake is a multi-tile feature seed %d" % seed_value)
 		if not lake.is_empty():
 			expect(Hex.path(tiles, generated.start, lake[0]).is_empty(), "No route into lake seed %d" % seed_value)
 			var wet = {lake[0]: true}

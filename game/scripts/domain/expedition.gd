@@ -9,6 +9,7 @@ const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Items = preload("res://scripts/domain/expedition_items.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const SAVE_VERSION = 12
+const LEGACY_MAP_RADIUS = 8
 const REMOVED_WEATHER_CARDS = ["rain", "sun", "fog_spell"]
 const REMOVED_SUPPLIES = ["salve", "ether"]
 const STEPS_PER_DAY = 5
@@ -51,7 +52,7 @@ func new_run(seed_value: int, profession: String) -> void:
 		data.actors[id] = _actor(id, Catalog.COMPANIONS[id], location, false)
 		data.story[id] = {"relation": "unmet", "result": "E0", "met": false}
 	_initialize_relics()
-	_initialize_nodes(true, true)
+	_initialize_nodes(true, generated.opening_route, generated.opening_supply)
 	Items.stock(data, false)
 	reveal(generated.start)
 	note("村民交给你一副卡牌，还给你备好了路上的补给。你想到附近走走，看有没有人认得你，能不能想起自己的名字。")
@@ -242,14 +243,14 @@ func _reveal_sight(position: String) -> void:
 func _initialize_relics() -> void:
 	relic_sites = Relics.exploration_sites(data.tiles, int(data.seed))
 
-func _initialize_nodes(rebalance: bool = false, opening: bool = false) -> void:
+func _initialize_nodes(rebalance: bool = false, opening_route: Array = [], opening_supply: String = "") -> void:
 	data.merge({"lamp_coins": Nodes.STARTING_COINS})
 	if not data.has("nodes"):
-		data.nodes = Nodes.generate(data.tiles, int(data.seed), relic_sites, data.rewards, {})
+		data.nodes = Nodes.generate(data.tiles, int(data.seed), relic_sites, data.rewards, {}, opening_supply)
 	Nodes.replace_retired_nodes(data)
 	Nodes.merge_supplies(data)
-	if opening:
-		Nodes.place_opening_battles(data, relic_sites)
+	if not opening_route.is_empty():
+		Nodes.place_opening_battles(data, opening_route)
 	if rebalance:
 		Nodes.raise_elite_share(data)
 	location_names.clear()
@@ -1167,7 +1168,8 @@ func _validate_save(loaded: Dictionary) -> String:
 	for key in ["actors", "tiles", "flags", "story", "knowledge", "rewards", "pending_battle", "explored", "peace"]:
 		if not loaded[key] is Dictionary:
 			return "进度记录格式有误"
-	if loaded.tiles.size() != 217 or not loaded.tiles.has(loaded.start) or not loaded.tiles.has(loaded.boss):
+	var radius := Catalog.RADIUS if loaded.tiles.size() == Hex.cell_count(Catalog.RADIUS) else LEGACY_MAP_RADIUS
+	if loaded.tiles.size() != Hex.cell_count(radius) or not loaded.tiles.has(loaded.start) or not loaded.tiles.has(loaded.boss):
 		return "地图不完整"
 	if loaded.status not in ["exploring", "won", "failed"] or loaded.weather not in ["sun", "rain"] or not Catalog.PROFESSIONS.has(loaded.profession):
 		return "状态或职业无效"
@@ -1255,7 +1257,7 @@ func _validate_save(loaded: Dictionary) -> String:
 	var coordinate = RegEx.new()
 	coordinate.compile("^-?[0-9]+,-?[0-9]+$")
 	for k in loaded.tiles:
-		if coordinate.search(str(k)) == null or Hex.distance(Hex.coord(k), Vector2i.ZERO) > 8:
+		if coordinate.search(k) == null or Hex.key(Hex.coord(k)) != k or Hex.distance(Hex.coord(k), Vector2i.ZERO) > radius:
 			return "六边形坐标无效"
 		var tile = loaded.tiles[k]
 		if not tile is Dictionary or not tile.has_all(["terrain", "base_terrain", "enemies", "site", "npc", "resource", "quantity", "height", "hidden", "discovered_enemy"]):
