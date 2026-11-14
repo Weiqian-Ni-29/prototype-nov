@@ -1,6 +1,6 @@
 extends HBoxContainer
 
-const InventoryPage = preload("res://scripts/presentation/inventory_page.gd")
+const CardUI = preload("res://scripts/presentation/card_ui.gd")
 const GOLD = Color("dec38e")
 const INK = Color("e8e4d1")
 const MUTED = Color("a2b3a7")
@@ -8,7 +8,7 @@ const MUTED = Color("a2b3a7")
 var details: VBoxContainer
 var detail_scroll: ScrollContainer
 
-func setup(items: Array[Dictionary]) -> void:
+func setup(items: Array[Dictionary], detail_title: String = "物品详情") -> void:
 	name = "RewardItems"
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
 	add_theme_constant_override("separation", 18)
@@ -24,7 +24,7 @@ func setup(items: Array[Dictionary]) -> void:
 	var right := VBoxContainer.new()
 	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	add_child(right)
-	_label(right, "物品详情", 16, MUTED)
+	_label(right, detail_title, 16, MUTED)
 	var frame := PanelContainer.new()
 	frame.add_theme_stylebox_override("panel", _style(Color("1b322d"), Color("536c60"), 12))
 	frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -64,9 +64,7 @@ func _row(item: Dictionary, group: ButtonGroup) -> Button:
 	row.offset_top = 7
 	row.offset_right = -12
 	row.offset_bottom = -7
-	var art := InventoryPage.item_image(InventoryPage.icon(item.icon), item.get("level", 0))
-	art.custom_minimum_size.x = 52
-	row.add_child(art)
+	CardUI.art(row, item, Vector2(52, 0))
 	var caption := VBoxContainer.new()
 	caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -85,10 +83,7 @@ func _select(item: Dictionary) -> void:
 		details.remove_child(child)
 		child.queue_free()
 	detail_scroll.scroll_vertical = 0
-	var art := InventoryPage.item_image(InventoryPage.icon(item.icon), item.get("level", 0))
-	art.name = "RewardIllustration"
-	art.custom_minimum_size.y = 108
-	details.add_child(art)
+	CardUI.art(details, item, Vector2(0, 108)).name = "RewardIllustration"
 	_label(details, item.title, 21, GOLD)
 	_label(details, item.effect, 16, INK)
 	if not item.story.is_empty():

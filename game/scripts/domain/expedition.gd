@@ -54,7 +54,7 @@ func new_run(seed_value: int, profession: String) -> void:
 	_initialize_nodes(true, true)
 	Items.stock(data, false)
 	reveal(generated.start)
-	note("村民送来了疗伤药、澄露和干粮。你想到附近走走，看有没有人认得你，能不能想起自己的名字。")
+	note("村民交给你一副卡牌，还给你备好了路上的补给。你想到附近走走，看有没有人认得你，能不能想起自己的名字。")
 
 func _actor(id: String, definition: Dictionary, position: String, joined: bool) -> Dictionary:
 	var result = definition.duplicate(true)
@@ -850,7 +850,10 @@ func _map_action(id: String) -> Dictionary:
 	return success()
 
 func card_deck() -> Array:
-	return data.card_deck.duplicate() if data.has("card_deck") else _convert_gear_cards(Cards.DEFAULT_DECK)
+	return data.card_deck.duplicate() if data.has("card_deck") else starter_card_deck()
+
+func starter_card_deck() -> Array:
+	return _convert_gear_cards(Cards.DEFAULT_DECK)
 
 func _convert_gear_cards(legacy_deck: Array) -> Array:
 	var result: Array = []
@@ -1133,7 +1136,8 @@ func _validate_save(loaded: Dictionary) -> String:
 	if loaded.has("pending_story_rewards"):
 		var receipt = loaded.pending_story_rewards
 		if not receipt is Dictionary or not receipt.get("source") is String \
-				or not receipt.get("items") is Array or receipt.items.is_empty():
+				or not receipt.get("items") is Array \
+				or (receipt.items.is_empty() and receipt.get("kind") != "starter_deck"):
 			return "剧情奖励记录无效"
 		for item in receipt.items:
 			if not item is Dictionary or not item.get("id") is String \

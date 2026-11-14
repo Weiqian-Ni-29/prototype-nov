@@ -5,6 +5,7 @@ const Hex = preload("res://scripts/domain/hex_map.gd")
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
 const Chess = preload("res://scripts/domain/chess_battle.gd")
+const Cards = preload("res://scripts/domain/card_catalog.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const InventoryPage = preload("res://scripts/presentation/inventory_page.gd")
@@ -1220,18 +1221,67 @@ func execute() -> void:
 		"History shows the same traveler dialogue as the story screen")
 	await click("关闭")
 	await advance_until_text("一路平安")
-	expect(dialogue_contains("一路平安"), "The villager sends off the traveler with supplies")
+	expect(dialogue_contains("一路平安"), "The villager sends off the traveler with the starter deck")
 	await finish_linear_story()
-	expect(game.modal_layer.has_node("StoryRewards") and contains_text(game.modal_layer, "疗伤药")
-		and contains_text(game.modal_layer, "澄露") and contains_text(game.modal_layer, "巡路短刃"), "Departure lists all village gifts")
-	for item in ["ether", "salve"]:
-		await select_story_reward(Catalog.ITEMS[item].name)
+	var deck: Array = game.run.card_deck()
+	var quantities := {}
+	for id in deck:
+		var card := Cards.owned_definition(id, game.run.data.actors, game.run.data)
+		quantities[card.name] = quantities.get(card.name, 0) + 1
+	var names := PackedStringArray()
+	for title in quantities:
+		names.append("%s ×%d" % [title, quantities[title]])
+	var rewards = game.modal_layer.find_child("RewardItems", true, false)
+	expect(game.modal_layer.has_node("StoryRewards") and contains_text(game.modal_layer, "获得初始卡组")
+		and deck.size() == Cards.DECK_SIZE and rewards != null and names == PackedStringArray(
+			rewards.find_children("*", "Button", true, false).map(func(button): return button.accessibility_name)),
+		"Departure lists exactly the starter deck, including duplicate counts")
+	for id in ["ember_spell", "sun"]:
+		var card: Dictionary = Cards.ACTIONS[id]
+		await select_story_reward(card.name)
 		var detail = game.modal_layer.find_child("RewardDetails", true, false)
-		expect(detail != null and contains_text(detail, Catalog.ITEMS[item].description)
-			and contains_text(detail, Catalog.ITEMS[item].story), "Clicking a consumable shows its use and description")
+		expect(detail != null and contains_text(detail, card.trait), "Selecting a starter card shows its battle effect")
+	var editor_button := find_button(game.modal_layer, "查看卡组")
+	var map_button := find_button(game.modal_layer, "返回地图")
+	expect(editor_button != null and map_button != null
+		and editor_button.get_global_rect().end.x <= map_button.get_global_rect().position.x,
+		"The deck editor button is to the left of Return to Map")
+	var transaction: int = game.run.data.transaction
+	await click("查看卡组")
+	var editor = game.modal_layer.find_child("CardDeckEditor", true, false)
+	expect(editor != null and editor.deck == deck and editor.find_child("Collection_rain", true, false) != null
+		and find_button(game.modal_layer, "保存卡组") != null, "Opening the editor shows the starter deck and the full owned collection")
+	var remove := game.modal_layer.find_child("Remove_sun", true, false) as Button
+	expect(remove != null, "The starter deck editor can remove a card")
+	if remove != null:
+		await click_button(remove)
+		expect(not editor.deck.has("sun"), "Removing a card changes the editor draft")
+	await click("返回奖励")
+	expect(game.modal_layer.has_node("StoryRewards") and game.run.data.transaction == transaction and game.run.card_deck() == deck,
+		"Returning to rewards discards the unsaved deck draft")
+	await click("查看卡组")
+	remove = game.modal_layer.find_child("Remove_sun", true, false) as Button
+	var rain := game.modal_layer.find_child("Collection_rain", true, false) as Button
+	expect(remove != null and rain != null, "Reopening the editor offers the original deck and available cards")
+	if remove != null and rain != null:
+		await click_button(remove)
+		rain = game.modal_layer.find_child("Collection_rain", true, false) as Button
+		await click_button(rain)
+		await click("＋ 加入牌组")
+	await click("保存卡组")
+	var edited := deck.duplicate()
+	edited.erase("sun")
+	edited.append("rain")
+	expect(game.modal_layer.has_node("StoryRewards") and game.run.card_deck() == edited
+		and saved_run().get("card_deck") == edited, "Saving the edited deck persists it and returns to rewards")
+	expect(contains_text(game.modal_layer, "烈日") and not contains_text(game.modal_layer, "唤雨"),
+		"The receipt still lists the cards originally received")
+	game._continue_run()
+	expect(game.modal_layer.has_node("StoryRewards") and find_button(game.modal_layer, "查看卡组") != null
+		and game.run.card_deck() == edited, "Reloading restores the pending reward and the edited deck")
 	await click("返回地图")
 	expect(game.modal_layer.get_child_count() == 0 and game.run.actor("hero").name == "旅人", "Departure enters the map as the fixed traveler")
-	expect(saved_run().get("actors", {}).get("hero", {}).get("inventory", {}).get("salve") == 3, "Village supplies are saved on departure")
+	expect(not saved_run().has("pending_story_rewards"), "Returning to the map acknowledges the deck reward in the save")
 	check_reward_art()
 	await check_story_history()
 	await check_story_pagination()

@@ -614,7 +614,11 @@ func execute() -> void:
 	await capture("story-dialogue-history")
 	await click_story_button("关闭")
 	await finish_linear_story()
-	expect(game.modal_layer.has_node("StoryRewards"), "The village departure shows its supplies")
+	expect(game.modal_layer.has_node("StoryRewards"), "The village departure shows the starter deck reward")
+	await capture("story-starter-deck-reward")
+	await click_story_button("查看卡组")
+	await capture("story-starter-deck-editor")
+	await click_story_button("返回奖励")
 	await click_story_button("返回地图")
 	for terrain in ["forest", "swamp"]:
 		game._village_page(terrain, 0)
