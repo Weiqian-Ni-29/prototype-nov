@@ -32,6 +32,7 @@ var enemy_has_played := false
 var enemy_drew := false
 var enemy_action_resolved := false
 var last_enemy_action := {}
+var last_attack := {}
 var difficulty := 0
 var exploration := 0
 var outcome := ""
@@ -242,6 +243,8 @@ static func enemy_definition(expedition: RefCounted, id: String, leader: bool = 
 		movement += "落位时治疗相邻友方。"
 	return {"name": source.name, "kind": "partner", "cost": 2, "portrait": actor_id if npc or id == "war_god" else "",
 		"enemy_art": "" if npc or id == "war_god" else id, "element": "fire" if id == "war_god" else Cards.chess_element(source),
+		"attack_delivery": source.get("attack_delivery", "melee"),
+		"attack_projectile": "arrow" if id == "archer" or Cards.is_archer(source) else "energy",
 		"attack": attack, "hp": hp, "armor": armor, "move": 1, "range": reach, "heal": 2 if healer else 0,
 		"diagonal": leader, "trait": movement}
 
@@ -365,9 +368,15 @@ func card_targets(side: int, index: int) -> Array[int]:
 func can_act() -> bool:
 	return turn == PLAYER and outcome.is_empty() and not reveal_pending
 
+func take_attack() -> Dictionary:
+	var attack := last_attack
+	last_attack = {}
+	return attack
+
 func move(from: int, target: int) -> bool:
 	if not can_act() or not moves(from).has(target) or board[from].side != PLAYER:
 		return false
+	last_attack = {}
 	action_kind = "move" if board[target].is_empty() else "attack"
 	_move_piece(from, target)
 	_end_player_action()
@@ -376,6 +385,7 @@ func move(from: int, target: int) -> bool:
 func play(index: int, target: int) -> bool:
 	if not can_act() or target not in card_targets(PLAYER, index):
 		return false
+	last_attack = {}
 	var card := definition(hands[PLAYER][index])
 	action_kind = "damage_spell" if card.has("damage") else card.kind
 	_play_card(PLAYER, index, target)
@@ -394,6 +404,7 @@ func must_pass() -> bool:
 func pass_turn() -> bool:
 	if not can_act() or not must_pass():
 		return false
+	last_attack = {}
 	action_kind = "pass"
 	_log("己方没有可走的棋子或可出的牌。")
 	_end_player_action()
@@ -414,6 +425,7 @@ func enemy_turn(hold_for_display: bool = false) -> void:
 	if enemy_action_resolved:
 		_end_enemy_turn()
 		return
+	last_attack = {}
 	if enemy_has_played and not enemy_drew:
 		_grow_mana(ENEMY)
 		enemy_drew = true
@@ -647,6 +659,9 @@ func _move_piece(from: int, target: int) -> void:
 		"distance": maxi(absi(from % COLS - target % COLS), absi(_row(from) - _row(target))), "element": piece.element, "kind": "attack",
 		"armor_before": opponent.get("armor", 0), "bonus": 0, "pierce": 0, "block": 0}
 	if not opponent.is_empty():
+		if not public_preview:
+			last_attack = {"from": from, "target": target, "attacker": piece.duplicate(true),
+				"defender": opponent.duplicate(true), "distance": context.distance}
 		var damage := attack_power(piece)
 		if weather == "fog" and context.distance >= 2 and not (piece.element == "wind" and piece.side == PLAYER and "crossed_wind_chimes" in relic_ids):
 			damage -= 1
@@ -654,6 +669,9 @@ func _move_piece(from: int, target: int) -> void:
 			_relic("attack", context)
 		piece.erase("sight")
 		_deal_hit(target, damage, context)
+		if not public_preview:
+			last_attack.merge({"hp_loss": context.hp_loss, "armor_loss": context.armor_loss,
+				"hp": context.hp_after, "armor": context.armor_after, "lethal": opponent.hp <= 0})
 		if opponent.hp > 0:
 			return
 		_log("%s占据%s。" % [piece.name, square_name(target)])
@@ -678,6 +696,9 @@ func _deal_hit(target: int, base: int, context: Dictionary) -> void:
 	var damage := maxi(0, base + mini(2, int(context.bonus)) - int(context.block))
 	var absorbed := _damage(victim, damage, int(context.pierce))
 	context.hp_loss = old_hp - int(victim.hp)
+	context.armor_loss = absorbed
+	context.hp_after = victim.hp
+	context.armor_after = victim.armor
 	_log("%s受到%d 点%s伤害%s。" % [victim.name, damage,
 		Cards.ELEMENTS.get(context.element, ""), "（护甲吸收 %d）" % absorbed if absorbed > 0 else ""])
 	if victim.side == PLAYER and victim.hp > 0:

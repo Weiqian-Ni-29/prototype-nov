@@ -134,7 +134,7 @@ static func clear(parent: Node) -> void:
 		parent.remove_child(child)
 		child.queue_free()
 
-static func button_body(button: Button, content: Control, margin: float = 5.0) -> void:
+static func button_body(button: Control, content: Control, margin: float = 5.0) -> void:
 	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	button.add_child(content)
 	content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)

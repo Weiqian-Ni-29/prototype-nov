@@ -1,10 +1,12 @@
 extends Control
 
 signal acted
+signal attack_impact(cue: String)
 signal retreat_requested
 signal menu_requested
 
 const Battle = preload("res://scripts/domain/chess_battle.gd")
+const AttackEffect = preload("res://scripts/presentation/chess_attack_effect.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const UI = preload("res://scripts/presentation/card_ui.gd")
 const CROWN = preload("res://assets/ui/crown-badge.svg")
@@ -40,6 +42,7 @@ var turn_banner_tween: Tween
 var displayed_turn := -1
 var hint: Label
 var retreat: Button
+var menu: Button
 var wait_button: Button
 var cast_button: Button
 var mana_ratio: Label
@@ -64,6 +67,7 @@ var hover_detail_body: VBoxContainer
 var detail_serial := 0
 var detail_kind := ""
 var detail_index := -1
+var attack_effect: AttackEffect
 
 func setup(model: RefCounted, scene: Texture2D) -> void:
 	name = "ChessBattle"
@@ -95,15 +99,19 @@ func setup(model: RefCounted, scene: Texture2D) -> void:
 	actions.add_theme_constant_override("separation", 4)
 	layout.add_child(actions)
 	wait_button = UI.button(actions, "让过", func():
-		if battle.pass_turn():
+		if not is_attack_playing() and battle.pass_turn():
 			_notify_action())
 	cast_button = UI.button(actions, "", func():
-		if battle.play(selected_card, -1):
+		if not is_attack_playing() and battle.play(selected_card, -1):
 			_notify_action())
 	cast_button.name = "CastChessSpell"
 	UI.accent(cast_button)
-	retreat = _icon_button(actions, "ChessRetreat", "撤退", RETREAT_ICON, func(): retreat_requested.emit())
-	var menu := _icon_button(actions, "ChessMainMenu", "主菜单", MENU_ICON, func(): menu_requested.emit())
+	retreat = _icon_button(actions, "ChessRetreat", "撤退", RETREAT_ICON, func():
+		if not is_attack_playing():
+			retreat_requested.emit())
+	menu = _icon_button(actions, "ChessMainMenu", "主菜单", MENU_ICON, func():
+		if not is_attack_playing():
+			menu_requested.emit())
 	for button in [wait_button, cast_button, retreat, menu]:
 		if button.icon == null:
 			button.custom_minimum_size.y = 30
@@ -207,7 +215,10 @@ func _show_turn_banner() -> void:
 	turn_banner_tween.tween_callback(turn_banner.hide)
 
 func render() -> void:
+	if is_attack_playing():
+		return
 	var usable: bool = battle.can_act()
+	menu.disabled = false
 	retreat.disabled = not usable or battle.river
 	wait_button.visible = usable and battle.must_pass()
 	cast_button.visible = usable and -1 in battle.card_targets(Battle.PLAYER, selected_card)
@@ -234,6 +245,41 @@ func render() -> void:
 			_show_detail(cells[detail_index], func(): _fill_unit_detail(battle.board[detail_index]))
 	_show_turn_banner()
 
+func is_attack_playing() -> bool:
+	return attack_effect != null
+
+func present_action() -> void:
+	if is_attack_playing():
+		return
+	var event: Dictionary = battle.take_attack()
+	if event.is_empty():
+		render()
+		return
+	_hide_detail()
+	if turn_banner_tween != null:
+		turn_banner_tween.kill()
+	turn_banner.hide()
+	menu.disabled = true
+	retreat.disabled = true
+	wait_button.hide()
+	cast_button.hide()
+	hint.text = "%s 攻击 %s" % [event.attacker.name, event.defender.name]
+	for square in cells.size():
+		_render_tile(cells[square], square, "", square == event.from or square == event.target)
+	for button in hand_buttons:
+		button.disabled = true
+	attack_effect = AttackEffect.new()
+	add_child(attack_effect)
+	attack_effect.impact.connect(attack_impact.emit)
+	attack_effect.finished.connect(_finish_attack)
+	attack_effect.play(event, cells[event.from], cells[event.target], _build_piece_face)
+
+func _finish_attack() -> void:
+	attack_effect.hide()
+	attack_effect.queue_free()
+	attack_effect = null
+	render()
+
 func _legal() -> Dictionary:
 	if not battle.can_act():
 		return {}
@@ -248,7 +294,7 @@ func _legal() -> Dictionary:
 	return result
 
 func _select_tile(square: int) -> void:
-	if not battle.can_act():
+	if is_attack_playing() or not battle.can_act():
 		return
 	if _legal().has(square):
 		var accepted: bool = battle.play(selected_card, square) if selected_card >= 0 else battle.move(selected_square, square)
@@ -261,7 +307,7 @@ func _select_tile(square: int) -> void:
 		render()
 
 func _select_card(index: int) -> void:
-	if not battle.can_act() or _card_is_drawing(index):
+	if is_attack_playing() or not battle.can_act() or _card_is_drawing(index):
 		return
 	var card: Dictionary = battle.definition(hand_ids[index])
 	if card.cost > battle.mana[Battle.PLAYER]:
@@ -275,7 +321,7 @@ func _notify_action() -> void:
 	selected_square = -1
 	selected_card = -1
 	hovered = -1
-	render()
+	present_action()
 	acted.emit()
 
 func _icon_button(actions: HBoxContainer, node_name: String, label: String, icon: Texture2D, callback: Callable) -> Button:
@@ -290,7 +336,7 @@ func _icon_button(actions: HBoxContainer, node_name: String, label: String, icon
 	button.accessibility_name = label
 	return button
 
-func _render_tile(tile: Button, square: int, action: String) -> void:
+func _render_tile(tile: Button, square: int, action: String, hide_face: bool = false) -> void:
 	var unit: Dictionary = battle.board[square]
 	var empty := unit.is_empty()
 	var row := floori(float(square) / Battle.COLS)
@@ -300,7 +346,7 @@ func _render_tile(tile: Button, square: int, action: String) -> void:
 	var tint := (Color("5b493b") if light else Color("483a31")) if row < 2 else (Color("375648") if light else Color("29453b"))
 	var border := Color("a48a69") if row < 2 else Color("7f9b86")
 	var enemy_action: Dictionary = battle.last_enemy_action
-	if not empty:
+	if not empty and not hide_face:
 		tint = tint.lightened(0.05)
 		border = UI.GOLD
 	if square == selected_square:
@@ -311,10 +357,10 @@ func _render_tile(tile: Button, square: int, action: String) -> void:
 	elif not action.is_empty():
 		tint = Color("426e56")
 		border = UI.GREEN
-	elif square == enemy_action.get("target", -1):
+	elif not hide_face and square == enemy_action.get("target", -1):
 		tint = tint.lightened(0.14)
 		border = UI.ORANGE
-	elif square == enemy_action.get("from", -1):
+	elif not hide_face and square == enemy_action.get("from", -1):
 		border = Color("c99264")
 	var style := UI.box(tint, border, 0, 0)
 	# An occupied square owns its edge against an empty one. For matching neighbors,
@@ -334,11 +380,30 @@ func _render_tile(tile: Button, square: int, action: String) -> void:
 	tile.add_theme_stylebox_override("hover", hover_style)
 	tile.disabled = not battle.can_act() or empty and action.is_empty()
 	UI.clear(tile)
+	if hide_face:
+		tile.text = ""
+		tile.accessibility_name = square_label
+		return
 	if empty:
 		tile.text = "+" if action == "deploy" else "●" if action == "move" else ""
 		tile.accessibility_name = square_label + "空格"
 		return
 	tile.text = ""
+	_build_piece_face(tile, unit, action)
+	var stats := "攻 %d · 血 %d/%d · 甲 %d" % [battle.attack_power(unit), unit.hp, unit.hp_max, unit.armor]
+	var accessible_parts: Array[String] = [square_label, unit.name]
+	if unit.leader:
+		accessible_parts.append("主战者")
+	var element_name: String = Cards.ELEMENTS.get(unit.element, "")
+	if not element_name.is_empty():
+		accessible_parts.append(element_name + "属性")
+	var weapon_name: String = battle._weapon(unit).get("name", "")
+	if not weapon_name.is_empty():
+		accessible_parts.append(weapon_name)
+	accessible_parts.append(stats)
+	tile.accessibility_name = " ".join(accessible_parts)
+
+func _build_piece_face(tile: Control, unit: Dictionary, action: String) -> void:
 	var content := HBoxContainer.new()
 	UI.button_body(tile, content, STAT_INSET)
 	content.offset_left = STAT_INSET + 20
@@ -372,18 +437,8 @@ func _render_tile(tile: Button, square: int, action: String) -> void:
 	_stat_badge(tile, "Attack", ATTACK_ICON, attack, Control.PRESET_BOTTOM_LEFT)
 	_stat_badge(tile, "Health", HEALTH_ICON, unit.hp, Control.PRESET_BOTTOM_RIGHT, 4)
 	_stat_badge(tile, "Armor", ARMOR_ICON, unit.armor, Control.PRESET_TOP_RIGHT)
-	var stats := "攻 %d · 血 %d/%d · 甲 %d" % [attack, unit.hp, unit.hp_max, unit.armor]
-	var accessible_parts: Array[String] = [square_label, unit.name]
-	if unit.leader:
-		accessible_parts.append("主战者")
-	if not element_name.is_empty():
-		accessible_parts.append(element_name + "属性")
-	if not weapon_name.is_empty():
-		accessible_parts.append(weapon_name)
-	accessible_parts.append(stats)
-	tile.accessibility_name = " ".join(accessible_parts)
 
-func _stat_badge(tile: Button, badge_name: String, icon: Texture2D, value: int, corner: int, text_y: int = 0) -> void:
+func _stat_badge(tile: Control, badge_name: String, icon: Texture2D, value: int, corner: int, text_y: int = 0) -> void:
 	var badge := TextureRect.new()
 	badge.name = badge_name
 	badge.texture = icon
@@ -403,7 +458,7 @@ func _stat_badge(tile: Button, badge_name: String, icon: Texture2D, value: int, 
 	number.add_theme_color_override("font_outline_color", Color("251912"))
 	number.add_theme_constant_override("outline_size", 4)
 
-func _mark_commander(tile: Button) -> void:
+func _mark_commander(tile: Control) -> void:
 	var plate := PanelContainer.new()
 	plate.add_theme_stylebox_override("panel", UI.box(UI.GOLD, Color("1d3329"), 1, 5))
 	plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -688,7 +743,7 @@ func _fan_curve(index: int, count: float) -> float:
 	return (index - center) / maxf(1.0, center)
 
 func _hover_card(index: int) -> void:
-	if _card_is_drawing(index):
+	if is_attack_playing() or _card_is_drawing(index):
 		return
 	if battle.can_act():
 		hovered = index
@@ -703,7 +758,7 @@ func _unhover_card(index: int) -> void:
 		_hide_detail()
 
 func _hover_tile(square: int) -> void:
-	if not battle.board[square].is_empty():
+	if not is_attack_playing() and not battle.board[square].is_empty():
 		_show_unit_detail(square)
 
 func _unhover_tile(square: int) -> void:
