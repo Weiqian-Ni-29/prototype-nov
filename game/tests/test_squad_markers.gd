@@ -58,7 +58,7 @@ func execute() -> void:
 		and panel.find_children("*", "ProgressBar", true, false).is_empty(),
 		"The map sidebar has no personal portraits, HP, MP, or charge meters")
 	var actions = panel.find_children("*", "Button", true, false).map(func(button): return button.text)
-	expect(actions == ["收起", "角色", "行动", "卡组", "背包"], "Compact map sidebar keeps all four entry points")
+	expect(actions == ["收起", "角色", "卡组", "背包"], "Compact map sidebar has only the three expedition tools")
 	expect(game.view.dolls.keys() == ["hero"], "Only the traveler is drawn on the map")
 	expect_stamina(game, 5)
 	game._select_cell(next)
@@ -86,9 +86,7 @@ func execute() -> void:
 		"Arrival shows the full map notice")
 	await create_timer(1.6).timeout
 	expect(game.day_transition.get_child_count() == 0, "The notice dismisses itself")
-	game._cell_actions()
-	for button in game.modal_layer.find_children("*", "Button", true, false):
-		expect(button.text not in ["拆分小队", "结束一天"] and not button.text.begins_with("治疗队友"), "Removed actions stay absent")
+	expect(game.modal_layer.get_child_count() == 0, "Returning to the village leaves the map open")
 	for suffix in ["", ".bak", ".tmp"]:
 		DirAccess.remove_absolute(run.save_path + suffix)
 	game.free()

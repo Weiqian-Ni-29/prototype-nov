@@ -113,7 +113,7 @@ func setup(actors: Dictionary, current: Array, encounter: bool, width: float, op
 	done = UI.button(right, "开始战斗" if encounter else "保存卡组", func(): completed.emit(deck.duplicate()))
 	done.name = "ConfirmCardDeck"
 	UI.accent(done)
-	UI.button(right, "返回遭遇" if encounter else "返回地图", func(): cancelled.emit())
+	UI.button(right, "返回地图", func(): cancelled.emit())
 	_filter()
 	_render_deck()
 

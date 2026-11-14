@@ -140,14 +140,11 @@ func check_camera_drag(game: Node, start: String, next: String) -> void:
 				dissolve_seen = true
 				await RenderingServer.frame_post_draw
 				root.get_texture().get_image().save_png("user://fog-reveal-mid.png")
-	var supply_panel := false
+	expect(game.modal_layer.has_node("StoryRewards") and not mover.is_moving(), "The supply receipt waits for walking to finish")
 	for button in game.modal_layer.find_children("*", "Button", true, false):
-		if button.text == "领取补给":
-			supply_panel = true
-		elif button.text == "关闭":
+		if button.text.begins_with("返回地图"):
 			button.pressed.emit()
 			break
-	expect(supply_panel and not mover.is_moving(), "The supply panel waits for walking to finish")
 	await process_frame
 	expect(midpoint_seen and view.focus_point.is_equal_approx(destination), "Camera follows the walking doll and settles on arrival")
 	expect(dissolve_seen and not is_instance_valid(veil), "The reveal fades through intermediate opacity and then removes its veil")

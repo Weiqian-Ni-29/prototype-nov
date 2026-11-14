@@ -125,20 +125,16 @@ func check_exploration() -> void:
 	if site.is_empty():
 		game.queue_free()
 		return
-	run.actor("hero").position = site
-	run.data.tiles[site].enemies = []
-	run.reveal(site)
-	game.selected_cell = site
-	game._refresh()
-	game._cell_actions()
-	for button in game.modal_layer.find_children("*", "Button", true, false):
-		if button.text == "查看节点剧情":
-			button.pressed.emit()
-			break
-	for button in game.modal_layer.find_children("*", "Button", true, false):
-		if button.text.begins_with("搜寻旧物"):
-			button.pressed.emit()
-			break
+	var approach: String = Hex.neighbors(site, run.data.tiles).filter(func(cell): return Hex.is_land(run.data.tiles, cell))[0]
+	run.data.tiles[approach].enemies.clear()
+	run.actor("hero").position = approach
+	run.reveal(approach)
+	game._select_actor("hero")
+	game._select_cell(site)
+	game._select_cell(site)
+	var deadline := Time.get_ticks_msec() + 5000
+	while game.map_traveling and Time.get_ticks_msec() < deadline:
+		await process_frame
 	var intro = run.relic_intro()
 	expect(run.has_relic("telescope") and intro.get("id") == "telescope" and game.modal_layer.has_node("StoryRewards"), "Investigating an eligible tile opens the item receipt directly")
 	if intro.is_empty():
