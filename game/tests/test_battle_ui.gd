@@ -416,6 +416,53 @@ func check_hand_layout() -> void:
 	view.queue_free()
 	await process_frame
 
+func check_deck_draw() -> void:
+	var battle = fixture()
+	battle.hands[Chess.PLAYER] = ["brace", "ward", "ember_spell"]
+	battle.piles[Chess.PLAYER] = ["rain"]
+	battle.draw_count = 0
+	var view := ChessView.new()
+	root.add_child(view)
+	view.setup(battle, null)
+	await process_frame
+	await process_frame
+	var top := view.deck_layers[0]
+	expect(top.visible and top.global_position.x >= view.hand.get_global_rect().end.x
+		and not view.deck_layers[1].visible and view.pile.text == "牌库 1 张",
+		"The last card sits in the right-hand deck")
+	var first_position := view.hand_buttons[0].position
+	battle._draw(Chess.PLAYER)
+	view.render()
+	var drawn := view.hand_buttons[-1]
+	expect(view.pile.text == "牌库 1 张" and view.hand_label.text == "手牌  3 张" and drawn.disabled,
+		"A queued draw keeps the displayed counts and cannot be selected")
+	var saw_lift := false
+	var saw_departure := false
+	var saw_reveal := false
+	var saw_fan_expand := false
+	var timeout := Time.get_ticks_msec() + 2000
+	while drawn.disabled and Time.get_ticks_msec() < timeout:
+		await process_frame
+		var back := drawn.get_node_or_null("DrawCardBack") as TextureRect
+		if back == null or not drawn.disabled or not drawn.visible:
+			continue
+		if back.visible and view.pile.text == "牌库 1 张":
+			var center := drawn.get_global_transform() * (drawn.size * 0.5)
+			saw_lift = saw_lift or center.distance_to(top.get_global_rect().get_center()) < 15.0
+		if back.visible and view.pile.text.begins_with("牌库 0 张"):
+			saw_departure = saw_departure or view.empty_deck.visible and not top.visible
+		if not back.visible and drawn.get_child(0).visible:
+			saw_reveal = true
+			saw_fan_expand = saw_fan_expand or not view.hand_buttons[0].position.is_equal_approx(first_position)
+	expect(saw_lift and saw_departure and saw_reveal and saw_fan_expand,
+		"The card lifts from the deck, decrements it, flips, and makes space in the hand")
+	expect(view.animating.is_empty() and view.hand_label.text == "手牌  4 张" and drawn.scale.is_equal_approx(Vector2.ONE),
+		"The last draw settles and increases the hand count")
+	await click(drawn)
+	expect(view.selected_card == 3, "The drawn card becomes selectable after landing")
+	view.queue_free()
+	await process_frame
+
 func check_board_badges() -> void:
 	var battle = fixture()
 	battle.board[11] = battle._piece(Cards.definition("eve"), Chess.PLAYER)
@@ -585,6 +632,7 @@ func execute() -> void:
 	check_battle_income()
 	await check_ui()
 	await check_hand_layout()
+	await check_deck_draw()
 	await check_board_badges()
 	await check_hover_details()
 	print("CHESS BATTLE: %d checks, %d failures" % [checks, failures])
