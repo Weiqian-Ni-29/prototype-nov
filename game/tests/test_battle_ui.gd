@@ -156,6 +156,7 @@ func check_rules() -> void:
 		and battle.board[4].hp == 3, "A defeated unit still returns its full damage before the survivor occupies its square")
 	battle.board[4].hp = 3
 	battle.hands[Chess.PLAYER] = ["eve"]
+	battle.mana[Chess.PLAYER] = 3
 	expect(battle.play(0, 7) and battle.board[4].hp == 6, "Ivy heals the adjacent wounded ally on deployment")
 	battle.hands[Chess.PLAYER] = ["ward"]
 	battle.mana[Chess.PLAYER] = 2
@@ -164,10 +165,10 @@ func check_rules() -> void:
 	battle.hands[Chess.PLAYER] = ["pike"]
 	battle.mana[Chess.PLAYER] = 2
 	expect(battle.play(0, 10) and battle.attack_power(battle.board[10]) == 5, "Weapon raises the attack of the chosen piece")
-	var wayfarer_gear := Gear.card({"definition_id": "grave_wayfarer_weapon", "enhance_level": 0, "quality": Gear.QUALITIES[0]})
+	var wayfarer_gear := Gear.card({"definition_id": "grave_wayfarer_armor", "enhance_level": 0, "quality": Gear.QUALITIES[0]})
 	var armor_before: int = battle.board[10].armor
 	battle._apply_card(Chess.PLAYER, "gear:wayfarer", wayfarer_gear, 10)
-	expect(wayfarer_gear.element == "ice" and battle.board[10].armor == armor_before + 1,
+	expect(wayfarer_gear.element == "ice" and battle.board[10].armor == armor_before + int(wayfarer_gear.armor) + 1,
 		"Wayfarer gear preserves its affinity guard on the ice commander")
 	battle.hands[Chess.PLAYER] = ["brace"]
 	battle.mana[Chess.PLAYER] = 1
@@ -232,22 +233,85 @@ func check_equipment_replacement() -> void:
 	expect(not battle.play(0, 10) and unit.hp_max == base_hp_max + 1 and battle.hands[Chess.PLAYER] == [stronger_charm],
 		"An unaffordable replacement leaves the equipment and hand intact")
 
+func check_weapon_compatibility() -> void:
+	var battle = fixture("archer")
+	battle.board[7] = battle._piece(Cards.definition("eve"), Chess.PLAYER)
+	battle.board[4] = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
+	var uid := Items.add_gear(battle.run.data, "grove_mender_weapon", "common", "actor", "hero")
+	var staff := "gear:" + uid
+	battle.hands[Chess.PLAYER] = [staff, "blade", "temp:pike"]
+	battle.mana[Chess.PLAYER] = 5
+	expect(battle.card_targets(Chess.PLAYER, 0) == [7] and battle.card_targets(Chess.PLAYER, 1) == [10],
+		"Ranged and melee weapons only target matching allies")
+	expect(not battle.play(0, 10) and not battle.play(1, 7) and battle.mana[Chess.PLAYER] == 5
+		and battle.hands[Chess.PLAYER] == [staff, "blade", "temp:pike"], "Incompatible plays preserve the cards and mana")
+	expect(battle.play(0, 7) and battle.board[7].weapon == staff and battle.play(0, 10)
+		and battle.play(0, 10) and battle.hands[Chess.PLAYER] == ["blade"] and battle.board[10].weapon == "temp:pike",
+		"Matching weapon swaps still work and return the old melee weapon to hand")
+	battle.turn = Chess.ENEMY
+	battle.mana[Chess.ENEMY] = 1
+	battle.hands[Chess.ENEMY] = ["blade"]
+	expect(battle.card_targets(Chess.ENEMY, 0) == [4] and not battle.play(0, 1),
+		"The enemy follows the same restrictions for its ranged commander")
+	var enemy_deck: Array = battle._enemy_deck(["archer"], "archer", RandomNumberGenerator.new())
+	expect(enemy_deck.size() == 12 and "staff" in enemy_deck and "blade" not in enemy_deck and "pike" not in enemy_deck,
+		"A ranged commander receives only compatible weapons in its enemy deck")
+
+func check_ranged_balance() -> void:
+	var battle = fixture("archer")
+	var ivy := Cards.definition("eve")
+	var lorne := Cards.definition("lorne")
+	var highdrake := Cards.definition("highdrake")
+	expect(ivy.cost == 3 and ivy.attack == 2 and ivy.hp == 6 and lorne.cost == 3 and lorne.attack == 2 and lorne.hp == 6,
+		"Ranged companions cost more and have lower base stats while attack stays at least two")
+	expect(highdrake.cost == 2 and highdrake.attack == 5 and highdrake.hp == 8,
+		"The melee vanguard keeps its original cost and base stats")
+	var archer: Dictionary = battle.definition("foe:archer")
+	var boar: Dictionary = battle.definition("foe:boar")
+	expect(archer.cost == 3 and archer.attack == 2 and archer.hp == 3 and boar.cost == 2,
+		"Enemy deployments use the same ranged balance rule")
+	expect(battle.commanders[Chess.ENEMY].attack == 2 and battle.commanders[Chess.ENEMY].hp == 7,
+		"The starting enemy archer trades base stats for retaliation immunity without a deployment fee")
+	battle.hands[Chess.PLAYER] = ["eve"]
+	battle.mana[Chess.PLAYER] = 2
+	expect(not battle.play(0, 7) and battle.hands[Chess.PLAYER] == ["eve"], "Two mana cannot deploy Ivy")
+	battle.mana[Chess.PLAYER] = 3
+	expect(battle.play(0, 7) and battle.board[7].hp == ivy.hp and battle.mana[Chess.PLAYER] == 0,
+		"Three mana deploys Ivy with the card's displayed stats")
+
 func check_retaliation() -> void:
 	var battle = fixture()
-	var attacker: Dictionary = battle._piece(Cards.definition("support_archer"), Chess.PLAYER)
+	var attacker: Dictionary = battle._piece(Cards.definition("eve"), Chess.PLAYER)
 	var defender: Dictionary = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
 	battle.board[7] = attacker
-	battle.board[1] = defender
-	battle.board[0] = battle.commanders[Chess.ENEMY]
-	attacker.hp = 2
+	battle.board[4] = defender
+	attacker.hp = 1
+	attacker.armor = 1
 	defender.hp = 2
 	defender.armor = 0
-	expect(not battle.moves(1).has(7) and battle.move(7, 1), "A ranged attack can reach a melee defender")
+	defender.attack = 9
+	expect(battle.move(7, 4), "Ivy can use a ranged attack against an adjacent enemy")
 	var hit: Dictionary = battle.take_attack()
-	expect(hit.lethal and hit.retaliation.lethal and battle.board[7].is_empty() and battle.board[1].is_empty(),
-		"The lethal counter hits regardless of reach and leaves both squares empty when both pieces fall")
-	expect(battle.ally_losses == 1 and battle.enemy_losses == 1 and not battle.can_move_piece(),
-		"Both deaths are recorded and the exchange spends only the initiating team's board action")
+	expect(hit.lethal and hit.retaliation.is_empty() and battle.board[7].is_empty() and battle.board[4] == attacker
+		and attacker.hp == 1 and attacker.armor == 1,
+		"Ivy takes no counter damage and keeps armor when taking the adjacent enemy's square")
+	expect(battle.ally_losses == 0 and battle.enemy_losses == 1 and not battle.can_move_piece(),
+		"The ranged attack records only the defender's loss and spends the board action")
+
+	battle = fixture()
+	battle.board[7] = battle._piece(Cards.definition("highdrake"), Chess.PLAYER)
+	battle.board[0] = battle.board[1]
+	defender = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
+	battle.board[1] = defender
+	battle.board[7].hp = 1
+	battle.board[7].armor = 0
+	defender.hp = 1
+	defender.armor = 0
+	expect(not battle.moves(1).has(7) and battle.move(7, 1), "A melee vanguard can reach two squares")
+	hit = battle.take_attack()
+	expect(hit.lethal and hit.retaliation.lethal and battle.board[7].is_empty() and battle.board[1].is_empty()
+		and battle.ally_losses == 1 and battle.enemy_losses == 1,
+		"Melee attackers still take the defender's simultaneous counter even beyond the defender's reach")
 
 	battle = fixture()
 	battle.board[4] = battle.board[1]
@@ -309,10 +373,9 @@ func check_attack_feedback() -> void:
 			and effect.defender.get_node("Armor").get_child(0).text == str(battle.board[7].armor)
 			and view.cells[7].get_global_rect() == target_rect,
 			"An armor-only projectile leaves the attacker and grid in place and updates only armor")
-		expect(effect.retaliation_losses.visible and effect.retaliation_losses.get_child_count() == 2
-			and effect.retaliation_losses.get_child(1).get_child(0).text.begins_with("生命")
-			and effect.attacker.get_node("Health").get_child(0).text == str(enemy.hp),
-			"The counter damage appears on the attacking archer on the same frame")
+		expect(not effect.retaliation_losses.visible and effect.retaliation_losses.get_child_count() == 0
+			and enemy.hp == effect.attack.attacker.hp and enemy.armor == effect.attack.attacker.armor,
+			"The attacking archer takes no counter damage and shows no retaliation indicator")
 		await effect.finished
 	expect(not view.is_attack_playing() and not view.menu.disabled, "The attack overlay releases its input lock")
 
@@ -327,6 +390,9 @@ func check_attack_feedback() -> void:
 		await effect.impact
 		expect(effect.losses.get_child_count() == 1 and effect.losses.get_child(0).get_child(0).text == "未造成伤害",
 			"A zero-damage hit shows no armor or health loss")
+		expect(effect.retaliation_losses.visible and effect.retaliation_losses.get_child_count() == 1
+			and effect.retaliation_losses.get_child(0).get_child(0).text.begins_with("护甲"),
+			"A melee attack against a ranged defender still shows counter damage")
 		await effect.finished
 	view.queue_free()
 	await process_frame
@@ -340,12 +406,13 @@ func check_fatigue() -> void:
 	var enemy: Dictionary = battle.commanders[Chess.ENEMY]
 	var hero_hp: int = hero.hp
 	var enemy_hp: int = enemy.hp
+	var ivy_hp: int = battle.board[7].hp
 	battle._draw(Chess.PLAYER)
-	expect(battle.fatigue == [1, 0] and hero.hp == hero_hp and hero.armor == 0 and battle.board[7].hp == 6,
+	expect(battle.fatigue == [1, 0] and hero.hp == hero_hp and hero.armor == 0 and battle.board[7].hp == ivy_hp - 1,
 		"First empty draw hits the entire team, shield first, without changing the opponent's fatigue")
 	battle._draw(Chess.PLAYER)
 	battle._draw(Chess.ENEMY)
-	expect(battle.fatigue == [2, 1] and hero.hp == hero_hp - 2 and battle.board[7].hp == 4
+	expect(battle.fatigue == [2, 1] and hero.hp == hero_hp - 2 and battle.board[7].hp == ivy_hp - 3
 		and enemy.hp == enemy_hp and battle.board[4].armor == 0, "Fatigue increases separately and damages all living pieces")
 	hero.hp = 2
 	battle._draw(Chess.PLAYER)
@@ -393,7 +460,7 @@ func check_enemy_strategy() -> void:
 	battle = ranged_threat_fixture("coat")
 	battle.enemy_turn(true)
 	expect(battle.commanders[Chess.ENEMY].armor == 3 and battle.board[6].hp == 1
-		and battle.moves(7).has(1) and battle.attack_power(battle.board[7]) == 3,
+		and battle.moves(7).has(1) and battle.attack_power(battle.board[7]) == 2,
 		"Enemy equips armor when it must survive an open firing lane")
 
 	battle = fixture()
@@ -475,8 +542,8 @@ func check_companion_growth() -> void:
 	battle.board[9] = battle.board[10]
 	battle.board[10] = {}
 	battle.hands[Chess.PLAYER] = ["lorne"]
-	battle.mana_capacity[Chess.PLAYER] = 2
-	battle.mana[Chess.PLAYER] = 2
+	battle.mana_capacity[Chess.PLAYER] = base.cost
+	battle.mana[Chess.PLAYER] = base.cost
 	expect(battle.play(0, 10) and battle.board[10].attack == base.attack + 1 and battle.board[10].hp == base.hp + 3
 		and battle.moves(10).get(1) == "attack", "The breakthrough card deploys with its improved stats and three-square range")
 	battle.board[4] = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
@@ -693,6 +760,8 @@ func check_mana_display() -> void:
 	expect(view.end_turn_button.get_global_rect().position.y >= view.mana_ratio.get_global_rect().end.y,
 		"End Turn sits at the bottom of the rail below the player's mana")
 	var pike := view.hand_buttons[1]
+	var type := pike.find_child("AttackType", true, false) as PanelContainer
+	expect(type != null and type.get_child(0).text == "近战", "The pike hand card displays a melee tag despite its reach")
 	var badge := pike.find_child("ManaCost", true, false) as TextureRect
 	expect(badge != null and badge.get_child(0).text == "2"
 		and badge.position.x < pike.size.x * 0.5 and badge.position.y < pike.size.y * 0.5,
@@ -826,6 +895,16 @@ func check_board_badges() -> void:
 				"%s shows the correct %s badge fully inside its corner" % [unit.name, stat[0]])
 	var left := view.cells[10]
 	var right := view.cells[11]
+	for square in [10, 11]:
+		var tile := view.cells[square]
+		var tag := tile.get_node("AttackType") as PanelContainer
+		expect(tag.get_child(0).text == ("近战" if square == 10 else "远程")
+			and tile.get_node("Armor").get_global_rect().end.y <= tag.get_global_rect().position.y
+			and tag.get_global_rect().end.y <= tile.get_node("Health").get_global_rect().position.y,
+			"The type tag fits between the armor and health badges")
+	var slot := right.get_node("PieceFace/EquipmentSlots/weapon")
+	var empty_weapon := slot.find_children("*", "TextureRect", true, false)[0] as TextureRect
+	expect(empty_weapon.texture.resource_path.ends_with("/chess-bow.svg"), "Ivy's empty weapon slot shows a bow")
 	var health := left.get_node("Health") as TextureRect
 	await click(left, (health.get_global_rect().get_center() - left.global_position) / left.size)
 	expect(view.selected_square == 10, "Clicking the health badge selects its unit")
@@ -913,7 +992,8 @@ func check_hover_details() -> void:
 	var icon := view.hover_detail_body.find_child("ElementIcon", true, false) as TextureRect
 	expect(icon != null and icon.texture.resource_path.ends_with("/ice.svg") and not "冰属性" in text,
 		"The traveler detail shows only the ice icon")
-	expect("移动 · " in text and "攻击 · " in text, "Commander popup lists movement and attack")
+	expect("移动 · " in text and "攻击 · 近战" in text and "会受到反伤" in text,
+		"Commander popup lists movement and the melee retaliation rule")
 	expect(root.get_visible_rect().encloses(view.hover_detail.get_global_rect()), "The popup stays inside the viewport")
 	game.combat.revealed_enemy = ["pike"]
 	view._hover_tile(1)
@@ -952,7 +1032,7 @@ func check_hover_details() -> void:
 	var empty := rack.get_node("armor") as Control
 	await move_mouse(occupied.get_global_rect().get_center())
 	text = _detail_text(view)
-	expect("武器 · 已装备" in text and "护沿短戟" in text and "攻击 +1" in text and "移动与攻击" not in text,
+	expect("近战武器 · 已装备" in text and "护沿短戟" in text and "攻击 +1" in text and "移动与攻击" not in text,
 		"Moving over the weapon slot shows only that equipment and its effects")
 	await move_mouse(empty.get_global_rect().get_center())
 	text = _detail_text(view)
@@ -987,7 +1067,8 @@ func check_hover_details() -> void:
 	await process_frame
 	text = _detail_text(view)
 	expect("角色天赋" in text and "援护" in text, "Breakthrough talent appears in the hand card popup")
-	expect("移动 · " in text, "Partner card popup lists its movement")
+	expect("移动 · " in text and "攻击 · 远程" in text and "免反伤" in text,
+		"Partner card popup identifies Ivy as ranged and explains retaliation immunity")
 	view._unhover_card(0)
 	expect(not view.hover_detail.visible, "Leaving the hand card closes the popup")
 	game.queue_free()
@@ -998,6 +1079,8 @@ func execute() -> void:
 	check_enemy_turn_budget()
 	check_rules()
 	check_equipment_replacement()
+	check_weapon_compatibility()
+	check_ranged_balance()
 	check_retaliation()
 	check_fatigue()
 	check_enemy_strategy()

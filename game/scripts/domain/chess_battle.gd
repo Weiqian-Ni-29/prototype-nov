@@ -175,7 +175,8 @@ func _ensure_opening_attack() -> void:
 	var deck: Array = piles[PLAYER]
 	for i in deck.size():
 		var card := definition(deck[i])
-		if card.cost <= mana[PLAYER] and (card.has("damage") or card.get("slot") == "weapon"):
+		var commander_weapon := Cards.equipment_slot(card) == "weapon" and Cards.weapon_fits(card, commanders[PLAYER])
+		if card.cost <= mana[PLAYER] and (card.has("damage") or commander_weapon):
 			if i >= Cards.OPENING_HAND:
 				var replaced: String = deck[Cards.OPENING_HAND - 1]
 				deck[Cards.OPENING_HAND - 1] = deck[i]
@@ -190,16 +191,19 @@ func _enemy_deck(types: Array, lead: String, roller: RandomNumberGenerator) -> A
 	var deck: Array = []
 	for id in support.slice(0, difficulty):
 		deck.append("foe:" + id)
-	deck.append_array(["blade", "brace", "ward", "mend_spell"])
 	var leader: Dictionary = run.actor(lead.trim_prefix("npc:")) if lead.begins_with("npc:") else Catalog.ENEMIES[lead]
+	var ranged_leader := Cards.is_ranged(leader)
+	deck.append_array(["staff" if ranged_leader else "blade", "brace", "ward", "mend_spell"])
 	var specialty: String = leader.get("skill", "")
 	if lead.begins_with("npc:"):
 		specialty = {"fire": "ignite", "water": "wet", "ice": "slow", "earth": "guard"}.get(
-			Cards.chess_element(leader), "charge" if leader.get("attack_delivery") == "ranged" else "guard")
-	deck.append_array(ENEMY_DECK_SPECIALTIES.get(specialty, ["blade", "brace"]))
+			Cards.chess_element(leader), "charge" if ranged_leader else "guard")
+	for id in ENEMY_DECK_SPECIALTIES.get(specialty, ["blade", "brace"]):
+		deck.append("staff" if ranged_leader and id in ["blade", "pike"] else id)
 	var filler := ["pike", "ward", "ember_spell", "brace", "ice_spell", "mend_spell",
 		"blade", "pike", "ember_spell", "ice_spell", "ward", "mend_spell", "brace"]
-	for id in filler:
+	for candidate in filler:
+		var id: String = "staff" if ranged_leader and candidate in ["blade", "pike"] else candidate
 		if deck.size() == ENEMY_DECK_SIZE:
 			break
 		if deck.count(id) < 2:
@@ -212,13 +216,13 @@ static func commander_definition(expedition: RefCounted) -> Dictionary:
 	var attack := 4
 	var armor := 1
 	return {"name": hero.name, "portrait": "hero", "element": "ice", "attack": attack, "hp": 13,
-		"armor": armor, "move": 1, "range": 1, "diagonal": true, "trait": "横竖斜走一格。"}
+		"armor": armor, "move": 1, "range": 1, "attack_delivery": "melee", "diagonal": true, "trait": "横竖斜走一格。"}
 
 static func enemy_definition(expedition: RefCounted, id: String, leader: bool = false, tier: int = -1) -> Dictionary:
 	var npc := id.begins_with("npc:")
 	var actor_id := id.trim_prefix("npc:")
 	var source: Dictionary = expedition.actor(actor_id) if npc else expedition.war_god_stats() if id == "war_god" else Catalog.ENEMIES[id]
-	var ranged: bool = source.get("attack_delivery") == "ranged"
+	var ranged := Cards.is_ranged(source)
 	if tier < 0:
 		var cell: String = expedition.actor("hero").position
 		tier = difficulty_tier(expedition.exploration_percent(), is_elite_encounter(expedition, cell), id == "war_god")
@@ -244,12 +248,14 @@ static func enemy_definition(expedition: RefCounted, id: String, leader: bool = 
 		movement += "可沿无阻挡的直线攻击两格。"
 	if healer:
 		movement += "落位时治疗相邻友方。"
-	return {"name": source.name, "kind": "partner", "cost": 2, "portrait": actor_id if npc or id == "war_god" else "",
+	var piece := {"name": source.name, "kind": "partner", "cost": 2, "portrait": actor_id if npc or id == "war_god" else "",
 		"enemy_art": "" if npc or id == "war_god" else id, "element": "fire" if id == "war_god" else Cards.chess_element(source),
 		"attack_delivery": source.get("attack_delivery", "melee"),
 		"attack_projectile": "arrow" if id == "archer" or Cards.is_archer(source) else "energy",
 		"attack": attack, "hp": hp, "armor": armor, "move": 1, "range": reach, "heal": 2 if healer else 0,
 		"diagonal": leader, "trait": movement}
+	Cards.balance_ranged(piece, leader)
+	return piece
 
 func definition(id: String) -> Dictionary:
 	if id.begins_with("temp:"):
@@ -361,7 +367,8 @@ func card_targets(side: int, index: int) -> Array[int]:
 					if not card.get("cup", false) or not piece.leader:
 						targets.append(square)
 				"weapon", "equipment":
-					targets.append(square)
+					if Cards.weapon_fits(card, piece):
+						targets.append(square)
 				"spell":
 					if card.has("heal") and piece.hp < piece.hp_max:
 						targets.append(square)
@@ -721,7 +728,6 @@ func _attack_context(from: int, target: int) -> Dictionary:
 		"element": unit.element, "armor_before": victim.get("armor", 0), "bonus": 0, "pierce": 0, "block": 0}
 
 func _exchange_hits(from: int, target: int, strike: Dictionary) -> void:
-	var counter := _attack_context(target, from)
 	var attacker: Dictionary = strike.unit
 	var defender: Dictionary = strike.victim
 	if not public_preview:
@@ -730,16 +736,22 @@ func _exchange_hits(from: int, target: int, strike: Dictionary) -> void:
 	if attacker.side == PLAYER:
 		_relic("attack", strike)
 	attacker.erase("sight")
-	var damage := _hit_damage(attack_power(strike.unit), strike)
-	var retaliation := _hit_damage(attack_power(counter.unit), counter)
-	# Resolve both hits before either one can trigger healing, extra armor, or removal.
-	_apply_hit(damage, strike)
-	_apply_hit(retaliation, counter)
-	_finish_hit(strike)
-	_finish_hit(counter)
+	var damage := _hit_damage(attack_power(attacker), strike)
+	var counter := {}
+	if not Cards.is_ranged(attacker):
+		counter = _attack_context(target, from)
+		var retaliation := _hit_damage(attack_power(defender), counter)
+		# Apply both hits before either side can trigger healing or removal.
+		_apply_hit(damage, strike)
+		_apply_hit(retaliation, counter)
+		_finish_hit(strike)
+		_finish_hit(counter)
+	else:
+		_apply_hit(damage, strike)
+		_finish_hit(strike)
 	if not public_preview:
 		last_attack.merge(_hit_result(strike))
-		last_attack.retaliation = _hit_result(counter)
+		last_attack.retaliation = {} if counter.is_empty() else _hit_result(counter)
 
 func _hit_damage(base: int, context: Dictionary) -> int:
 	if context.victim.side == PLAYER:
