@@ -541,7 +541,7 @@ func _cell_actions() -> void:
 			var info = run.data.map_intel[key]
 			var elements: Array = info.elements.map(func(element): return Catalog.ELEMENT_NAMES.get(element, element))
 			_text(box, "遭遇拓片 · %s · %d 个敌人 · %s" % [str(key).trim_prefix("encounter:"), info.count, "、".join(elements)], 15, muted)
-	if not has_encounter and (t.site.is_empty() or (t.site == "boss" and not run.boss_known())) and not Nodes.story(node).is_empty():
+	if not has_encounter and _has_local_node(t, node):
 		if not _node_resolved(node, t):
 			for option in _node_actions(node):
 				_button(box, option.text, _node_choice.bind(option.id))
@@ -591,6 +591,15 @@ func _cell_actions() -> void:
 
 func _node_title(cell: String) -> String:
 	return run.location_name(cell)
+
+func _has_local_node(tile: Dictionary, node: Dictionary) -> bool:
+	return (tile.site.is_empty() or (tile.site == "boss" and not run.boss_known())) and not Nodes.story(node).is_empty()
+
+func _has_arrival_action(cell: String) -> bool:
+	var tile: Dictionary = run.data.tiles[cell]
+	var node := run.node_at(cell)
+	return node.get("kind") in ["supply", "trade", "cache"] and tile.enemies.is_empty() \
+		and _has_local_node(tile, node) and not _node_resolved(node, tile)
 
 func _site_impression() -> void:
 	var cell: String = run.actor(selected_id).position
@@ -876,7 +885,6 @@ func _move_selected() -> void:
 	if map_traveling:
 		return
 	var destination = move_target
-	var first_visit = not run.has_visited(destination)
 	var previous_clock := {"day": run.data.day, "weather": run.data.weather, "steps": run.remaining_steps()}
 	_clear_map_move()
 	var result = run.move(destination)
@@ -888,9 +896,8 @@ func _move_selected() -> void:
 			travel_clock = previous_clock
 		selected_id = "hero"
 		selected_cell = destination
-		var resident: Dictionary = run.actor(run.data.tiles[destination].npc)
-		if first_visit and not resident.is_empty() and not resident.joined and resident.position == destination:
-			run.data.pending_arrival = {"actor": "hero", "cell": destination}
+		if _has_arrival_action(destination):
+			run.data.pending_arrival = {"actor": selected_id, "cell": destination}
 	_run_action(result)
 	if not result.ok:
 		return
@@ -936,8 +943,11 @@ func _show_arrival() -> void:
 func _show_arrival_node() -> void:
 	if not run.data.has("pending_arrival"):
 		return
+	var arrival: Dictionary = run.data.pending_arrival
 	run.data.erase("pending_arrival")
 	run.save_game()
+	if selected_id == arrival.actor and run.actor(selected_id).position == arrival.cell and _has_arrival_action(arrival.cell):
+		_cell_actions()
 
 func _run_action(result: Dictionary) -> void:
 	toast_text = "已完成。" if result.ok else str(result.get("message", "无法执行。"))
@@ -2019,7 +2029,7 @@ func _to_menu() -> void:
 		_show_opening(Screen.MENU)
 
 func _guide() -> void:
-	_notice("点相邻格预览，再点一次确认。伙伴跟随旅人一起移动，每走五格自动进入第二天。\n\n点「行动」可以查看脚下的地点。疗伤和回魔需要消耗补给，灯铢由全队共享。\n\n在「卡组」里选满 12 张牌。对战开局抽 3 张，之后每回合抽 1 张，只能走子、部署或用牌一次。攻击先扣护甲，击倒才占格。击倒对方主战者获胜。")
+	_notice("点相邻格预览，再点一次确认。伙伴跟随旅人一起移动，每走五格自动进入第二天。\n\n走到可领取补给、交易或寻宝的地块时，会打开地点面板。点「行动」也能查看脚下的地点。疗伤和回魔需要消耗补给，灯铢由全队共享。\n\n在「卡组」里选满 12 张牌。对战开局抽 3 张，之后每回合抽 1 张，只能走子、部署或用牌一次。攻击先扣护甲，击倒才占格。击倒对方主战者获胜。")
 
 func _settings_dialog() -> void:
 	var box = _modal("设置与操作", 650, 430)

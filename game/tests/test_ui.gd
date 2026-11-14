@@ -295,8 +295,8 @@ func check_node_arrival() -> void:
 	var run = game.run
 	var start: String = run.data.start
 	var cells = Hex.neighbors(start, run.data.tiles).filter(func(cell):
-		return Hex.is_land(run.data.tiles, cell) and run.data.tiles[cell].enemies.is_empty() and run.data.tiles[cell].npc.is_empty())
-	expect(not cells.is_empty(), "Arrival fixture has a safe neighboring land tile")
+		return run.node_at(cell).get("kind") == "supply" and run.data.tiles[cell].enemies.is_empty())
+	expect(not cells.is_empty(), "Arrival fixture has a neighboring supply stop")
 	if cells.is_empty():
 		return
 	var cell: String = cells[0]
@@ -321,12 +321,16 @@ func check_node_arrival() -> void:
 	game._select_cell(start)
 	expect(game.selected_cell == cell and game.move_target.is_empty(), "A click during travel cannot replace the arrival")
 	await wait_for_map_arrival()
-	expect(not game.view.dolls.hero.is_moving() and game.modal_layer.get_child_count() == 0,
-		"A peaceful first arrival stays on the map without a story")
+	expect(not game.view.dolls.hero.is_moving() and find_button(game.modal_layer, "领取补给") != null
+		and contains_text(game.modal_layer, title), "Arrival opens the supply panel after walking finishes")
+	expect(run.data.lamp_coins == Nodes.STARTING_COINS and run.node_at(cell).result.is_empty(),
+		"Opening the supply panel leaves the reward unclaimed")
 	expect(run.data.day == 2, "The last step advances the day")
+	expect(game.day_transition.get_child_count() == 0, "The day notice waits while the supply panel is open")
 	var marker: Label3D = game.view.tile_nodes[cell].get_node("LocationName")
 	expect(marker.text == title and marker.position.x == 0 and marker.position.z == 0,
 		"The same name appears at the visited tile's center")
+	await press("关闭")
 	expect(game.day_transition.has_node("MapNotice") and contains_text(game.day_transition, "精力已恢复")
 		and game.sound.cache.get("day") == game.sound.DAY_CHIME,
 		"The map shows the full notice and plays the selected chime")
@@ -341,16 +345,27 @@ func check_node_arrival() -> void:
 			and label.render_priority > label.outline_render_priority,
 			"Visited map name and outline draw above the transparent terrain and fog: " + label.text)
 	game._continue_run()
-	expect(game.view.tile_nodes[cell].get_node("LocationName").text == title and not game.modal_layer.has_node("StoryScreen"),
-		"Loading preserves the visited name without reopening its story")
+	expect(game.view.tile_nodes[cell].get_node("LocationName").text == title and game.modal_layer.get_child_count() == 0,
+		"Loading preserves the visited name without reopening the dismissed panel")
+	game._select_cell(start)
+	game._select_cell(start)
+	await wait_for_map_arrival()
+	expect(game.modal_layer.get_child_count() == 0, "Returning to the starting village keeps the map open")
+	game._select_cell(cell)
+	game._select_cell(cell)
+	await wait_for_map_arrival()
+	expect(run.actor("hero").position == cell and find_button(game.modal_layer, "领取补给") != null,
+		"Re-entering a supply stop opens the panel if the reward is still available")
+	await click("领取补给")
+	await click("返回地图")
 	game._select_cell(start)
 	game._select_cell(start)
 	await wait_for_map_arrival()
 	game._select_cell(cell)
 	game._select_cell(cell)
 	await wait_for_map_arrival()
-	expect(run.actor("hero").position == cell and not game.modal_layer.has_node("StoryScreen"),
-		"Returning to an already visited tile does not reopen its story")
+	expect(run.actor("hero").position == cell and game.modal_layer.get_child_count() == 0,
+		"A claimed supply stop keeps the map open on re-entry")
 
 func check_arrival_after_victory() -> void:
 	game._start_new()
@@ -674,14 +689,18 @@ func check_node_dialogs() -> void:
 	hero = run.actor("hero")
 
 	var shop_cell: String = shop_cells[0]
+	var approach: String = Hex.neighbors(shop_cell, run.data.tiles).filter(func(cell): return Hex.is_land(run.data.tiles, cell))[0]
 	run.data.lamp_coins = 8
-	hero.position = shop_cell
-	run.reveal(shop_cell)
+	run.data.tiles[approach].enemies.clear()
+	hero.position = approach
+	run.reveal(approach)
 	game._select_actor("hero")
 	var balance = game.ui.find_child("LampCoinBalance", true, false) as Label
 	expect(balance != null and balance.text == "8", "The header displays the starting wallet balance")
 	var salves: int = int(hero.inventory.salve)
-	await press("行动")
+	game._select_cell(shop_cell)
+	game._select_cell(shop_cell)
+	await wait_for_map_arrival()
 	await click("查看货物")
 	var shop = game.modal_layer.find_child("ShopView", true, false)
 	var wallet = shop.find_child("ShopBalance", true, false) as Label if shop != null else null
