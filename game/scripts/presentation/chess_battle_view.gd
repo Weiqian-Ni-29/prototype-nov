@@ -13,11 +13,19 @@ const HEALTH_ICON = preload("res://assets/ui/chess-health.png")
 const ARMOR_ICON = preload("res://assets/ui/chess-armor.png")
 const RETREAT_ICON = preload("res://assets/ui/chess-retreat.svg")
 const MENU_ICON = preload("res://assets/ui/story-main-menu.svg")
+const CARD_BACK = preload("res://assets/ui/lantern-card-back.webp")
 const STAT_SIZE = 38
 const STAT_INSET = 6
 const GRID_LINE = 2
 const HAND_CARD_WIDTH = 114.0
 const HAND_CARD_HEIGHT = HAND_CARD_WIDTH * 7.0 / 5.0
+const DECK_CARD_SIZE = Vector2(84.0, 84.0 * 7.0 / 5.0)
+const DECK_STACK_OFFSET = Vector2(4, 3)
+const DRAW_LIFT = 0.09
+const DRAW_REVEAL = 0.22
+const DRAW_LAND = 0.34
+const DRAW_DURATION = 0.45
+const DRAW_STAGGER = 0.08
 
 var battle: RefCounted
 var cells: Array[Button] = []
@@ -33,11 +41,16 @@ var wait_button: Button
 var cast_button: Button
 var hand: Control
 var pile: Label
+var deck_layers: Array[TextureRect] = []
+var empty_deck: Panel
 var hand_label: Label
 var hand_buttons: Array[Button] = []
 var hand_ids: Array = []
 var hand_generation := 0
 var pending_animation := 0
+var draws_before_departure := 0
+var lifting_from_deck := 0
+var fan_expansion := 0.0
 var hovered := -1
 var animating: Array[int] = []
 var hover_detail: PanelContainer
@@ -133,13 +146,7 @@ func setup(model: RefCounted, scene: Texture2D) -> void:
 	hand.custom_minimum_size.y = 177
 	hand.resized.connect(_queue_fan)
 	hand_table.add_child(hand)
-	var pile_box := UI.panel(hand_table, Color("304e41"), UI.GOLD)
-	(pile_box.get_parent() as Control).custom_minimum_size.x = 98
-	(pile_box.get_parent() as Control).size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	UI.label(pile_box, "◇", 26, UI.GOLD).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	pile = UI.label(pile_box, "", 14, UI.INK, true)
-	pile.name = "ChessPile"
-	pile.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_build_deck(hand_table)
 	var center := CenterContainer.new()
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(center)
@@ -206,11 +213,8 @@ func render() -> void:
 		hint.text = "选择高亮目标完成这一手"
 	else:
 		hint.text = "选择一张手牌或一枚己方棋子。"
-	hand_label.text = "手牌  %d 张" % battle.hands[Battle.PLAYER].size()
-	pile.text = "牌库 %d 张" % battle.piles[Battle.PLAYER].size()
-	if battle.piles[Battle.PLAYER].is_empty():
-		pile.text += "\n下次疲劳 %d" % (battle.fatigue[Battle.PLAYER] + 1)
 	_render_hand()
+	_update_draw_counts()
 	if detail_kind == "unit" and hover_detail.visible:
 		if battle.board[detail_index].is_empty():
 			_hide_detail()
@@ -245,7 +249,7 @@ func _select_tile(square: int) -> void:
 		render()
 
 func _select_card(index: int) -> void:
-	if not battle.can_act():
+	if not battle.can_act() or _card_is_drawing(index):
 		return
 	selected_square = -1
 	selected_card = -1 if selected_card == index else index
@@ -397,12 +401,57 @@ func _mark_commander(tile: Button) -> void:
 	plate.add_child(crown)
 	plate.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT, Control.PRESET_MODE_MINSIZE, STAT_INSET)
 
+func _build_deck(parent: HBoxContainer) -> void:
+	var column := VBoxContainer.new()
+	column.name = "ChessDeck"
+	column.custom_minimum_size.x = 106
+	column.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	parent.add_child(column)
+	var stack := Control.new()
+	stack.custom_minimum_size.y = DECK_CARD_SIZE.y + 8
+	column.add_child(stack)
+	empty_deck = Panel.new()
+	empty_deck.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	empty_deck.position = Vector2(7, 0)
+	empty_deck.size = DECK_CARD_SIZE
+	empty_deck.add_theme_stylebox_override("panel", UI.box(Color("192f28"), Color("567465"), 0, 7))
+	stack.add_child(empty_deck)
+	for depth in range(2, -1, -1):
+		var layer := _card_back()
+		layer.position = Vector2(7, 0) + DECK_STACK_OFFSET * depth
+		layer.size = DECK_CARD_SIZE
+		stack.add_child(layer)
+		deck_layers.push_front(layer)
+	pile = UI.label(column, "", 14, UI.INK)
+	pile.name = "ChessPile"
+	pile.custom_minimum_size.y = 40
+	pile.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+
+func _card_back() -> TextureRect:
+	var back := TextureRect.new()
+	back.texture = CARD_BACK
+	back.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return back
+
+func _update_draw_counts() -> void:
+	var remaining: int = battle.piles[Battle.PLAYER].size() + draws_before_departure
+	pile.text = "牌库 %d 张" % remaining
+	if remaining == 0:
+		pile.text += "\n下次疲劳 %d" % (battle.fatigue[Battle.PLAYER] + 1)
+	for depth in deck_layers.size():
+		deck_layers[depth].visible = depth >= lifting_from_deck and depth < remaining
+	empty_deck.visible = remaining == 0
+	hand_label.text = "手牌  %d 张" % _resting_card_count()
+
 func _render_hand() -> void:
 	var current: Array = battle.hands[Battle.PLAYER]
 	if current != hand_ids:
 		UI.clear(hand)
 		hand_buttons.clear()
 		animating.clear()
+		lifting_from_deck = 0
+		fan_expansion = 0.0
 		hovered = -1
 		_hide_detail()
 		hand_ids = current.duplicate()
@@ -425,6 +474,7 @@ func _render_hand() -> void:
 			kind.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			hand_buttons.append(button)
 		pending_animation = mini(int(battle.draw_count), hand_ids.size())
+		draws_before_departure = pending_animation
 		battle.draw_count = 0
 		_queue_fan()
 	for i in hand_buttons.size():
@@ -434,8 +484,11 @@ func _render_hand() -> void:
 		for state in ["normal", "disabled", "hover", "pressed"]:
 			var highlighted: bool = i == selected_card or state in ["hover", "pressed"]
 			button.add_theme_stylebox_override(state, UI.box(tint, UI.GOLD if highlighted else Color("96957a"), 6, 8))
-		button.disabled = not battle.can_act()
-		if i not in animating:
+		var in_flight := _card_is_drawing(i)
+		button.disabled = in_flight or not battle.can_act()
+		if i >= hand_buttons.size() - pending_animation:
+			button.hide()
+		elif not in_flight:
 			_pose_card(i)
 
 func _queue_fan() -> void:
@@ -447,54 +500,112 @@ func _layout_fan(generation: int) -> void:
 		return
 	var drawn := pending_animation
 	pending_animation = 0
-	for i in hand_buttons.size():
-		if i in animating:
-			continue
-		_pose_card(i)
-		if i < hand_buttons.size() - drawn:
-			continue
-		var button := hand_buttons[i]
-		var finish := button.position
-		var angle := button.rotation
-		button.position = Vector2(hand.size.x + 8, 47)
-		button.rotation = 0.13
-		button.modulate.a = 0.0
+	for i in range(hand_buttons.size() - drawn, hand_buttons.size()):
 		animating.append(i)
-		var flight := button.create_tween().set_parallel()
-		var delay := float(i - (hand_buttons.size() - drawn)) * 0.08
-		flight.tween_property(button, "position", finish, 0.34).set_delay(delay).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-		flight.tween_property(button, "rotation", angle, 0.34).set_delay(delay)
-		flight.tween_property(button, "modulate:a", 1.0, 0.22).set_delay(delay)
-		flight.finished.connect(func():
-			if is_instance_valid(button) and button in hand_buttons:
-				animating.erase(i)
-				_pose_card(i))
+		_start_draw(i, (i - (hand_buttons.size() - drawn)) * DRAW_STAGGER)
+	for i in hand_buttons.size():
+		if i not in animating:
+			_pose_card(i)
+
+func _resting_card_count() -> int:
+	return hand_buttons.size() - animating.size() - pending_animation
+
+func _card_is_drawing(index: int) -> bool:
+	return index in animating or index >= hand_buttons.size() - pending_animation
+
+func _start_draw(index: int, delay: float) -> void:
+	var button := hand_buttons[index]
+	var front := button.get_child(0) as Control
+	var back := _card_back()
+	back.name = "DrawCardBack"
+	button.add_child(back)
+	back.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	front.hide()
+	button.self_modulate.a = 0.0
+	button.size = Vector2(HAND_CARD_WIDTH, HAND_CARD_HEIGHT)
+	button.pivot_offset = button.size * 0.5
+	button.z_index = 30 + index
+	var sample := _animate_draw.bind(index, front, back)
+	var flight := button.create_tween()
+	if delay > 0.0:
+		flight.tween_interval(delay)
+	flight.tween_callback(func():
+		sample.call(0.0)
+		button.show()
+		lifting_from_deck += 1
+		_update_draw_counts())
+	flight.tween_method(sample, 0.0, DRAW_LIFT, DRAW_LIFT)
+	flight.tween_callback(func():
+		lifting_from_deck -= 1
+		draws_before_departure -= 1
+		_update_draw_counts())
+	flight.tween_method(sample, DRAW_LIFT, DRAW_DURATION, DRAW_DURATION - DRAW_LIFT)
+	flight.tween_callback(func():
+		animating.erase(index)
+		back.queue_free()
+		button.scale = Vector2.ONE
+		button.self_modulate.a = 1.0
+		fan_expansion = 0.0
+		for i in _resting_card_count():
+			_pose_card(i)
+		button.disabled = not battle.can_act()
+		_update_draw_counts())
+
+func _animate_draw(time: float, index: int, front: Control, back: TextureRect) -> void:
+	var button := hand_buttons[index]
+	var origin := hand.get_global_transform().affine_inverse() * deck_layers[0].global_position + DECK_CARD_SIZE * 0.5
+	var travel := smoothstep(DRAW_LIFT, DRAW_LAND, time)
+	var settle := smoothstep(DRAW_LAND, DRAW_DURATION, time)
+	var lift := lerpf(12.0 * smoothstep(0.0, DRAW_LIFT, time), 18.0, travel) * (1.0 - settle)
+	lift += 24.0 * sin(PI * travel)
+	var target := _fan_position(index, index + 1, false) + button.pivot_offset + Vector2(14.0 * (1.0 - settle), 0)
+	var flip := smoothstep(DRAW_REVEAL, DRAW_LAND, time)
+	var show_front := flip >= 0.5
+	var base_scale := lerpf(DECK_CARD_SIZE.x / HAND_CARD_WIDTH, 1.0, travel)
+	button.position = origin.lerp(target, travel) - button.pivot_offset - Vector2(0, lift)
+	button.scale = Vector2(maxf(0.04, absf(cos(PI * flip))) * base_scale, base_scale)
+	button.rotation = deg_to_rad(_fan_curve(index, index + 1) * 8.0) * settle
+	back.visible = not show_front
+	front.visible = show_front
+	button.self_modulate.a = 1.0 if show_front else 0.0
+	if index == animating[0] and time >= DRAW_LAND:
+		fan_expansion = settle
+		for i in _resting_card_count():
+			_pose_card(i)
 
 func _pose_card(index: int) -> void:
 	if index >= hand_buttons.size():
 		return
 	var button := hand_buttons[index]
-	# Allow room for the two outside corners when the cards tilt.
-	var available := maxf(0.0, hand.size.x - HAND_CARD_WIDTH - 48.0)
-	var span := minf(HAND_CARD_WIDTH * 0.92, available / maxi(1, hand_buttons.size() - 1))
-	var center := float(hand_buttons.size() - 1) / 2.0
-	var offset := float(index) - center
-	var curve := offset / maxf(1.0, center)
+	var count := _resting_card_count() + fan_expansion
 	var raised := index == hovered or index == selected_card
-	var resting_y := hand.size.y - HAND_CARD_HEIGHT - 13.0
 	button.size = Vector2(HAND_CARD_WIDTH, HAND_CARD_HEIGHT)
-	button.pivot_offset = Vector2(HAND_CARD_WIDTH * 0.5, HAND_CARD_HEIGHT - 12.0)
-	button.position = Vector2((hand.size.x - HAND_CARD_WIDTH) * 0.5 + offset * span,
-		resting_y - 16.0 if raised else resting_y + curve * curve * 4.0)
-	button.rotation = 0.0 if raised else deg_to_rad(curve * 8.0)
+	button.pivot_offset = button.size * 0.5
+	button.position = _fan_position(index, count, raised)
+	button.rotation = 0.0 if raised else deg_to_rad(_fan_curve(index, count) * 8.0)
 	button.z_index = 24 if raised else index
 
+func _fan_position(index: int, count: float, raised: bool) -> Vector2:
+	# Allow room for the two outside corners when the cards tilt.
+	var available := maxf(0.0, hand.size.x - HAND_CARD_WIDTH - 48.0)
+	var span := minf(HAND_CARD_WIDTH * 0.92, available / maxf(1.0, count - 1.0))
+	var offset := index - (count - 1.0) * 0.5
+	var curve := _fan_curve(index, count)
+	var resting_y := hand.size.y - HAND_CARD_HEIGHT - 13.0
+	return Vector2((hand.size.x - HAND_CARD_WIDTH) * 0.5 + offset * span,
+		resting_y - 16.0 if raised else resting_y + curve * curve * 4.0)
+
+func _fan_curve(index: int, count: float) -> float:
+	var center := (count - 1.0) * 0.5
+	return (index - center) / maxf(1.0, center)
+
 func _hover_card(index: int) -> void:
-	if battle.can_act() and index not in animating:
+	if _card_is_drawing(index):
+		return
+	if battle.can_act():
 		hovered = index
 		_pose_card(index)
-	if index not in animating:
-		_show_card_detail(index)
+	_show_card_detail(index)
 
 func _unhover_card(index: int) -> void:
 	if hovered == index:
