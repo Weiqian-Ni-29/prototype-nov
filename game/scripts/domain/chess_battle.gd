@@ -2,6 +2,7 @@ extends RefCounted
 
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")
+const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const RelicRules = preload("res://scripts/domain/chess_relics.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
@@ -283,7 +284,13 @@ func attack_power(piece: Dictionary) -> int:
 		+ int(climate.get(piece.element, 0)) - (1 if weather == "river" and piece.side == ENEMY else 0))
 
 func _weapon(piece: Dictionary) -> Dictionary:
-	return piece.get("gear", {}).get("weapon", Cards.ACTIONS.get(piece.get("weapon", ""), {}))
+	return equipment_at(piece, "weapon")
+
+func equipment_at(piece: Dictionary, slot: String) -> Dictionary:
+	var item: Dictionary = piece.get("gear", {}).get(slot, {})
+	if item.is_empty() and slot == "weapon":
+		return Cards.ACTIONS.get(piece.get("weapon", ""), {})
+	return item
 
 func _attack_range(piece: Dictionary) -> int:
 	return mini(3, maxi(int(piece.get("range", piece.get("move", 1))), int(_weapon(piece).get("range", 0))) + int(piece.get("sight", 0)))
@@ -362,12 +369,8 @@ func card_targets(side: int, index: int) -> Array[int]:
 				"defense":
 					if not card.get("cup", false) or not piece.leader:
 						targets.append(square)
-				"weapon":
-					if piece.weapon.is_empty():
-						targets.append(square)
-				"equipment":
-					if not piece.get("gear", {}).has(card.slot):
-						targets.append(square)
+				"weapon", "equipment":
+					targets.append(square)
 				"spell":
 					if card.has("heal") and piece.hp < piece.hp_max:
 						targets.append(square)
@@ -478,12 +481,18 @@ func _choose_enemy_action() -> Dictionary:
 	var best_position_score := -COMMANDER_DEFEAT_SCORE - 1
 	var next_player_round := turns_started[PLAYER] > 0
 	var player_draws_fatigue: bool = next_player_round and piles[PLAYER].is_empty()
+	var current_score := _position_score()
 	for option in options:
 		var preview := _copy_public_position()
 		if option.has("from"):
 			preview._move_piece(option.from, option.target)
 		else:
 			preview._apply_card(ENEMY, option.id, option.card, option.target)
+			# Keep the enemy from cycling between sidegrades for no board benefit.
+			var slot := Cards.equipment_slot(option.card)
+			if not slot.is_empty() and not equipment_at(board[option.target], slot).is_empty() \
+					and preview._position_score() <= current_score:
+				continue
 		if preview.commanders[PLAYER].hp <= 0:
 			return option
 		if preview.commanders[ENEMY].hp <= 0:
@@ -645,6 +654,16 @@ func _remove_piece(square: int, context: Dictionary) -> void:
 func _damage(piece: Dictionary, damage: int, pierce: int = 0) -> int:
 	var absorbed := mini(int(piece.armor), maxi(0, damage - pierce))
 	piece.armor -= absorbed
+	# Spend equipment armor first so a later swap removes only unspent gear armor.
+	var remaining := absorbed
+	for slot in Gear.SLOTS:
+		if remaining == 0:
+			break
+		var item: Dictionary = piece.get("gear", {}).get(slot, {})
+		var used := mini(remaining, int(item.get("armor_remaining", 0)))
+		if used > 0:
+			item.armor_remaining -= used
+			remaining -= used
 	var phase_floor := 1 if final_battle and not river and piece.leader and piece.side == ENEMY else 0
 	piece.hp = maxi(phase_floor, int(piece.hp) - (damage - absorbed))
 	return absorbed
@@ -744,8 +763,21 @@ func _play_card(side: int, index: int, target: int) -> void:
 	if side == ENEMY:
 		revealed_enemy.erase(id)
 	var card := definition(id)
+	var slot := Cards.equipment_slot(card)
+	var previous_id := ""
+	var previous: Dictionary = {}
+	if not slot.is_empty():
+		var piece: Dictionary = board[target]
+		previous = equipment_at(piece, slot)
+		previous_id = previous.get("card_id", piece.get("weapon", "") if slot == "weapon" else "")
 	mana[side] -= int(card.cost)
+	if not previous_id.is_empty():
+		hands[side].append(previous_id)
+		if side == ENEMY:
+			revealed_enemy.append(previous_id)
 	_apply_card(side, id, card, target)
+	if not previous_id.is_empty():
+		_log("「%s」已回到%s手牌。" % [previous.name, "敌方" if side == ENEMY else "己方"])
 	if side == PLAYER and card.kind == "partner" and run.actor(id).get("joined", false) and id not in participants:
 		participants.append(id)
 
@@ -782,17 +814,7 @@ func _apply_card(side: int, id: String, card: Dictionary, target: int) -> void:
 			elif card.has("heal"):
 				_heal(piece, int(card.heal), "spell")
 		"weapon", "equipment":
-			var slot: String = card.get("slot", "weapon")
-			piece.gear[slot] = card.duplicate()
-			if slot == "weapon":
-				piece.weapon = id
-			piece.armor += int(card.get("armor", 0)) + int(card.get("equip_guard", 0)) + (int(card.get("affinity_guard", 0)) if card.get("element", "") == piece.element else 0)
-			piece.hp_max += int(card.get("hp_bonus", 0))
-			piece.hp += int(card.get("hp_bonus", 0))
-			_heal(piece, int(card.get("heal", 0)), "gear")
-			_log("%s装备%s。" % [piece.name, card.name])
-			if side == PLAYER:
-				_relic("equip", {"unit": piece, "square": target, "slot": slot, "id": id, "icon": card.get("icon", "")})
+			_equip_card(side, id, card, target)
 		"defense":
 			for square in board.size():
 				if square != target and not (card.get("column", false) and square % COLS == target % COLS) \
@@ -810,6 +832,26 @@ func _apply_card(side: int, id: String, card: Dictionary, target: int) -> void:
 			if side == PLAYER:
 				defense_played = true
 				_relic("defense", {"unit": piece, "square": target, "id": id})
+
+func _equip_card(side: int, id: String, card: Dictionary, target: int) -> void:
+	var piece := board[target]
+	var slot := Cards.equipment_slot(card)
+	var previous := equipment_at(piece, slot)
+	var item := card.duplicate()
+	item.card_id = id
+	var affinity_guard := int(card.get("affinity_guard", 0)) if card.get("element", "") == piece.element else 0
+	item.armor_remaining = int(card.get("armor", 0)) + int(card.get("equip_guard", 0)) + affinity_guard
+	piece.armor = maxi(0, int(piece.armor) - int(previous.get("armor_remaining", 0))) + item.armor_remaining
+	var hp_change := int(card.get("hp_bonus", 0)) - int(previous.get("hp_bonus", 0))
+	piece.hp_max += hp_change
+	piece.hp = clampi(int(piece.hp) + hp_change, 1, int(piece.hp_max))
+	piece.gear[slot] = item
+	if slot == "weapon":
+		piece.weapon = id
+	_heal(piece, int(card.get("heal", 0)), "gear")
+	_log("%s装备%s。" % [piece.name, card.name])
+	if side == PLAYER:
+		_relic("equip", {"unit": piece, "square": target, "slot": slot, "id": id, "icon": card.get("icon", "")})
 
 func _neighbors(a: int, b: int) -> bool:
 	return a >= 0 and b >= 0 and maxi(absi(a % COLS - b % COLS), absi(_row(a) - _row(b))) == 1

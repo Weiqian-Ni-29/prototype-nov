@@ -8,6 +8,7 @@ signal menu_requested
 const Battle = preload("res://scripts/domain/chess_battle.gd")
 const AttackEffect = preload("res://scripts/presentation/chess_attack_effect.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
+const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const UI = preload("res://scripts/presentation/card_ui.gd")
 const CROWN = preload("res://assets/ui/crown-badge.svg")
 const ATTACK_ICON = preload("res://assets/ui/chess-attack.png")
@@ -22,6 +23,8 @@ const MANA_SPENT = Color("63798d")
 const STAT_SIZE = 38
 const STAT_INSET = 6
 const GRID_LINE = 2
+const SLOT_LABELS = {"weapon": "武器", "armor": "护甲", "accessory": "饰品"}
+const SLOT_ICONS = {"weapon": "trail_blade", "armor": "padded_coat", "accessory": "lamp_charm"}
 const HAND_CARD_WIDTH = 114.0
 const HAND_CARD_HEIGHT = HAND_CARD_WIDTH * 7.0 / 5.0
 const DECK_CARD_SIZE = Vector2(84.0, 84.0 * 7.0 / 5.0)
@@ -70,6 +73,7 @@ var hover_detail_body: VBoxContainer
 var detail_serial := 0
 var detail_kind := ""
 var detail_index := -1
+var detail_slot := ""
 var attack_effect: AttackEffect
 
 func setup(model: RefCounted, scene: Texture2D) -> void:
@@ -119,6 +123,7 @@ func setup(model: RefCounted, scene: Texture2D) -> void:
 		tile.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		tile.mouse_entered.connect(_hover_tile.bind(square))
 		tile.mouse_exited.connect(_unhover_tile.bind(square))
+		tile.gui_input.connect(_tile_mouse_input.bind(square))
 		cells.append(tile)
 	hint = UI.label(board_panel, "", 15, UI.GOLD, true)
 	_build_battle_controls(battlefield)
@@ -199,6 +204,7 @@ func render() -> void:
 	if cast_button.visible:
 		cast_button.tooltip_text = "打出" + battle.definition(battle.hands[Battle.PLAYER][selected_card]).name
 	var legal := _legal()
+	var equipment_slot := _selected_equipment_slot()
 	for square in cells.size():
 		_render_tile(cells[square], square, legal.get(square, ""))
 	if cast_button.visible:
@@ -206,7 +212,7 @@ func render() -> void:
 	elif selected_square >= 0:
 		hint.text = "绿格可移动或部署 · 橙格可攻击"
 	elif selected_card >= 0:
-		hint.text = "选择高亮目标出牌。"
+		hint.text = "选择高亮棋子装备，替换下来的装备牌会回到手牌。" if not equipment_slot.is_empty() else "选择高亮目标出牌。"
 	elif not usable:
 		hint.text = ""
 		if battle.turn == Battle.ENEMY:
@@ -224,7 +230,7 @@ func render() -> void:
 		if battle.board[detail_index].is_empty():
 			_hide_detail()
 		else:
-			_show_detail(cells[detail_index], func(): _fill_unit_detail(battle.board[detail_index]))
+			_show_unit_detail(detail_index, detail_slot)
 	_show_turn_banner()
 
 func is_attack_playing() -> bool:
@@ -277,6 +283,12 @@ func _legal() -> Dictionary:
 			if square >= 0:
 				result[square] = "deploy" if card.kind == "partner" else "spell_hit" if card.has("damage") else "equip"
 	return result
+
+func _selected_equipment_slot() -> String:
+	var cards: Array = battle.hands[Battle.PLAYER]
+	if selected_card < 0 or selected_card >= cards.size():
+		return ""
+	return Cards.equipment_slot(battle.definition(cards[selected_card]))
 
 func _select_tile(square: int) -> void:
 	if is_attack_playing() or not battle.can_act():
@@ -382,46 +394,92 @@ func _render_tile(tile: Button, square: int, action: String, hide_face: bool = f
 	var element_name: String = Cards.ELEMENTS.get(unit.element, "")
 	if not element_name.is_empty():
 		accessible_parts.append(element_name + "属性")
-	var weapon_name: String = battle._weapon(unit).get("name", "")
-	if not weapon_name.is_empty():
-		accessible_parts.append(weapon_name)
+	for slot in Gear.SLOTS:
+		var item: Dictionary = battle.equipment_at(unit, slot)
+		accessible_parts.append("%s %s" % [SLOT_LABELS[slot], item.get("name", "空槽")])
 	accessible_parts.append(stats)
 	tile.accessibility_name = " ".join(accessible_parts)
 
 func _build_piece_face(tile: Control, unit: Dictionary, action: String) -> void:
 	var content := HBoxContainer.new()
+	content.name = "PieceFace"
 	UI.button_body(tile, content, STAT_INSET)
-	content.offset_left = STAT_INSET + 20
-	content.offset_right = -STAT_INSET - STAT_SIZE
+	content.offset_right = -STAT_INSET - STAT_SIZE - 2
 	content.add_theme_constant_override("separation", 8)
-	UI.art(content, unit, Vector2(118, 0))
-	var text := VBoxContainer.new()
-	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	text.alignment = BoxContainer.ALIGNMENT_CENTER
-	text.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	content.add_child(text)
-	UI.label(text, unit.name, 19).text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	var element_name: String = Cards.ELEMENTS.get(unit.element, "")
-	var weapon_name: String = battle._weapon(unit).get("name", "")
-	if not element_name.is_empty() or not weapon_name.is_empty():
-		var equipment := HBoxContainer.new()
-		equipment.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		text.add_child(equipment)
-		UI.add_element_icon(equipment, unit.element)
-		if not weapon_name.is_empty():
-			var weapon := UI.label(equipment, weapon_name, 13, UI.GOLD)
-			weapon.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			weapon.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-			weapon.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	var identity := VBoxContainer.new()
+	identity.name = "Identity"
+	identity.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	identity.add_theme_constant_override("separation", 2)
+	content.add_child(identity)
+	var heading := HBoxContainer.new()
+	heading.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	heading.add_theme_constant_override("separation", 3)
+	identity.add_child(heading)
+	if unit.leader:
+		var crown_space := Control.new()
+		crown_space.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		crown_space.custom_minimum_size.x = 23
+		heading.add_child(crown_space)
+	UI.add_element_icon(heading, unit.element)
+	var title := UI.label(heading, unit.name, 17)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	UI.art(identity, unit, Vector2.ZERO).size_flags_vertical = Control.SIZE_EXPAND_FILL
 	if action == "attack":
-		var damage := UI.label(text, "可攻击 · %d 伤害" % battle.attack_power(battle.board[selected_square]), 13, UI.ORANGE)
+		var damage := UI.label(identity, "可攻击 · %d" % battle.attack_power(battle.board[selected_square]), 12, UI.ORANGE)
+		damage.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		damage.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	var rack := HBoxContainer.new()
+	rack.name = "EquipmentSlots"
+	rack.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rack.add_theme_constant_override("separation", 5)
+	content.add_child(rack)
+	var targeted_slot := _selected_equipment_slot() if action == "equip" else ""
+	for slot in Gear.SLOTS:
+		_build_equipment_slot(rack, slot, battle.equipment_at(unit, slot), targeted_slot == slot)
+	var size_identity := func():
+		identity.custom_minimum_size.x = clampf(tile.size.x * 0.26, 54.0, 144.0)
+	content.resized.connect(size_identity)
+	size_identity.call()
 	if unit.leader:
 		_mark_commander(tile)
 	var attack: int = battle.attack_power(unit)
 	_stat_badge(tile, "Attack", ATTACK_ICON, attack, Control.PRESET_BOTTOM_LEFT)
 	_stat_badge(tile, "Health", HEALTH_ICON, unit.hp, Control.PRESET_BOTTOM_RIGHT, 4)
 	_stat_badge(tile, "Armor", ARMOR_ICON, unit.armor, Control.PRESET_TOP_RIGHT)
+
+func _build_equipment_slot(rack: HBoxContainer, slot: String, item: Dictionary, targeted: bool) -> void:
+	var equipped := not item.is_empty()
+	var cell := VBoxContainer.new()
+	cell.name = slot
+	cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cell.add_theme_constant_override("separation", 2)
+	rack.add_child(cell)
+	var category := UI.label(cell, SLOT_LABELS[slot], 13, UI.GREEN if targeted else UI.GOLD)
+	category.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	category.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	var frame := PanelContainer.new()
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var fill := Color(0.12, 0.08, 0.04, 0.35 if equipped else 0.17)
+	var border := UI.GREEN if targeted else Color("b0996d") if equipped else Color(0.7, 0.61, 0.46, 0.42)
+	frame.add_theme_stylebox_override("panel", UI.box(fill, border, 3, 4))
+	cell.add_child(frame)
+	var content := VBoxContainer.new()
+	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.add_theme_constant_override("separation", 0)
+	frame.add_child(content)
+	var art := UI.art(content, item if equipped else {"icon": SLOT_ICONS[slot]}, Vector2.ZERO)
+	art.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	if not equipped:
+		art.self_modulate = Color(0.88, 0.85, 0.76, 0.28)
+	var caption: String = item.name.get_slice(" · ", 0) if equipped else "空槽"
+	var label := UI.label(content, caption, 12, UI.INK if equipped else Color("c3b090"))
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	cell.resized.connect(func(): label.visible = cell.size.x >= 57.0)
 
 func _stat_badge(tile: Control, badge_name: String, icon: Texture2D, value: int, corner: int, text_y: int = 0) -> void:
 	var badge := TextureRect.new()
@@ -612,7 +670,8 @@ func _render_hand() -> void:
 		lifting_from_deck = 0
 		fan_expansion = 0.0
 		hovered = -1
-		_hide_detail()
+		if detail_kind == "card":
+			_hide_detail()
 		hand_ids = current.duplicate()
 		for i in hand_ids.size():
 			var entry: Dictionary = battle.definition(hand_ids[i])
@@ -802,17 +861,40 @@ func _unhover_card(index: int) -> void:
 		_hide_detail()
 
 func _hover_tile(square: int) -> void:
-	if not is_attack_playing() and not battle.board[square].is_empty():
-		_show_unit_detail(square)
+	_inspect_tile_at(square, get_global_mouse_position())
+
+func _tile_mouse_input(event: InputEvent, square: int) -> void:
+	if event is InputEventMouseMotion:
+		_inspect_tile_at(square, cells[square].get_global_transform() * event.position)
+
+func _inspect_tile_at(square: int, point: Vector2) -> void:
+	if is_attack_playing() or battle.board[square].is_empty():
+		return
+	var slot := ""
+	var rack := cells[square].get_node_or_null("PieceFace/EquipmentSlots")
+	if rack != null:
+		for cell in rack.get_children():
+			if cell.get_global_rect().has_point(point):
+				slot = str(cell.name)
+				break
+	if detail_kind != "unit" or detail_index != square or detail_slot != slot:
+		_show_unit_detail(square, slot)
 
 func _unhover_tile(square: int) -> void:
 	if detail_kind == "unit" and detail_index == square:
 		_hide_detail()
 
-func _show_unit_detail(square: int) -> void:
+func _show_unit_detail(square: int, slot: String = "") -> void:
 	detail_kind = "unit"
 	detail_index = square
-	_show_detail(cells[square], func(): _fill_unit_detail(battle.board[square]))
+	detail_slot = slot
+	var tile := cells[square]
+	var unit: Dictionary = battle.board[square]
+	if slot.is_empty():
+		_show_detail(tile, func(): _fill_unit_detail(unit))
+	else:
+		var source := tile.get_node("PieceFace/EquipmentSlots/" + slot) as Control
+		_show_detail(source, func(): _fill_equipment_detail(unit, square, slot))
 
 func _show_card_detail(index: int) -> void:
 	if index < 0 or index >= hand_ids.size() or index >= hand_buttons.size():
@@ -825,6 +907,7 @@ func _hide_detail() -> void:
 	detail_serial += 1
 	detail_kind = ""
 	detail_index = -1
+	detail_slot = ""
 	hover_detail.hide()
 
 func _show_detail(source: Control, filler: Callable) -> void:
@@ -868,7 +951,7 @@ func _detail_header(entry: Dictionary, kind: String, accent: Color) -> void:
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(title)
 	UI.label(title, kind, 13, accent)
-	UI.label(title, entry.name, 19, UI.GOLD)
+	UI.label(title, entry.name, 19, UI.GOLD, true)
 
 func _fill_unit_detail(unit: Dictionary) -> void:
 	_detail_header(unit, ("敌方" if unit.side == Battle.ENEMY else "己方") + ("主战者" if unit.leader else "棋子"),
@@ -881,13 +964,14 @@ func _fill_unit_detail(unit: Dictionary) -> void:
 	if not talent.rules.is_empty():
 		_section("特性")
 		UI.label(hover_detail_body, talent.rules, 13, UI.INK, true)
-	var gear: Dictionary = unit.get("gear", {})
-	if not gear.is_empty():
+	var equipment: Array[String] = []
+	for slot in Gear.SLOTS:
+		var item: Dictionary = battle.equipment_at(unit, slot)
+		if not item.is_empty():
+			equipment.append("%s · %s" % [SLOT_LABELS[slot], item.name])
+	if not equipment.is_empty():
 		_section("当前装备")
-		for slot in gear:
-			var item: Dictionary = gear[slot]
-			UI.label(hover_detail_body, "· " + item.name, 14, UI.GREEN, true)
-			UI.label(hover_detail_body, item.trait, 12, UI.MUTED, true)
+		UI.label(hover_detail_body, "\n".join(equipment), 13, UI.GREEN, true)
 	if not talent.talent.is_empty():
 		_section("角色天赋")
 		UI.label(hover_detail_body, talent.talent, 13, UI.GREEN, true)
@@ -897,6 +981,25 @@ func _fill_unit_detail(unit: Dictionary) -> void:
 		for id in battle.revealed_enemy:
 			names.append(battle.definition(id).name)
 		UI.label(hover_detail_body, "、".join(names), 13, UI.INK, true)
+
+func _fill_equipment_detail(unit: Dictionary, square: int, slot: String) -> void:
+	var item: Dictionary = battle.equipment_at(unit, slot)
+	var category: String = SLOT_LABELS[slot]
+	if item.is_empty():
+		_detail_header({"name": "空槽", "icon": SLOT_ICONS[slot]}, category, UI.MUTED)
+		if unit.side == Battle.PLAYER:
+			UI.label(hover_detail_body, "可打出一张%s牌来装备。" % category, 13, UI.INK, true)
+		return
+	var status := category + " · 已装备"
+	if item.get("temporary", false):
+		status += " · 临时"
+	_detail_header(item, status, UI.GREEN)
+	_section("装备效果")
+	UI.element_summary(hover_detail_body, item.get("element", ""), item.trait, 13, UI.INK)
+	if not battle.can_act():
+		return
+	if _selected_equipment_slot() == slot and square in battle.card_targets(Battle.PLAYER, selected_card):
+		UI.label(hover_detail_body, "点击替换，原装备牌回到手牌。", 13, UI.GREEN, true)
 
 func _fill_card_detail(card: Dictionary) -> void:
 	_detail_header(card, ("临时 · " if card.get("temporary", false) else "") + Cards.KINDS[card.kind] + "牌", UI.MUTED)
