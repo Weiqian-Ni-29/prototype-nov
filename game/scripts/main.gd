@@ -1261,7 +1261,8 @@ func _show_chess_view() -> void:
 	chess_view.setup(combat, _story_texture(_story_scene_at(combat.position)))
 	chess_view.acted.connect(func():
 		sound.play("click")
-		battle_timer = 0.55)
+		battle_timer = 0.20 if chess_view.is_attack_playing() else 0.55)
+	chess_view.attack_impact.connect(sound.play)
 	chess_view.retreat_requested.connect(func():
 		_confirm("撤退？", "队伍返回出发地，旅人会受伤。", func():
 			if combat != null and combat.retreat():
@@ -1339,6 +1340,8 @@ func _victory_dialog() -> void:
 func _process(delta: float) -> void:
 	if combat == null or modal_layer.get_child_count() > 0:
 		return
+	if is_instance_valid(chess_view) and chess_view.is_attack_playing():
+		return
 	battle_timer -= delta
 	if battle_timer > 0:
 		return
@@ -1348,8 +1351,8 @@ func _process(delta: float) -> void:
 		_final_battle_page(0)
 	elif combat.turn == Chess.ENEMY:
 		combat.enemy_turn(true)
-		chess_view.render()
-		battle_timer = 0.8 if combat.enemy_action_resolved else 0.25
+		chess_view.present_action()
+		battle_timer = 0.15 if chess_view.is_attack_playing() else 0.8 if combat.enemy_action_resolved else 0.25
 
 func _chapter_pages() -> Array:
 	return [
