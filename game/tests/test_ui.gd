@@ -1198,7 +1198,7 @@ func execute() -> void:
 		and deck.size() == Cards.DEFAULT_DECK.size() and rewards != null and names == PackedStringArray(
 			rewards.find_children("*", "Button", true, false).map(func(button): return button.accessibility_name)),
 		"Departure lists exactly the starter deck, including duplicate counts")
-	for id in ["ember_spell", "sun"]:
+	for id in ["ember_spell", "mend_spell"]:
 		var card: Dictionary = Cards.ACTIONS[id]
 		await select_story_reward(card.name)
 		var detail = game.modal_layer.find_child("RewardDetails", true, false)
@@ -1208,35 +1208,36 @@ func execute() -> void:
 	expect(editor_button != null and map_button != null
 		and editor_button.get_global_rect().end.x <= map_button.get_global_rect().position.x,
 		"The deck editor button is to the left of Return to Map")
+	game.run.unlock_spell("ice_spell")
 	var transaction: int = game.run.data.transaction
 	await click("查看卡组")
 	var editor = game.modal_layer.find_child("CardDeckEditor", true, false)
-	expect(editor != null and editor.deck == deck and editor.find_child("Collection_rain", true, false) != null
+	expect(editor != null and editor.deck == deck and editor.find_child("Collection_ice_spell", true, false) != null
 		and find_button(game.modal_layer, "保存卡组") != null, "Opening the editor shows the starter deck and the full owned collection")
-	var remove := game.modal_layer.find_child("Remove_sun", true, false) as Button
+	var remove := game.modal_layer.find_child("Remove_mend_spell", true, false) as Button
 	expect(remove != null, "The starter deck editor can remove a card")
 	if remove != null:
 		await click_button(remove)
-		expect(not editor.deck.has("sun"), "Removing a card changes the editor draft")
+		expect(not editor.deck.has("mend_spell"), "Removing a card changes the editor draft")
 	await click("返回奖励")
 	expect(game.modal_layer.has_node("StoryRewards") and game.run.data.transaction == transaction and game.run.card_deck() == deck,
 		"Returning to rewards discards the unsaved deck draft")
 	await click("查看卡组")
-	remove = game.modal_layer.find_child("Remove_sun", true, false) as Button
-	var rain := game.modal_layer.find_child("Collection_rain", true, false) as Button
-	expect(remove != null and rain != null, "Reopening the editor offers the original deck and available cards")
-	if remove != null and rain != null:
+	remove = game.modal_layer.find_child("Remove_mend_spell", true, false) as Button
+	var ice_spell := game.modal_layer.find_child("Collection_ice_spell", true, false) as Button
+	expect(remove != null and ice_spell != null, "Reopening the editor offers the original deck and available cards")
+	if remove != null and ice_spell != null:
 		await click_button(remove)
-		rain = game.modal_layer.find_child("Collection_rain", true, false) as Button
-		await click_button(rain)
+		ice_spell = game.modal_layer.find_child("Collection_ice_spell", true, false) as Button
+		await click_button(ice_spell)
 		await click("＋ 加入牌组")
 	await click("保存卡组")
 	var edited := deck.duplicate()
-	edited.erase("sun")
-	edited.append("rain")
+	edited.erase("mend_spell")
+	edited.append("ice_spell")
 	expect(game.modal_layer.has_node("StoryRewards") and game.run.card_deck() == edited
 		and saved_run().get("card_deck") == edited, "Saving the edited deck persists it and returns to rewards")
-	expect(contains_text(game.modal_layer, "烈日") and not contains_text(game.modal_layer, "唤雨"),
+	expect(contains_text(game.modal_layer, "回春") and not contains_text(game.modal_layer, "冰针"),
 		"The receipt still lists the cards originally received")
 	game._continue_run()
 	expect(game.modal_layer.has_node("StoryRewards") and find_button(game.modal_layer, "查看卡组") != null

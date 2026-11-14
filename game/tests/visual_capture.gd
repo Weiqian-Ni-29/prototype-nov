@@ -555,7 +555,7 @@ func capture_finale() -> void:
 	await capture("story-final-river")
 	await finish_linear_story()
 	await process_frame
-	expect(battle.river and hero.name == "伊文洛" and battle.weather == "river",
+	expect(battle.river and hero.name == "伊文洛",
 		"Leaving the flashback brings the river into the actual combat view")
 	await capture("battle-final-river")
 	game.combat = null

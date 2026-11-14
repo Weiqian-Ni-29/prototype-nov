@@ -11,15 +11,16 @@ const ROWS = 4
 const PLAYER = 0
 const ENEMY = 1
 const MANA_LIMIT = 10
+const ENEMY_DECK_SIZE = 12
 const COMMANDER_DEFEAT_SCORE = 1000000
 const ENEMY_DECK_SPECIALTIES = {
 	"guard": ["ward", "brace"],
 	"charge": ["pike", "ember_spell"],
-	"slow": ["ice_spell", "fog_spell"],
-	"wet": ["rain", "ice_spell"],
-	"ignite": ["sun", "ember_spell"],
+	"slow": ["ice_spell", "ward"],
+	"wet": ["ice_spell", "mend_spell"],
+	"ignite": ["ember_spell", "ember_spell"],
 	"heal": ["mend_spell", "bandage_card"],
-	"madness": ["ember_spell", "fog_spell"],
+	"madness": ["ember_spell", "pike"],
 }
 
 var run: RefCounted
@@ -31,8 +32,6 @@ var hands: Array = [[], []]
 var piles: Array = [[], []]
 var fatigue: Array[int] = [0, 0]
 var draw_count := 0
-var weather := ""
-var weather_rounds := 0
 var round_number := 1
 var mana: Array[int] = [1, 1]
 var mana_capacity: Array[int] = [1, 1]
@@ -139,17 +138,10 @@ func begin(expedition: RefCounted, encounter: Dictionary, deck: Array) -> Dictio
 	if int(run.data.battles) == 0:
 		_ensure_opening_attack()
 	piles[ENEMY] = _enemy_deck(types, boss_type, roller)
-	if run.data.weather == "rain":
-		weather = "rain"
-		weather_rounds = 2
 	_draw(PLAYER, Cards.OPENING_HAND)
 	_draw(ENEMY, Cards.OPENING_HAND)
-	if prep == "rain_bell":
-		RelicRules.prepare(self, prep)
-	_relic("opening_weather")
 	_relic("opening")
-	if prep != "rain_bell":
-		RelicRules.prepare(self, prep)
+	RelicRules.prepare(self, prep)
 	# Reveal after all public opening effects have been applied.
 	run.data.status = "battle"
 	run.data.battles += 1
@@ -203,10 +195,11 @@ func _enemy_deck(types: Array, lead: String, roller: RandomNumberGenerator) -> A
 	if lead.begins_with("npc:"):
 		specialty = {"fire": "ignite", "water": "wet", "ice": "slow", "earth": "guard"}.get(
 			Cards.chess_element(leader), "charge" if leader.get("attack_delivery") == "ranged" else "guard")
-	deck.append_array(ENEMY_DECK_SPECIALTIES.get(specialty, ["blade", "rain"]))
-	var filler := ["pike", "ward", "ember_spell", "brace", "rain", "sun", "ice_spell", "mend_spell", "fog_spell"]
+	deck.append_array(ENEMY_DECK_SPECIALTIES.get(specialty, ["blade", "brace"]))
+	var filler := ["pike", "ward", "ember_spell", "brace", "ice_spell", "mend_spell",
+		"blade", "pike", "ember_spell", "ice_spell", "ward", "mend_spell", "brace"]
 	for id in filler:
-		if deck.size() == Cards.MIN_DECK_SIZE:
+		if deck.size() == ENEMY_DECK_SIZE:
 			break
 		if deck.count(id) < 2:
 			deck.append(id)
@@ -279,9 +272,8 @@ func _piece(entry: Dictionary, side: int, leader: bool = false) -> Dictionary:
 	return piece
 
 func attack_power(piece: Dictionary) -> int:
-	var climate: Dictionary = Cards.WEATHER.get(weather, {}).get("damage", {})
 	return maxi(0, int(piece.attack) + int(_weapon(piece).get("attack", 0))
-		+ int(climate.get(piece.element, 0)) - (1 if weather == "river" and piece.side == ENEMY else 0))
+		- (1 if river and piece.side == ENEMY else 0))
 
 func _weapon(piece: Dictionary) -> Dictionary:
 	return equipment_at(piece, "weapon")
@@ -354,8 +346,6 @@ func card_targets(side: int, index: int) -> Array[int]:
 	var card := definition(hands[side][index])
 	if card.is_empty() or card.cost > mana[side]:
 		return targets
-	if card.has("weather"):
-		return [] if river else [-1]
 	for square in board.size():
 		var piece: Dictionary = board[square]
 		if card.kind == "partner":
@@ -499,7 +489,6 @@ func _choose_enemy_action() -> Dictionary:
 			continue
 		if next_player_round:
 			preview.round_number += 1
-			preview._advance_weather()
 			if player_draws_fatigue:
 				preview._fatigue(PLAYER)
 
@@ -522,8 +511,6 @@ func _copy_public_position() -> RefCounted:
 	preview.board = board.duplicate(true)
 	for commander in commanders:
 		preview.commanders.append(preview.board[board.find(commander)])
-	preview.weather = weather
-	preview.weather_rounds = weather_rounds
 	preview.fatigue = fatigue.duplicate()
 	preview.final_battle = final_battle
 	preview.river = river
@@ -587,7 +574,6 @@ func _start_turn(side: int) -> void:
 		_grow_mana(side)
 		if side == PLAYER:
 			round_number += 1
-			_advance_weather()
 		_draw(side)
 	if not _check_outcome() and side == PLAYER:
 		_relic("turn_start")
@@ -595,14 +581,6 @@ func _start_turn(side: int) -> void:
 func _grow_mana(side: int) -> void:
 	mana_capacity[side] = mini(MANA_LIMIT, mana_capacity[side] + 1)
 	mana[side] = mana_capacity[side]
-
-func _advance_weather() -> void:
-	if weather_rounds > 0:
-		weather_rounds -= 1
-		if weather_rounds == 0:
-			var ended := weather
-			weather = ""
-			_relic("weather_end", {"old": ended})
 
 func _draw(side: int, count: int = 1) -> void:
 	var drawn := 0
@@ -707,8 +685,8 @@ func _exchange_hits(from: int, target: int, strike: Dictionary) -> void:
 	if attacker.side == PLAYER:
 		_relic("attack", strike)
 	attacker.erase("sight")
-	var damage := _hit_damage(_basic_damage(strike), strike)
-	var retaliation := _hit_damage(_basic_damage(counter), counter)
+	var damage := _hit_damage(attack_power(strike.unit), strike)
+	var retaliation := _hit_damage(attack_power(counter.unit), counter)
 	# Resolve both hits before either one can trigger healing, extra armor, or removal.
 	_apply_hit(damage, strike)
 	_apply_hit(retaliation, counter)
@@ -717,13 +695,6 @@ func _exchange_hits(from: int, target: int, strike: Dictionary) -> void:
 	if not public_preview:
 		last_attack.merge(_hit_result(strike))
 		last_attack.retaliation = _hit_result(counter)
-
-func _basic_damage(context: Dictionary) -> int:
-	var unit: Dictionary = context.unit
-	var damage := attack_power(unit)
-	if weather == "fog" and context.distance >= 2 and not (unit.element == "wind" and unit.side == PLAYER and "crossed_wind_chimes" in relic_ids):
-		damage -= 1
-	return damage
 
 func _hit_damage(base: int, context: Dictionary) -> int:
 	if context.victim.side == PLAYER:
@@ -782,7 +753,7 @@ func _play_card(side: int, index: int, target: int) -> void:
 		participants.append(id)
 
 func _apply_card(side: int, id: String, card: Dictionary, target: int) -> void:
-	var piece: Dictionary = board[target] if target >= 0 else {}
+	var piece := board[target]
 	match card.kind:
 		"partner":
 			board[target] = _piece(card, side)
@@ -793,22 +764,14 @@ func _apply_card(side: int, id: String, card: Dictionary, target: int) -> void:
 				RelicRules.prepared_deploy(self, board[target])
 			_heal_adjacent(target)
 		"spell":
-			if card.has("weather"):
-				var old := weather
-				weather = card.weather
-				weather_rounds = 2
-				_log("打出「%s」，天气改为%s。" % [card.name, Cards.WEATHER[weather].name])
-				if side == PLAYER:
-					_relic("weather_cast", {"old": old})
-			elif card.has("damage"):
+			if card.has("damage"):
 				var element: String = card.element
 				var context := {"unit": {}, "victim": piece, "square": target, "kind": "spell",
 					"element": element, "id": id, "bonus": 0, "pierce": 0, "block": 0,
 					"armor_before": piece.armor}
 				if side == PLAYER:
 					_relic("spell", context)
-				var climate: Dictionary = Cards.WEATHER.get(weather, {}).get("damage", {})
-				_deal_hit(int(card.damage) + int(climate.get(element, 0)), context)
+				_deal_hit(int(card.damage), context)
 				if card.get("slow", false) and piece.hp > 0:
 					piece.slow_until = round_number + int(side == ENEMY and turns_started[PLAYER] > 0)
 			elif card.has("heal"):
@@ -902,8 +865,6 @@ func awaken_death_power() -> void:
 	commanders[PLAYER].name = "伊文洛"
 	run.actor("hero").name = "伊文洛"
 	commanders[PLAYER].hp = commanders[PLAYER].hp_max
-	weather = "river"
-	weather_rounds = 0
 	_log("冥河显现，伊文洛恢复生命，敌方攻击 −1。")
 
 func retreat() -> bool:

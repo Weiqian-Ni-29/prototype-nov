@@ -8,7 +8,8 @@ const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Items = preload("res://scripts/domain/expedition_items.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
-const SAVE_VERSION = 10
+const SAVE_VERSION = 11
+const REMOVED_WEATHER_CARDS = ["rain", "sun", "fog_spell"]
 const REMOVED_SUPPLIES = ["salve", "ether"]
 const STEPS_PER_DAY = 5
 signal changed
@@ -17,15 +18,13 @@ var rng = RandomNumberGenerator.new()
 var save_path = "user://expedition.json"
 var relic_sites: Dictionary = {}
 var prepared_relic := ""
-var prepared_weather := ""
 const SPELL_RELICS = {"banked_ember_box": "ember_spell", "rime_thimble": "ice_spell",
-	"herbal_case": "mend_spell", "crossed_wind_chimes": "fog_spell"}
+	"herbal_case": "mend_spell"}
 var location_names: Dictionary = {}
 
 func new_run(seed_value: int, profession: String) -> void:
 	assert(Catalog.PROFESSIONS.has(profession))
 	prepared_relic = ""
-	prepared_weather = ""
 	var generated = Hex.generate(seed_value)
 	rng.seed = seed_value ^ 0x5eed123
 	data = {"version": SAVE_VERSION, "seed": seed_value, "profession": profession, "day": 1, "steps_today": 0, "weather": "sun", "tiles": generated.tiles, "start": generated.start, "boss": generated.boss, "peace": {}, "chapter": 0, "actors": {}, "explored": {}, "visited": {}, "flags": {}, "knowledge": {}, "story": {}, "rewards": {}, "choices": [], "status": "exploring", "log": [], "battles": 0, "transaction": 0, "pending_battle": {}}
@@ -974,12 +973,14 @@ func load_game(path: String = "") -> Dictionary:
 	if json.parse(FileAccess.get_file_as_string(path)) != OK or not json.data is Dictionary:
 		return fail("存档损坏了，原来的文件还在。")
 	var loaded: Dictionary = json.data
-	if not _whole_number(loaded.get("version", -1)) or int(loaded.version) not in [3, 4, 5, 6, 7, 8, 9, SAVE_VERSION] or not loaded.has_all(["actors", "tiles", "rng_state", "day", "explored", "status"]):
+	if not _whole_number(loaded.get("version", -1)) or int(loaded.version) not in [3, 4, 5, 6, 7, 8, 9, 10, SAVE_VERSION] or not loaded.has_all(["actors", "tiles", "rng_state", "day", "explored", "status"]):
 		return fail("存档版本不兼容，或者进度记录不完整。")
 	if int(loaded.version) >= 4 and (not loaded.get("relic_seen") is Dictionary or not loaded.get("nodes") is Dictionary):
 		return fail("遗器发现记录无效。")
 	if int(loaded.version) < 6 and loaded.get("card_deck") is Array and loaded.actors is Dictionary:
 		loaded.card_deck = Cards.migrate_deck(loaded.card_deck, loaded.actors)
+	if int(loaded.version) < 11:
+		_remove_battle_weather(loaded)
 	var invalid = _validate_save(loaded)
 	if invalid != "":
 		return fail("存档内容无效：" + invalid + "。旧文件没有被覆盖。")
@@ -1009,7 +1010,6 @@ func load_game(path: String = "") -> Dictionary:
 	data = loaded
 	data.merge({"spell_collection": []})
 	prepared_relic = ""
-	prepared_weather = ""
 	if old_cards:
 		for relic in SPELL_RELICS:
 			if data.relic_seen.has(relic):
@@ -1038,6 +1038,50 @@ func load_game(path: String = "") -> Dictionary:
 	rng.state = int(data.rng_state)
 	changed.emit()
 	return success()
+
+func _remove_battle_weather(loaded: Dictionary) -> void:
+	if loaded.get("card_deck") is Array:
+		loaded.card_deck = loaded.card_deck.filter(func(id): return id not in REMOVED_WEATHER_CARDS)
+	if loaded.get("spell_collection") is Array:
+		loaded.spell_collection.erase("fog_spell")
+	var removed := Relics.REMOVED_WEATHER_RELICS
+	for field in ["relics", "relic_seen", "relic_inventory"]:
+		if loaded.get(field) is Dictionary:
+			for id in removed:
+				loaded[field].erase(id)
+	if loaded.get("relic_attunement") is Array:
+		loaded.relic_attunement = loaded.relic_attunement.filter(func(id): return id not in removed)
+	if loaded.get("relic_intros") is Array:
+		loaded.relic_intros = loaded.relic_intros.filter(func(entry): return not entry is Dictionary or entry.get("id") not in removed)
+	var shops: Array = [loaded.get("battle_shop")]
+	if loaded.get("nodes") is Dictionary:
+		shops.append_array(loaded.nodes.values())
+	for shop in shops:
+		if shop is Dictionary and shop.get("relic_stock") is Dictionary:
+			for id in removed:
+				shop.relic_stock.erase(id)
+	for field in ["relic_checks", "battle_offers"]:
+		if loaded.get(field) is Dictionary:
+			for key in loaded[field]:
+				if loaded[field][key] in removed:
+					loaded[field][key] = ""
+	if loaded.get("relic_claims") is Dictionary:
+		for key in loaded.relic_claims:
+			var claim = loaded.relic_claims[key]
+			if claim is Dictionary and claim.get("relic_id") in removed:
+				loaded.relic_claims[key] = {"success": false, "relic_id": "", "delivered": true}
+	if loaded.get("pending_battle") is Dictionary and loaded.pending_battle.get("relic_offer") in removed:
+		loaded.pending_battle.relic_offer = ""
+	if loaded.get("pending_victory") is Dictionary and loaded.pending_victory.get("relic") in removed:
+		loaded.pending_victory.relic = ""
+	var receipt = loaded.get("pending_story_rewards")
+	if receipt is Dictionary and receipt.get("items") is Array:
+		var items: Array = receipt.items.filter(func(item):
+			return not item is Dictionary or item.get("kind") != "relic" or item.get("id") not in removed)
+		if items.size() != receipt.items.size():
+			receipt.items = items
+			if items.is_empty() and receipt.get("kind") != "starter_deck":
+				loaded.erase("pending_story_rewards")
 
 func _remove_old_supplies(loaded: Dictionary) -> void:
 	for person in loaded.actors.values():
@@ -1308,7 +1352,7 @@ func _valid_nodes(loaded: Dictionary) -> bool:
 			if int(loaded.version) >= 6 or node.event not in Nodes.legacy_event_ids(node.kind, loaded.tiles[cell].base_terrain):
 				return false
 		elif node.kind == "rest":
-			if int(loaded.version) >= SAVE_VERSION or Nodes.story(node).is_empty():
+			if int(loaded.version) >= 10 or Nodes.story(node).is_empty():
 				return false
 		elif node.kind == "trade":
 			if int(loaded.version) >= 10 or node.event not in Nodes.legacy_event_ids("trade", loaded.tiles[cell].base_terrain):
