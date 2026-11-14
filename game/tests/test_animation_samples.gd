@@ -19,7 +19,6 @@ func execute() -> void:
 	await process_frame
 	game.run.save_path = "user://animation-samples.json"
 	game._start_new()
-	game.run.actor("hero").skill = "guard_all"
 	game.set_process(false)
 	var position = game.run.actor("hero").position
 	for id in ["cen","eve","grit"]:
@@ -36,7 +35,7 @@ func execute() -> void:
 		var original_position = doll.position
 		expect(rig != null and rig.animator != null,"Sample uses a real AnimationPlayer " + id)
 		expect(rig.skeleton.get_bone_count() >= 23,"Complete skeleton " + id)
-		for clip in ["idle","walk","run","attack_melee","cast","support","guard","hit","down"]:
+		for clip in ["idle","walk","run","down"]:
 			expect(rig.animator.has_animation(clip),"Required mapped clip " + id + "/" + clip)
 		rig.play_action("walk")
 		await create_timer(0.16).timeout

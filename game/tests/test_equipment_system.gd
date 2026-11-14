@@ -4,7 +4,7 @@ const Run = preload("res://scripts/domain/expedition.gd")
 const Items = preload("res://scripts/domain/expedition_items.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
-const Battle = preload("res://tests/legacy/realtime_battle.gd")
+const Chess = preload("res://scripts/domain/chess_battle.gd")
 const Main = preload("res://scenes/main.tscn")
 
 var checks = 0
@@ -245,39 +245,19 @@ func check_migration() -> void:
 
 func check_battle() -> void:
 	var run = fixture()
-	var hero: Dictionary = run.actor("hero")
-	var position: String = hero.position
-	hero.skill = "frost_arrow"
-	equip_set(run, "hero", "rime_path", 2)
-	run.grant_relic("copper_rain_comb", "hero", position)
-	run.grant_relic("field_water_sponge", "hero", position)
+	var position: String = run.actor("hero").position
 	run.data.tiles[position].terrain = "forest"
 	run.data.tiles[position].enemies = ["hunter_elite"]
-	var combat = Battle.new()
-	var encounter = {"position": position, "origin": position, "ambush": false, "npc": "", "movers": [], "reward_tier": "elite"}
-	expect(combat.begin(run, encounter, ["hero"]).ok, "Start an elite encounter")
-	var offer: String = combat.pending.relic_offer
+	var battle := Chess.new()
+	var encounter = {"position": position, "origin": position, "ambush": false, "npc": "", "reward_tier": "elite"}
+	expect(battle.begin(run, encounter, run.card_deck()).ok, "Start an elite chess encounter")
+	var offer: String = battle.pending.relic_offer
 	expect(not offer.is_empty() and not run.data.relic_inventory.has(offer), "Elite reward is frozen before combat without being granted")
-	combat.unit("enemy_0").hp = 1000
-	combat.unit("enemy_0").hp_max = 1000
-	combat._apply_field_effect("wet")
-	var preview: int = combat.damage_preview("hero", "enemy_0", "frost_arrow")
-	var counters = run.data.item_effect_counts.duplicate()
-	expect(combat.damage_preview("hero", "enemy_0", "frost_arrow") == preview and run.data.item_effect_counts == counters,
-		"Damage preview does not spend a field allowance")
-	expect(combat._cast("hero", "frost_arrow", "enemy_0").ok and combat.field_view().fields.has("frozen")
-		and combat.unit("enemy_0").hp == 1000 - preview, "An ice hit over wet creates frozen and applies the previewed hit")
-	combat.items.fields.clear()
-	combat.wet = false
-	combat._apply_field_effect("ignite")
-	expect(combat._cast("hero", "torrent", "enemy_0").ok and combat.burning and combat.wet
-		and combat.items.fields.wet == combat.items.index + 7, "Water creates wet without extinguishing fire; sponge extends only wet")
-	expect(combat._cast("hero", "thunderbolt", "enemy_0").ok and not combat.items.present("charged"),
-		"An already burning field cannot gain the proposed conductive layer")
-	combat.unit("enemy_0").hp = 0
-	combat.check_end()
-	expect(run.data.relic_inventory.get(offer) == 1 and run.data.relic_claims[combat.pending.battle_uid].delivered
-		and run.data.tiles[position].terrain == "forest" and not run.data.tiles[position].has("burning"), "Victory commits one drop and never rewrites terrain")
+	battle.commanders[Chess.ENEMY].hp = 0
+	battle._check_outcome()
+	battle._check_outcome()
+	expect(run.data.relic_inventory.get(offer) == 1 and run.data.relic_claims[battle.pending.battle_uid].delivered
+		and run.data.tiles[position].terrain == "forest", "Victory commits one drop and never rewrites terrain")
 
 func find_button(parent: Node, prefix: String) -> Button:
 	for button in parent.find_children("*", "Button", true, false):

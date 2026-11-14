@@ -116,9 +116,6 @@ func execute() -> void:
 	for i in range(actors.size()):
 		if samples[i].is_empty(): continue
 		expect(skin_point(samples[i]).distance_to(before[i])>0.001,"Weighted mesh vertex moves over real rendered frames "+actors[i].definition.name)
-	for action in ["attack","cast","heal","guard","hit","ultimate"]:
-		for doll in actors: doll.play_action(action)
-		await create_timer(0.25).timeout
 	for i in range(actors.size()):
 		var rig = actors[i].rigged
 		if samples[i].is_empty(): continue

@@ -3,7 +3,6 @@ extends SceneTree
 const Main = preload("res://scenes/main.tscn")
 const Game = preload("res://scripts/main.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")
-const Combat = preload("res://tests/legacy/realtime_battle.gd")
 const Chess = preload("res://scripts/domain/chess_battle.gd")
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
@@ -683,44 +682,17 @@ func execute() -> void:
 			run.actor(id).position = position
 			run.join_companion(id)
 		run.data.tiles[position].enemies = ["spider", "furnace", "swarm", "canal"]
-		var battle = Combat.new()
-		var pending = {"position": position, "origin": position, "movers": [], "npc": "", "ambush": false}
-		expect(battle.begin(run, pending, ["hero", "grit", "ember", "tide"]).ok, "Battle fixture begins " + biome)
-		if biome == "forest":
-			battle._apply_field_effect("ignite")
-		elif biome == "swamp":
-			battle._apply_field_effect("wet")
-		game.view.begin_battle(run, battle)
-		game.ui.hide()
-		await create_timer(0.6).timeout
-		expect(game.view.battle_dolls.size() == 8, "Four friends and four distinct foes rendered")
-		expect(game.view.battle_dolls.grit.skeleton.get_bone_count() >= 23 and game.view.battle_dolls.grit.rigged.animator != null, "Dragon in human form has a full imported rig and animation player")
-		expect(game.view.battle_dolls.enemy_0.family == "spider" and game.view.battle_dolls.enemy_2.family == "swarm", "Enemy silhouettes match spider and swarm")
-		await capture("battle-" + biome)
-		if biome == "plains":
-			battle.step_auto()
-			game.view.refresh_battle(run, battle)
-			await capture("battle-friendly-decision")
-		var caster = game.view.battle_dolls.ember
-		caster.play_action("cast")
-		var before_pose = caster.skeleton.get_bone_pose_rotation(caster.bones.arm_r)
-		await create_timer(0.22).timeout
-		var after_pose = caster.skeleton.get_bone_pose_rotation(caster.bones.arm_r)
-		expect(not before_pose.is_equal_approx(after_pose), "Skeletal cast motion changes pose over real frames")
-		if biome == "forest":
-			await capture("animation-cast-forest")
-			battle._apply_field_effect("wet")
-			game.view.sync_event_environment({"environment_after": battle.field_view()})
-			game.view.refresh_battle(run, battle)
-			expect(game.view.battle_root.get_meta("environment_signature") == "forest:true:true:false", "Fire and wetness render together")
-			await create_timer(0.6).timeout
-			await capture("battle-forest-wet")
-			expect(battle.retreat().ok, "Leave burning battle")
-		game.view.end_battle()
-		game.ui.show()
-		if biome == "forest":
-			game._refresh()
-			await capture("map-forest-after-battle")
+		var battle := Chess.new()
+		var pending = {"position": position, "origin": position, "npc": "", "ambush": false}
+		expect(battle.begin(run, pending, run.card_deck()).ok, "Chess battle fixture begins " + biome)
+		game.combat = battle
+		game._refresh()
+		await process_frame
+		expect(game.chess_view != null and game.chess_view.is_visible_in_tree() and not game.view.visible,
+			"The playable chess board is shown over this biome")
+		await capture("chess-battle-" + biome)
+		expect(battle.retreat(), "Retreat from chess battle " + biome)
+		game._finish_battle()
 	# Seven-person inventory and portrait dialogue layout use explicit presentation fixtures.
 	game.run.data.status = "exploring"
 	game.run.data.pending_battle = {}

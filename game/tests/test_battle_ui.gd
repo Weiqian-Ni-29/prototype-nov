@@ -299,7 +299,7 @@ func check_ui() -> void:
 	var start := game.modal_layer.find_child("ConfirmCardDeck", true, false) as Button
 	await click(start)
 	var view = game.ui.find_child("ChessBattle", true, false)
-	expect(view != null and not game.view.visible and not game.view.battle_mode, "Normal encounter opens only the chess presentation")
+	expect(view != null and not game.view.visible, "Normal encounter shows the chess board and hides the map")
 	if view != null:
 		expect(root.get_visible_rect().encloses(view.get_global_rect()) and view.cells.size() == 12 and view.hand_buttons.size() == 3,
 			"Board fits the viewport with twelve squares and a three-card opening hand")

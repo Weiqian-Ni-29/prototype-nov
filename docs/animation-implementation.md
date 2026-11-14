@@ -1,12 +1,12 @@
 # 动画与地景适配说明（MVP 0.2.0）
 
-日期：2026-11-05。目标分支 `dev/mvp-expedition`，引擎 Godot 4.7.2 / Compatibility。玩法与故事规则沿用 MVP 0.1.0；新增领域数据仅为已经结算的只读呈现元数据。
+这份记录写于 2026-11-05。游戏后来改用卡牌战棋，本文中的旧 3D 战斗与演出测试现已退役。当时的目标分支为 `dev/mvp-expedition`，引擎为 Godot 4.7.2 / Compatibility。
 
 ## 素材选择与实机比较
 
 审查入口、精确压缩包 SHA-256、原始许可、文件清单和修改说明分别保存在 `game/assets/characters/sources.json`、`game/assets/nature/sources.json` 及 `game/assets/licenses/`。模型及动画的免费层为 Adventurers **2.0**、Character Animations **1.1**；粒子压缩包实际标注 **1.1**，不以网页旧标签替代原包版本。Forest Nature Free **1.0** 为本次地景追加。所有接入外部美术为 CC0，允许本商业游戏和公开源码分发；没有新增外部脚本或音频。狼的作者是 **crownjoshua**，不是 Quaternius。
 
-Quaternius 当前 QAL 的原始素材再分发条款不适合本公开仓库，未接入。KayKit Adventurers 1.0 作者公开提交 `672074b73ba276876a19e8816ecdc5241817ab47` 也做了实机比较：相同战场、灯光、1280×800，相同位置加载 Knight/Rogue/Mage，实际播放八种动作；有 75 个源动作（Godot 加 RESET 显示 76），但无专用弓拉弦/放箭组，也没有新版 Ranger。比较入口 `tests/compare_candidates.gd -- --source=<已核验的本地解压目录>`，旧库不进入运行包。
+Quaternius 的 QAL 因原始素材再分发条款未接入。KayKit Adventurers 1.0 作者公开提交 `672074b73ba276876a19e8816ecdc5241817ab47` 也做了实机比较：相同战场、灯光、1280×800，相同位置加载 Knight/Rogue/Mage，实际播放八种动作；有 75 个源动作（Godot 加 RESET 显示 76），但无专用弓拉弦/放箭组，也没有新版 Ranger。当时使用的比较脚本已退役。
 
 以下是针对本项目固定镜头的人工比较评分，不是客观质量排名或全网最佳声明。最终组合在扭骨、比例、武器和绑定修正后评分；动作覆盖也含本项目适配结果。
 

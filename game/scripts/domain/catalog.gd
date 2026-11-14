@@ -51,64 +51,21 @@ const COMPANIONS = {
 	"ember": {"race": "恶魔", "name": "弥烬", "title": "火术师", "hp": 84, "mp": 78, "attack": 29, "defense": 4, "speed": 94, "skill": "ember", "ultimate": "sunfall", "color": "bc6a52", "element": "fire", "terrain": "ruins", "portrait": "ember", "attack_delivery": "ranged"},
 	"tide": {"race": "人类", "name": "澄汐", "title": "水文术师", "hp": 93, "mp": 82, "attack": 22, "defense": 6, "speed": 106, "skill": "torrent", "ultimate": "tide_shelter", "color": "6bafbd", "element": "water", "terrain": "ruins", "portrait": "tide", "attack_delivery": "ranged"},
 }
-const SKILLS = {
-	"ironforge_skill": {"name": "战炉火花", "element": "fire", "mp": 8, "energy": 30, "target": "enemy", "power": 1.35, "delivery": "ranged"},
-	"ironforge_ult": {"name": "炉心迸裂", "element": "fire", "mp": 0, "energy": 0, "target": "all_enemies", "power": 1.75, "delivery": "ranged"},
-	"granite_skill": {"name": "盾角撞击", "element": "earth", "mp": 9, "energy": 30, "target": "enemy", "power": 1.45, "delivery": "melee"},
-	"granite_ult": {"name": "山门列盾", "element": "earth", "mp": 0, "energy": 0, "target": "all_allies", "shield": 31, "delivery": "none"},
-	"mistleaf_skill": {"name": "露矢", "element": "water", "mp": 10, "energy": 30, "target": "enemy", "power": 1.55, "delivery": "ranged"},
-	"mistleaf_ult": {"name": "薄雾齐射", "element": "water", "mp": 0, "energy": 0, "target": "all_enemies", "power": 1.99, "delivery": "ranged"},
-	"willow_skill": {"name": "枝影箭", "element": "normal", "mp": 8, "energy": 30, "target": "enemy", "power": 1.65, "delivery": "ranged"},
-	"willow_ult": {"name": "林间连矢", "element": "normal", "mp": 0, "energy": 0, "target": "all_enemies", "power": 2.11, "delivery": "ranged"},
-	"ashhorn_skill": {"name": "灰烬球", "element": "fire", "mp": 9, "energy": 30, "target": "enemy", "power": 1.35, "delivery": "ranged"},
-	"ashhorn_ult": {"name": "焰线横扫", "element": "fire", "mp": 0, "energy": 0, "target": "all_enemies", "power": 2.23, "delivery": "ranged"},
-	"oathguard_skill": {"name": "石印重击", "element": "earth", "mp": 10, "energy": 30, "target": "enemy", "power": 1.45, "delivery": "melee"},
-	"oathguard_ult": {"name": "守约屏障", "element": "earth", "mp": 0, "energy": 0, "target": "all_allies", "shield": 28, "delivery": "none"},
-	"highdrake_skill": {"name": "碎石推掌", "element": "earth", "mp": 8, "energy": 30, "target": "enemy", "power": 1.55, "delivery": "melee"},
-	"highdrake_ult": {"name": "群峰回震", "element": "earth", "mp": 0, "energy": 0, "target": "all_enemies", "power": 1.87, "delivery": "ranged"},
-	"cloudscale_skill": {"name": "回旋气流", "element": "wind", "mp": 9, "energy": 30, "target": "enemy", "power": 1.65, "delivery": "ranged"},
-	"cloudscale_ult": {"name": "薄云护身", "element": "wind", "mp": 0, "energy": 0, "target": "all_allies", "shield": 34, "delivery": "none"},
-	"longroad_skill": {"name": "路边连射", "element": "normal", "mp": 10, "energy": 30, "target": "enemy", "power": 1.35, "delivery": "ranged"},
-	"longroad_ult": {"name": "远行齐箭", "element": "normal", "mp": 0, "energy": 0, "target": "all_enemies", "power": 2.11, "delivery": "ranged"},
-	"fieldmedic_skill": {"name": "清水疗伤", "element": "water", "mp": 8, "energy": 30, "target": "ally", "power": 30, "healing": true, "delivery": "none"},
-	"fieldmedic_ult": {"name": "行囊里的药", "element": "water", "mp": 0, "energy": 0, "target": "all_allies", "power": 42, "healing": true, "delivery": "none"},
-	"siltguard_skill": {"name": "浅水推击", "element": "water", "mp": 9, "energy": 30, "target": "enemy", "power": 1.55, "delivery": "melee"},
-	"siltguard_ult": {"name": "涌潮震荡", "element": "water", "mp": 0, "energy": 0, "target": "all_enemies", "power": 1.75, "delivery": "ranged"},
-	"seasons_skill": {"name": "晚霜", "element": "ice", "mp": 10, "energy": 30, "target": "enemy", "power": 1.65, "slow": 2, "delivery": "ranged"},
-	"seasons_ult": {"name": "春回", "element": "ice", "mp": 0, "energy": 0, "target": "all_allies", "power": 42, "healing": true, "delivery": "none"},
-	"earth_god_skill": {"name": "地动", "element": "earth", "mp": 8, "energy": 30, "target": "enemy", "power": 1.35, "delivery": "ranged"},
-	"earth_god_ult": {"name": "坚岩屏障", "element": "earth", "mp": 0, "energy": 0, "target": "all_allies", "shield": 34, "delivery": "none"},
-	"sky_god_skill": {"name": "落雷", "element": "lightning", "mp": 9, "energy": 30, "target": "enemy", "power": 1.45, "delivery": "ranged"},
-	"sky_god_ult": {"name": "雷雨散开", "element": "lightning", "mp": 0, "energy": 0, "target": "all_enemies", "power": 2.11, "delivery": "ranged"},
-	"snowforge_skill": {"name": "冷锤", "element": "ice", "mp": 10, "energy": 30, "target": "enemy", "power": 1.55, "slow": 2, "delivery": "melee"},
-	"snowforge_ult": {"name": "雪夜守护", "element": "ice", "mp": 0, "energy": 0, "target": "all_allies", "shield": 40, "delivery": "none"},
-	"gravity": {"name": "重压", "mp": 8, "power": 1.5, "target": "enemy", "element": "gravity", "energy": 30, "slow": 2, "delivery": "ranged"},
-	"gravity_drift": {"name": "落石", "mp": 0, "power": 1.45, "target": "all_enemies", "element": "gravity", "energy": 0, "delivery": "ranged"},
-	"gravity_wave": {"name": "坠落", "mp": 0, "power": 1.9, "target": "all_enemies", "element": "gravity", "energy": 0, "slow": 2, "delivery": "ranged"},
-	"attack": {"name": "普通攻击", "mp": 0, "power": 1.0, "target": "enemy", "element": "normal", "energy": 25, "delivery": "actor"},
-	"trail_shot": {"name": "巡路连射", "mp": 8, "power": 1.55, "target": "enemy", "element": "normal", "energy": 30, "delivery": "ranged"},
-	"snare": {"name": "缠枝箭", "mp": 9, "power": 1.25, "target": "enemy", "element": "normal", "energy": 30, "slow": 2, "delivery": "ranged"},
-	"rend": {"name": "裂石击", "mp": 7, "power": 1.7, "target": "enemy", "element": "normal", "energy": 30, "delivery": "melee"},
-	"ember": {"name": "燧火", "mp": 10, "power": 1.65, "target": "enemy", "element": "fire", "energy": 30, "environment": "ignite", "delivery": "ranged"},
-	"torrent": {"name": "回流", "mp": 10, "power": 1.5, "target": "enemy", "element": "water", "energy": 30, "environment": "wet", "delivery": "ranged"},
-	"heal": {"name": "枝露疗愈", "mp": 12, "power": 38, "target": "ally", "element": "normal", "energy": 20, "healing": true, "delivery": "none"},
-	"guard_all": {"name": "灯盾", "mp": 9, "target": "all_allies", "shield": 25, "element": "normal", "energy": 20, "delivery": "none"},
-	"rally": {"name": "归途号令", "mp": 0, "target": "all_allies", "shield": 32, "element": "normal", "energy": 0, "delivery": "none"},
-	"dawn_strike": {"name": "破晓重击", "mp": 0, "power": 2.6, "target": "all_enemies", "element": "normal", "energy": 0, "delivery": "melee"},
-	"arrow_rain": {"name": "千枝落羽", "mp": 0, "power": 2.2, "target": "all_enemies", "element": "normal", "energy": 0, "delivery": "ranged"},
-	"warmth": {"name": "不熄的微光", "mp": 0, "power": 65, "target": "all_allies", "healing": true, "element": "normal", "energy": 0, "delivery": "none"},
-	"wolf_howl": {"name": "群山长鸣", "mp": 0, "shield": 45, "target": "all_allies", "element": "normal", "energy": 0, "delivery": "none"},
-	"sunfall": {"name": "余烬落日", "mp": 0, "power": 2.6, "target": "all_enemies", "element": "fire", "energy": 0, "environment": "ignite", "delivery": "ranged"},
-	"tide_shelter": {"name": "澄海归潮", "mp": 0, "power": 38, "target": "all_allies", "healing": true, "shield": 25, "element": "water", "energy": 0, "environment": "wet", "delivery": "none"},
-	"frost_arrow": {"name": "凝霜矢", "mp": 9, "power": 1.35, "target": "enemy", "element": "ice", "energy": 30, "slow": 2, "delivery": "ranged"},
-	"frostfall": {"name": "寒霜齐落", "mp": 0, "power": 1.75, "target": "all_enemies", "element": "ice", "energy": 0, "slow": 2, "delivery": "ranged"},
-	"thunderbolt": {"name": "引雷", "mp": 12, "power": 1.75, "target": "enemy", "element": "lightning", "energy": 30, "delivery": "ranged"},
-	"thunderstorm": {"name": "千钧雷阵", "mp": 0, "power": 2.35, "target": "all_enemies", "element": "lightning", "energy": 0, "delivery": "ranged"},
-	"windblade": {"name": "回风刃", "mp": 9, "power": 1.15, "target": "all_enemies", "element": "wind", "energy": 30, "delivery": "ranged"},
-	"tailwind": {"name": "扶摇", "mp": 0, "target": "all_allies", "element": "wind", "energy": 0, "haste": 2, "delivery": "none"},
-	"stone_spike": {"name": "石棘", "mp": 8, "power": 1.5, "target": "enemy", "element": "earth", "energy": 30, "delivery": "ranged"},
-	"stonewall": {"name": "磐城", "mp": 0, "shield": 42, "target": "all_allies", "element": "earth", "energy": 0, "delivery": "none"},
-}
+# Older expedition saves still store these identifiers on each actor.
+const SAVE_SKILL_IDS = [
+	"ironforge_skill", "ironforge_ult", "granite_skill", "granite_ult", "mistleaf_skill",
+	"mistleaf_ult", "willow_skill", "willow_ult", "ashhorn_skill", "ashhorn_ult",
+	"oathguard_skill", "oathguard_ult", "highdrake_skill", "highdrake_ult", "cloudscale_skill",
+	"cloudscale_ult", "longroad_skill", "longroad_ult", "fieldmedic_skill", "fieldmedic_ult",
+	"siltguard_skill", "siltguard_ult", "seasons_skill", "seasons_ult", "earth_god_skill",
+	"earth_god_ult", "sky_god_skill", "sky_god_ult", "snowforge_skill", "snowforge_ult",
+	"gravity", "gravity_drift", "gravity_wave", "attack", "trail_shot",
+	"snare", "rend", "ember", "torrent", "heal",
+	"guard_all", "rally", "dawn_strike", "arrow_rain", "warmth",
+	"wolf_howl", "sunfall", "tide_shelter", "frost_arrow", "frostfall",
+	"thunderbolt", "thunderstorm", "windblade", "tailwind", "stone_spike",
+	"stonewall",
+]
 const ITEMS = {
 	"salve": {"name": "疗伤药", "description": "可在商店出售。", "story": "红褐色的草药汤装在缠布的厚玻璃瓶里。村里的人总会给过路的伤员留上一瓶。", "hp": 45},
 	"ether": {"name": "澄露", "description": "可在商店出售。", "story": "清蓝色的露液有一点薄荷味。施术者常用软木塞封紧瓶口，带在身上赶路。", "mp": 30},
@@ -137,34 +94,3 @@ static func item_name(id: String) -> String:
 
 static func terrain_name(id: String) -> String:
 	return str(TERRAIN.get(id, TERRAIN.plains).name)
-
-static func skill_description(id: String) -> String:
-	var skill = SKILLS[id]
-	var parts: Array[String] = ["%d MP" % skill.mp]
-	parts.append({"enemy": "敌方单体", "ally": "己方单体，可救援", "all_enemies": "敌方全体", "all_allies": "己方在场全体"}[skill.target])
-	if skill.element == "gravity":
-		parts.append("重力魔法")
-	elif skill.element != "normal":
-		parts.append(ELEMENT_NAMES[skill.element] + "属性")
-	if skill.get("healing", false):
-		parts.append("恢复 %d HP" % skill.power)
-	elif skill.has("power"):
-		parts.append("攻击 ×%.2f" % skill.power)
-	if skill.has("shield"):
-		parts.append("护盾 +%d，上限 60" % skill.shield)
-	if skill.has("slow"):
-		parts.append("减速 %d 次行动" % skill.slow)
-		if skill.element == "ice":
-			parts.append("潮湿时额外减速 1 次")
-	if skill.element == "lightning":
-		parts.append("潮湿时伤害 ×1.25")
-	if skill.has("haste"):
-		parts.append("行动速度提高 25%%，持续 %d 个行动间隔" % skill.haste)
-	if skill.get("environment", "") == "ignite":
-		parts.append("晴天可点燃干燥的森林战场，双方承受持续火伤")
-	elif skill.get("environment", "") == "wet":
-		parts.append("使本场战地潮湿，降低火系技能伤害")
-	return " · ".join(parts)
-
-static func passive_description(id: String) -> String:
-	return {"hero": "以重力魔法作战。", "cen": "在森林采集时多拿一份。", "eve": "能在战斗中用魔法治疗队友。", "grit": "能看出附近已发现敌人的能力。他在场时，生命低于 35% 的队友受到的伤害降低 20%。", "ember": "火术可在晴天点燃干燥的森林战场。", "tide": "水术可使当前战场潮湿，减弱火系技能伤害。"}.get(id, "")

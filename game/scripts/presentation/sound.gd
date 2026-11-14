@@ -49,9 +49,9 @@ func _exit_tree() -> void:
 	cache.clear()
 
 func _synthesize(kind: String) -> AudioStreamWAV:
-	var frequencies = {"click":[440.0],"attack":[196.0,246.94],"normal":[440.0,660.0],"impact":[82.4,123.5],"bow":[740.0,988.0],"heal":[523.25,783.99,1046.5],"shield":[329.63,493.88],"fire":[110.0,164.8],"water":[587.33,880.0],"howl":[196.0,294.0],"cast":[523.25,659.25],"victory":[523.25,659.25,783.99]}.get(kind,[440.0])
+	var frequencies = [523.25, 659.25, 783.99] if kind == "victory" else [440.0]
 	var sample_rate = 22050
-	var duration = 0.11 if kind=="click" else 0.65 if kind=="howl" else 0.4 if kind in ["heal","water","shield"] else 0.25
+	var duration = 0.11 if kind == "click" else 0.25
 	var count = int(sample_rate * duration)
 	var pcm = PackedByteArray()
 	pcm.resize(count * 2)
@@ -60,9 +60,7 @@ func _synthesize(kind: String) -> AudioStreamWAV:
 		var envelope = sin(PI * t / duration) * exp(-t * 8.0)
 		var value = 0.0
 		for f in frequencies:
-			var sweep = 1.0-t/duration*0.65 if kind in ["bow","impact"] else 1.0+sin(t*8.0)*0.10 if kind=="howl" else 1.0
-			value += sin(TAU*f*t*sweep)/frequencies.size()
-		if kind in ["fire","impact"]: value = value*0.65+sin(float(i*i%7919))*0.35
+			value += sin(TAU * f * t) / frequencies.size()
 		pcm.encode_s16(i * 2, int(value * envelope * 18000))
 	var wave = AudioStreamWAV.new()
 	wave.format = AudioStreamWAV.FORMAT_16_BITS

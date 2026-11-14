@@ -6,7 +6,6 @@ const Doll = preload("res://scripts/presentation/doll.gd")
 const FontAsset = preload("res://assets/fonts/NotoSansSC.ttf")
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Board = preload("res://scripts/presentation/board_surface.gd")
-const BattleTargeting = preload("res://scripts/presentation/battle_targeting.gd")
 const OCCLUSION = preload("res://scripts/presentation/board_occlusion.gdshader")
 const GROUND_FADE = preload("res://scripts/presentation/board_ground_fade.gdshader")
 const NATURE_PALETTE = preload("res://scripts/presentation/nature_palette.gdshader")
@@ -20,16 +19,13 @@ const OCCLUSION_ZOOM = 9.0
 const FOG_REVEAL_SECONDS = 0.7
 const FOG_REVEAL_PRIORITY = 2
 signal cell_clicked(id: String)
-signal enemy_clicked(id: String)
 var hero_marker = preload("res://scripts/presentation/squad_markers.gd").new()
 var camera: Camera3D
 var light: DirectionalLight3D
 var map_root: Node3D
 var actor_root: Node3D
-var battle_root: Node3D
 var tile_nodes: Dictionary = {}
 var dolls: Dictionary = {}
-var battle_dolls: Dictionary = {}
 var tile_signatures: Dictionary = {}
 var current_tiles: Dictionary = {}
 var focus_point = Vector3.ZERO
@@ -41,20 +37,9 @@ var zoom_size = DEFAULT_MAP_ZOOM
 var map_pointer_down = false
 var map_dragging = false
 var map_pointer_position = Vector2.ZERO
-var battle_mode = false
-var battle_targeting = BattleTargeting.new()
 var selection_ring: MeshInstance3D
-var clock = 0.0
 var rain: CPUParticles3D
-var effects: Node3D
-var presenter: Node
-var battle_stage: Node3D
-var battle_run: RefCounted
-var battle_combat: RefCounted
-var display_results: Dictionary = {}
 var ocean: Node3D
-var environment: Environment
-var camera_impulse = 0.0
 var map_batch: Node3D
 var canopy_batch: Node3D
 var canopy_individual = false
@@ -71,11 +56,9 @@ var board_stamp: Dictionary
 var outline_cell = ""
 var map_occluders: Array[MeshInstance3D] = []
 var fading_occluders: Dictionary
-signal presentation_changed
-signal sound_cue(kind: String)
 
 func _ready() -> void:
-	environment = Environment.new()
+	var environment := Environment.new()
 	environment.background_mode = Environment.BG_COLOR
 	environment.background_color = Color("23577b")
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
@@ -98,11 +81,8 @@ func _ready() -> void:
 	add_child(camera)
 	map_root = Node3D.new()
 	actor_root = Node3D.new()
-	battle_root = Node3D.new()
 	add_child(map_root)
 	add_child(actor_root)
-	add_child(battle_root)
-	add_child(battle_targeting)
 	var marker_canvas = CanvasLayer.new()
 	marker_canvas.layer = 1
 	add_child(marker_canvas)
@@ -131,31 +111,16 @@ func _ready() -> void:
 	rain.mesh = raindrop
 	rain.emitting = false
 	add_child(rain)
-	effects = preload("res://scripts/presentation/skill_effects.gd").new()
-	add_child(effects)
-	presenter = preload("res://scripts/presentation/battle_presenter.gd").new()
-	add_child(presenter)
-	presenter.view = self
-	presenter.finished.connect(func(): presentation_changed.emit())
-	presenter.feedback_changed.connect(func(): presentation_changed.emit())
-	presenter.started.connect(func(): presentation_changed.emit())
 	visibility_changed.connect(func():
-		hero_marker.visible = is_visible_in_tree() and not battle_mode)
+		hero_marker.visible = is_visible_in_tree())
 	_update_camera()
 
 func reset() -> void:
 	_cancel_map_pointer()
 	hero_marker.hide()
-	_clear_battle_target()
 	map_follow_actor = null
 	zoom_size = DEFAULT_MAP_ZOOM
-	presenter.cancel()
-	effects.clear()
-	display_results.clear()
-	battle_stage = null
-	battle_run = null
-	battle_combat = null
-	for root in [map_root, actor_root, battle_root]:
+	for root in [map_root, actor_root]:
 		for child in root.get_children():
 			child.free()
 	tile_nodes.clear()
@@ -172,14 +137,6 @@ func reset() -> void:
 	fading_occluders.clear()
 	tile_signatures.clear()
 	dolls.clear()
-	battle_dolls.clear()
-	battle_mode = false
-	battle_root.visible = false
-	map_root.visible = true
-	actor_root.visible = true
-	selection_ring.visible = true
-	ocean.visible = true
-	camera_impulse = 0.0
 
 func refresh(run: RefCounted, _selected_id: String, selected_cell: String) -> void:
 	current_tiles = run.data.tiles
@@ -192,11 +149,6 @@ func refresh(run: RefCounted, _selected_id: String, selected_cell: String) -> vo
 			map_min = map_min.min(point)
 			map_max = map_max.max(point)
 	if ocean.sea_cells.is_empty(): ocean.build(current_tiles)
-	ocean.visible = not battle_mode
-	if not battle_mode: environment.background_color = Color("23577b")
-	map_root.visible = not battle_mode
-	actor_root.visible = not battle_mode
-	selection_ring.visible = not battle_mode
 	var visible_layout: Dictionary = {}
 	var pending_sight: Array = run.relic_intro().get("new_sight", [])
 	for id in run.data.explored:
@@ -225,7 +177,7 @@ func refresh(run: RefCounted, _selected_id: String, selected_cell: String) -> vo
 			_update_surface_chunk(board_mesh, chunk, patches[chunk][0], board_ground_material)
 			_update_surface_chunk(board_fog, chunk, patches[chunk][1], board_fog_material)
 			_update_surface_chunk(board_fringe, chunk, patches[chunk][2], board_fringe_material)
-		if not board_stamp.is_empty() and not battle_mode:
+		if not board_stamp.is_empty():
 			var reveal = board_surface.reveal_meshes(visible_layout, board_stamp)
 			if reveal[0] != null:
 				_animate_fog_reveal(reveal[0], reveal[1])
@@ -457,24 +409,16 @@ func _pan_map(offset: Vector3) -> void:
 func _update_camera() -> void:
 	if camera == null:
 		return
-	if battle_mode:
-		camera.position = Vector3(7.5, 9, 12)
-		camera.look_at(Vector3(0, 0.5, 0))
-		camera.size = 13.0
-		camera.h_offset = 1.4
-	else:
-		camera.position = focus_point + Vector3(0, 18, 17)
-		camera.look_at(focus_point)
-		camera.size = zoom_size
-		camera.h_offset = 0.3
-		_sync_canopy_lod()
+	camera.position = focus_point + Vector3(0, 18, 17)
+	camera.look_at(focus_point)
+	camera.size = zoom_size
+	camera.h_offset = 0.3
+	_sync_canopy_lod()
 
 func set_world_input_enabled(enabled: bool) -> void:
 	set_process_unhandled_input(enabled)
 	if not enabled:
 		_cancel_map_pointer()
-		battle_targeting.hovered_id = ""
-		_update_battle_targets()
 
 func _cancel_map_pointer() -> void:
 	map_pointer_down = false
@@ -483,7 +427,6 @@ func _cancel_map_pointer() -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
 		_cancel_map_pointer()
-		battle_targeting.hovered_id = ""
 
 func _map_point(screen_position: Vector2) -> Variant:
 	return MAP_PLANE.intersects_ray(camera.project_ray_origin(screen_position), camera.project_ray_normal(screen_position))
@@ -513,9 +456,6 @@ func _drag_map_to(screen_position: Vector2) -> void:
 	map_pointer_position = screen_position
 
 func _input(event: InputEvent) -> void:
-	if battle_mode and event is InputEventMouseMotion:
-		# HUD controls consume motion before the world can offer a preview again.
-		battle_targeting.hovered_id = ""
 	# Capture a gesture started on the board, even when it ends over the HUD.
 	if not map_pointer_down:
 		return
@@ -536,16 +476,6 @@ func _input(event: InputEvent) -> void:
 				cell_clicked.emit(id)
 
 func _unhandled_input(event: InputEvent) -> void:
-	if battle_mode:
-		if battle_combat != null and battle_combat.outcome.is_empty():
-			if event is InputEventMouseMotion:
-				battle_targeting.hovered_id = _battle_enemy_at(event.position)
-			elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-				var enemy = _battle_enemy_at(event.position)
-				if not enemy.is_empty():
-					get_viewport().set_input_as_handled()
-					enemy_clicked.emit(enemy)
-		return
 	if not (event is InputEventMouseButton and event.pressed):
 		return
 	match event.button_index:
@@ -561,16 +491,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	get_viewport().set_input_as_handled()
 
 func _process(delta: float) -> void:
-	clock += delta
-	if camera_impulse>0.0:
-		camera_impulse = maxf(0.0,camera_impulse-delta*0.7)
-		camera.v_offset = sin(clock*72.0)*camera_impulse
-	else: camera.v_offset = 0.0
-	if rain:
-		rain.position = (Vector3.ZERO if battle_mode else focus_point) + Vector3(0, 10, 0)
-	for flame in get_tree().get_nodes_in_group("world_flames"):
-		flame.scale.y = 0.9 + sin(clock * 5.0 + flame.get_instance_id() % 11) * 0.16
-	if not battle_mode and is_processing_unhandled_input() and not map_pointer_down:
+	rain.position = focus_point + Vector3(0, 10, 0)
+	if is_processing_unhandled_input() and not map_pointer_down:
 		var motion = Vector3.ZERO
 		if Input.is_physical_key_pressed(KEY_A):
 			motion.x -= 1
@@ -583,32 +505,10 @@ func _process(delta: float) -> void:
 		if motion != Vector3.ZERO:
 			map_follow_actor = null
 			_pan_map(motion * delta * 8.0)
-	if battle_mode:
-		_update_battle_targets()
-	else:
-		if not map_pointer_down:
-			_update_map_follow()
-		_update_occlusion(delta)
-	hero_marker.update_position(camera, dolls.get("hero"), is_visible_in_tree() and not battle_mode)
-
-func _battle_enemy_at(screen_position: Vector2) -> String:
-	return battle_targeting.pick(camera, screen_position, battle_dolls, battle_combat.alive_enemies())
-
-func set_battle_target(id: String) -> void:
-	battle_targeting.select(id)
-	_update_battle_targets()
-
-func _update_battle_targets() -> void:
-	var alive: Array[String] = []
-	if battle_mode and battle_combat != null and battle_combat.outcome.is_empty():
-		alive = battle_combat.alive_enemies()
-	battle_targeting.update_markers(camera, battle_dolls, alive)
-
-func _clear_battle_target() -> void:
-	battle_targeting.hovered_id = ""
-	battle_targeting.select("")
-	var empty: Array[String] = []
-	battle_targeting.update_markers(camera, battle_dolls, empty)
+	if not map_pointer_down:
+		_update_map_follow()
+	_update_occlusion(delta)
+	hero_marker.update_position(camera, dolls.get("hero"), is_visible_in_tree())
 
 func _update_occlusion(delta: float) -> void:
 	var blocked: Dictionary = {}
@@ -675,174 +575,6 @@ func _begin_occlusion(instance: MeshInstance3D) -> void:
 		effect.materials.append(material)
 		instance.set_surface_override_material(surface, material)
 	fading_occluders[instance] = effect
-
-func begin_battle(run: RefCounted, combat: RefCounted) -> void:
-	_cancel_map_pointer()
-	_clear_battle_target()
-	if is_instance_valid(map_follow_actor):
-		focus_point = Hex.world(combat.position)
-	map_follow_actor = null
-	presenter.cancel()
-	effects.clear()
-	display_results.clear()
-	battle_run = run
-	battle_combat = combat
-	battle_mode = true
-	ocean.visible = false
-	map_root.visible = false
-	actor_root.visible = false
-	selection_ring.visible = false
-	for child in battle_root.get_children():
-		child.free()
-	battle_stage = null
-	battle_dolls.clear()
-	battle_root.visible = true
-	_draw_battle_stage(combat.field_view(), combat.position)
-	_update_camera()
-	refresh_battle(run, combat)
-
-func _draw_battle_stage(definition: Dictionary, position: String) -> void:
-	environment.background_color = {"plains":Color("526757"),"forest":Color("354b42"),"mountain":Color("657078"),"ruins":Color("64695b"),"desert":Color("9b8965"),"swamp":Color("405c60")}.get(str(definition.terrain),Color("526757"))
-	if is_instance_valid(battle_stage): battle_stage.free()
-	battle_stage = Node3D.new()
-	battle_root.add_child(battle_stage)
-	var tile = definition.duplicate(true)
-	tile.ground_only = true
-	var stage = Terrain.tile(battle_stage, tile, hash(position))
-	stage.scale = Vector3(6.5, 1.0, 4.5)
-	tile.ground_only = false
-	# Backdrop is assembled from the actual biome; props never reveal neighboring cells.
-	for i in range(5):
-		var backdrop = Terrain.tile(battle_stage, tile, i + 31)
-		backdrop.position = Vector3(-5 + i * 2.4, -0.2, -4.0)
-		backdrop.scale = Vector3(1.4, 1.7, 1.4)
-	if tile.get("river", false):
-		_draw_river()
-	if tile.burning:
-		var fire_ring = Node3D.new()
-		battle_stage.add_child(fire_ring)
-		fire_ring.position = Vector3(0, 0.05, 2.8)
-		Terrain.fire(fire_ring)
-	battle_root.set_meta("environment_signature", _battle_signature(tile))
-
-func _draw_river() -> void:
-	var ribbon = SurfaceTool.new()
-	ribbon.begin(Mesh.PRIMITIVE_TRIANGLE_STRIP)
-	for i in range(17):
-		var x = -5.1 + i * 0.60
-		var center = 1.25 + sin(x * 0.7) * 0.66
-		ribbon.set_color(Color("50466c"))
-		ribbon.add_vertex(Vector3(x, 0.09, center - 0.62))
-		ribbon.set_color(Color("24273e"))
-		ribbon.add_vertex(Vector3(x, 0.09, center + 0.62))
-	var surface = MeshInstance3D.new()
-	surface.mesh = ribbon.commit()
-	var material = StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	material.vertex_color_use_as_albedo = true
-	surface.material_override = material
-	battle_stage.add_child(surface)
-
-func refresh_battle(_run: RefCounted, combat: RefCounted) -> void:
-	var tile = combat.field_view()
-	if not is_animating() and battle_root.get_meta("environment_signature", "") != _battle_signature(tile):
-		_draw_battle_stage(tile, combat.position)
-	var ids = combat.active.duplicate()
-	ids.append_array(combat.enemies.keys())
-	if is_animating():
-		for id in presenter.visible_ids:
-			if battle_dolls.has(id) and id not in ids: ids.append(id)
-	for id in battle_dolls:
-		battle_dolls[id].visible = id in ids
-	for index in range(ids.size()):
-		var id = str(ids[index])
-		var enemy = combat.enemies.has(id)
-		var a = combat.unit(id)
-		if not battle_dolls.has(id):
-			var doll = Doll.new()
-			battle_root.add_child(doll)
-			doll.configure(a)
-			doll.rotation.y = -PI / 2 if enemy else PI / 2
-			doll.scale = Vector3.ONE * (1.15 if a.get("type", "") == "lamp_boss" else 0.9)
-			battle_dolls[id] = doll
-		var slot = combat.enemies.keys().find(id) if enemy else combat.active.find(id)
-		var model = battle_dolls[id]
-		if slot>=0: model.position = Vector3(2.1 if enemy else -2.5, 0.1, -1.6 + slot * 1.25)
-		model.visible = true
-		if not is_animating(): model.set_down(a.hp <= 0)
-		if not is_animating() and a.get("charged",false) and model.rigged.role=="crossbow": model.play_action("aim")
-		model.selected = id == presentation_actor(combat.current)
-
-func animate_events(events: Array) -> void:
-	if not is_animating():
-		var initialized = {}
-		for event in events:
-			for result in event.get("results",[]):
-				if not initialized.has(result.target):
-					display_results[result.target] = {"hp_after":result.hp_before,"shield_after":result.shield_before}
-					initialized[result.target] = true
-	presenter.enqueue(events)
-
-func is_animating() -> bool:
-	return presenter!=null and presenter.playing
-
-func display_hp(id: String, current: int) -> int:
-	return int(display_results.get(id,{}).get("hp_after",current)) if is_animating() else current
-
-func display_shield(id: String, current: int) -> int:
-	return int(display_results.get(id,{}).get("shield_after",current)) if is_animating() else current
-
-func presentation_actor(fallback: String) -> String:
-	return str(presenter.active_event.get("actor",fallback)) if is_animating() else fallback
-
-func presentation_title(fallback: String) -> String:
-	if not is_animating(): return fallback
-	var event = presenter.active_event
-	if event.get("kind","")=="environment": return "火场伤害 · 结算中"
-	var id = str(event.get("actor",""))
-	if battle_combat==null or id=="": return "演出中"
-	var skill = str(event.get("skill_id",""))
-	var title = str(Catalog.SKILLS[skill].name) if Catalog.SKILLS.has(skill) else "防守" if event.get("kind","")=="guard" else "使用道具" if event.get("kind","")=="heal" else "行动"
-	return str(battle_combat.unit(id).name)+" · "+title
-
-func sync_battle_states() -> void:
-	if not battle_mode or battle_combat==null: return
-	refresh_battle(battle_run,battle_combat)
-	for id in battle_dolls:
-		battle_dolls[id].set_down(battle_combat.unit(id).hp<=0)
-	_update_battle_stage(battle_combat.field_view())
-
-func sync_event_environment(event: Dictionary) -> void:
-	if event.has("environment_after") and battle_combat != null:
-		_update_battle_stage(event.environment_after)
-
-func _update_battle_stage(field: Dictionary) -> void:
-	if battle_root.get_meta("environment_signature", "") != _battle_signature(field):
-		_draw_battle_stage(field, battle_combat.position)
-
-func end_battle() -> void:
-	presenter.cancel()
-	_clear_battle_target()
-	effects.clear()
-	battle_run = null
-	battle_combat = null
-	battle_mode = false
-	battle_root.visible = false
-	map_root.visible = true
-	actor_root.visible = true
-	selection_ring.visible = true
-	ocean.visible = true
-	environment.background_color = Color("23577b")
-	camera_impulse = 0.0
-	camera.v_offset = 0.0
-	_update_camera()
-
-func impact_camera(strength: float) -> void:
-	camera_impulse = maxf(camera_impulse,strength)
-
-func _battle_signature(tile: Dictionary) -> String:
-	return "%s:%s:%s:%s" % [tile.terrain, tile.burning, tile.wet, tile.get("river", false)]
 
 static func _label_location(parent: Node3D, text: String, height: float) -> void:
 	var label = Label3D.new()

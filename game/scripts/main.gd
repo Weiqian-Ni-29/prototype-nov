@@ -70,8 +70,6 @@ func _ready() -> void:
 	view = World.new()
 	add_child(view)
 	view.cell_clicked.connect(_select_cell)
-	view.presentation_changed.connect(func(): call_deferred("_refresh"))
-	view.sound_cue.connect(func(kind: String): sound.play(kind))
 	var canvas = CanvasLayer.new()
 	canvas.layer = 2
 	add_child(canvas)
@@ -1985,7 +1983,7 @@ func _abandon_run() -> void:
 func _credits_dialog() -> void:
 	var box = _modal("制作与许可", 800, 650)
 	var content = _scroll_content(box)
-	_text(content, "维洛丹 · 试玩\n原创世界观、角色与肖像；原创怪物、适配、特效及合成音效。肖像由内置图像生成工具制作。\n\n人形模型、动作与自然地景：Kay Lousberg，CC0。\n狼基础模型：crownjoshua，CC0；本项目修复绑定并制作动作。\n粒子纹理：Kenney，CC0。\n字体：Noto Sans SC，SIL Open Font License。\n引擎：Godot " + Engine.get_version_info().string + "\n完整来源、许可与适配说明随试玩包附带。", 18)
+	_text(content, "维洛丹 · 试玩\n原创世界观、角色与肖像；原创怪物、适配及合成音效。肖像由内置图像生成工具制作。\n\n人形模型、动作与自然地景：Kay Lousberg，CC0。\n狼基础模型：crownjoshua，CC0；本项目修复绑定并制作动作。\n字体：Noto Sans SC，SIL Open Font License。\n引擎：Godot " + Engine.get_version_info().string + "\n完整来源、许可与适配说明随试玩包附带。", 18)
 	_text(content, Engine.get_license_text(), 14, muted)
 	_button(box, "返回设置", _settings_dialog)
 

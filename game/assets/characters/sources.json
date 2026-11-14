@@ -54,26 +54,6 @@
         "Wolf/Rigged/Wolf.blend"
       ],
       "changes": "Applied mirror; repaired legacy bind space; normalized top-four weights; normalized size; removed legacy external IK and drivers; baked project-authored full-body FK clips; added facial details and collar. No embedded scripts execute."
-    },
-    {
-      "author": "Kenney Vleugels",
-      "pack": "Particle Pack 1.1",
-      "tier": "Free download",
-      "page": "https://kenney.nl/assets/particle-pack",
-      "archive_sha256": "b631d4b07f7002549fdcf155f01141ad482f79f3440e4e301eed49ce5f1d8958",
-      "license_file": "../licenses/KENNEY-PARTICLES.txt",
-      "selected": [
-        "circle_01.png",
-        "fire_01.png",
-        "flame_01.png",
-        "magic_01.png",
-        "spark_01.png",
-        "star_01.png",
-        "slash_01.png",
-        "trace_01.png",
-        "smoke_01.png"
-      ],
-      "changes": "Nine unmodified transparent PNG textures; project-authored Godot effects."
     }
   ],
   "rejected": [

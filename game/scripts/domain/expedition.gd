@@ -718,23 +718,21 @@ func transfer(from_id: String, to_id: String, item: String, amount: int) -> Dict
 	changed.emit()
 	return success()
 
-func use_item(user_id: String, target_id: String, item: String, during_battle: bool = false, received_pp: int = 0) -> Dictionary:
+func use_item(user_id: String, target_id: String, item: String) -> Dictionary:
 	var user = actor(user_id)
 	var target = actor(target_id)
 	if user.is_empty() or target.is_empty() or not user.joined or user.hp <= 0 or user.position != target.position:
 		return fail("只有还能行动的队员才能用道具，也只能给同一地块的人用。")
 	if not target.joined and not data.story.get(target_id, {}).get("met", false):
 		return fail("你还没见过这名角色。")
-	if data.status != "exploring" and not during_battle:
-		return fail("等轮到己方正常行动时再用。")
+	if data.status != "exploring":
+		return fail("只能在远征地图上用恢复道具。")
 	var definition = Catalog.ITEMS.get(item, {})
 	if int(user.inventory.get(item, 0)) <= 0 or not (definition.has("hp") or definition.has("mp")):
 		return fail("没有可用的恢复道具。")
 	if definition.has("mp") and target.hp <= 0:
 		return fail("恢复魔力不能解除重伤。")
 	var healing = int(definition.get("hp", 0))
-	if during_battle and received_pp > 0:
-		healing = floori(healing * (1.0 + received_pp / 100.0))
 	var hp_gain = mini(healing, int(target.hp_max) - int(target.hp))
 	var mp_gain = mini(int(definition.get("mp", 0)), int(target.mp_max) - int(target.mp))
 	if hp_gain <= 0 and mp_gain <= 0:
@@ -1232,7 +1230,7 @@ func _validate_save(loaded: Dictionary) -> String:
 		var rank: Variant = a.get("breakthrough", 0)
 		if not _whole_number(rank) or rank < 0 or rank > Cards.BREAKTHROUGH_PRICES.size() or (rank > 0 and (id == "hero" or not a.joined)):
 			return "伙伴突破记录无效"
-		if not Catalog.SKILLS.has(a.skill) or not Catalog.SKILLS.has(a.ultimate):
+		if not Catalog.SAVE_SKILL_IDS.has(a.skill) or not Catalog.SAVE_SKILL_IDS.has(a.ultimate):
 			return "角色技能无效"
 		for resource in ["hp", "mp"]:
 			if not _whole_number(a[resource]) or not _whole_number(a[resource + "_max"]) or a[resource + "_max"] <= 0 or a[resource] < 0 or a[resource] > a[resource + "_max"]:
