@@ -374,7 +374,12 @@ func card_targets(side: int, index: int) -> Array[int]:
 					if Cards.weapon_fits(card, piece):
 						targets.append(square)
 				"spell":
-					if card.has("heal") and piece.hp < piece.hp_max:
+					var heals: bool = card.has("heal") and piece.hp < piece.hp_max
+					var walking := maxi(int(piece.move), int(piece.get("ready_move", 0)))
+					var extends_walk := int(card.get("ready_move", 0)) > walking
+					var adds_diagonal: bool = card.get("ready_diagonal", false) \
+						and not piece.get("diagonal", false) and not piece.get("ready_diagonal", false)
+					if heals or extends_walk or adds_diagonal:
 						targets.append(square)
 	return targets
 
@@ -418,7 +423,8 @@ func _card_board_snapshot() -> Array[Dictionary]:
 	var snapshot: Array[Dictionary] = []
 	for unit in board:
 		snapshot.append({} if unit.is_empty() else {"name": unit.name, "hp": unit.hp, "hp_max": unit.hp_max,
-			"armor": unit.armor, "attack": attack_power(unit), "slow": int(unit.get("slow_until", 0))})
+			"armor": unit.armor, "attack": attack_power(unit), "slow": int(unit.get("slow_until", 0)),
+			"ready_move": int(unit.get("ready_move", 0)), "ready_diagonal": unit.get("ready_diagonal", false)})
 	return snapshot
 
 func _card_effects(target: int, before: Array[Dictionary], after: Array[Dictionary], slot: String, replaced: String) -> Array[Dictionary]:
@@ -441,6 +447,10 @@ func _card_effects(target: int, before: Array[Dictionary], after: Array[Dictiona
 					changes.append("%s %+d" % [stat[1], delta])
 			if int(current.slow) > int(old.slow):
 				changes.append("减速")
+			if current.ready_move > old.ready_move:
+				changes.append("下次可直走 %d 格" % current.ready_move)
+			if current.ready_diagonal and not old.ready_diagonal:
+				changes.append("下次可斜走 1 格")
 		if square == target and not replaced.is_empty():
 			changes.append("「%s」回到手牌" % replaced)
 		if changes.is_empty():
@@ -849,6 +859,12 @@ func _apply_card(side: int, id: String, card: Dictionary, target: int) -> void:
 					last_attack.slowed = slowed
 			elif card.has("heal"):
 				_heal(piece, int(card.heal), "spell")
+			elif card.has("ready_move"):
+				piece.ready_move = card.ready_move
+				_log("「%s」使%s下次可直走 %d 格。" % [card.name, piece.name, card.ready_move])
+			elif card.get("ready_diagonal", false):
+				piece.ready_diagonal = true
+				_log("「%s」使%s下次可斜走 1 格。" % [card.name, piece.name])
 		"weapon", "equipment":
 			_equip_card(side, id, card, target)
 		"defense":

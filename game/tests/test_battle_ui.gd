@@ -371,6 +371,50 @@ func check_spell_feedback() -> void:
 	view.queue_free()
 	await process_frame
 
+func check_mobility_spells() -> void:
+	var battle = fixture()
+	var ally: Dictionary = battle._piece(Cards.definition("lorne"), Chess.PLAYER)
+	battle.board[6] = ally
+	battle.hands[Chess.PLAYER] = ["tailwind_spell", "sidestep_spell"]
+	battle.mana[Chess.PLAYER] = 2
+	battle.draw_count = 0
+	var view := ChessView.new()
+	root.add_child(view)
+	view.setup(battle, null)
+	await process_frame
+	await process_frame
+	expect(battle.moves(6).get(0, "").is_empty() and not battle.moves(6).has(4),
+		"The ordinary archer cannot start with a two-square walk or diagonal step")
+	await click(view.hand_buttons[0])
+	expect(view._legal().get(6) == "support" and not view._legal().has(1),
+		"The movement spell highlights friendly pieces and excludes enemy targets")
+	await click(view.cells[6])
+	expect(battle.mana[Chess.PLAYER] == 1 and battle.can_move_piece() and battle.moves(6).get(0) == "move"
+		and "下次可直走 2 格" in view.card_history.recent.text,
+		"Tailwind spends mana, extends the walk, and records the effect while leaving the board action available")
+	battle.board[3] = battle._piece(Cards.definition("eve"), Chess.PLAYER)
+	expect(not battle.moves(6).has(0), "Tailwind cannot cross a blocked square")
+	battle.board[3] = {}
+	ally.slow_until = battle.round_number
+	expect(not battle.moves(6).has(0), "Slow still limits a Tailwind walk to one square")
+	ally.erase("slow_until")
+	await click(view.hand_buttons[0])
+	expect(view._legal().get(6) == "support" and not view._legal().has(10),
+		"Sidestep targets friendly pieces that do not already move diagonally")
+	await click(view.cells[6])
+	expect(battle.mana[Chess.PLAYER] == 0 and battle.moves(6).get(4) == "move"
+		and "下次可斜走 1 格" in view.card_history.recent.text, "Sidestep opens a diagonal walk and records the effect")
+	battle.board[4] = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
+	expect(not battle.moves(6).has(4), "Sidestep cannot be used for a diagonal attack")
+	battle.board[4] = {}
+	await click(view.cells[6])
+	await click(view.cells[4])
+	expect(battle.board[4] == ally and battle.board[6].is_empty() and not battle.can_move_piece()
+		and not ally.has("ready_move") and not ally.has("ready_diagonal"),
+		"A single ordinary movement uses both next-move effects and the board action")
+	view.queue_free()
+	await process_frame
+
 func check_attack_feedback() -> void:
 	var battle = fixture("archer")
 	var enemy: Dictionary = battle.board[1]
@@ -1123,6 +1167,7 @@ func execute() -> void:
 	check_battle_income()
 	await check_attack_feedback()
 	await check_spell_feedback()
+	await check_mobility_spells()
 	await check_ui()
 	await check_hand_layout()
 	await check_mana_display()

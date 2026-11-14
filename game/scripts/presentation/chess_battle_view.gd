@@ -354,8 +354,15 @@ func _legal() -> Dictionary:
 	var result := {}
 	if selected_card >= 0:
 		var card: Dictionary = battle.definition(battle.hands[Battle.PLAYER][selected_card])
+		var target_kind := "support"
+		if card.kind == "partner":
+			target_kind = "deploy"
+		elif card.has("damage"):
+			target_kind = "spell_hit"
+		elif not Cards.equipment_slot(card).is_empty():
+			target_kind = "equip"
 		for square in battle.card_targets(Battle.PLAYER, selected_card):
-			result[square] = "deploy" if card.kind == "partner" else "spell_hit" if card.has("damage") else "equip"
+			result[square] = target_kind
 	return result
 
 func _selected_card_definition() -> Dictionary:
@@ -1181,6 +1188,10 @@ func _card_stats(card: Dictionary) -> String:
 				" · 施加减速" if card.get("slow", false) else ""]
 		if card.has("heal"):
 			return "治疗 %d 点生命" % int(card.heal)
+		if card.has("ready_move"):
+			return "下次可直走最多 %d 格" % int(card.ready_move)
+		if card.get("ready_diagonal", false):
+			return "下次可斜走 1 格"
 	if card.kind == "defense":
 		var guard: Array[String] = ["护甲 + %d" % int(card.get("armor", 0))]
 		if card.has("heal"):

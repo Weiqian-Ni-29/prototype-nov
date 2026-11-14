@@ -41,8 +41,12 @@ const ACTIONS = {
 	"broth_card": {"cost": 2, "name": "热汤", "kind": "defense", "icon": "balanced_broth_jar", "armor": 1, "heal": 2, "trait": "选一枚友方棋子，回复 2 点生命并获得 1 点护甲。"},
 	"cup_card": {"cost": 1, "name": "递饮", "kind": "defense", "icon": "passing_cup", "armor": 2, "cup": true, "trait": "选一枚友方伙伴，使其获得 2 点护甲。若主战者与其相邻，主战者回复 1 点生命。"},
 	"loaf_card": {"cost": 2, "name": "分食", "kind": "defense", "icon": "divided_warm_loaf", "armor": 1, "heal": 1, "row": true, "trait": "选一枚友方棋子，同排友方各回复 1 点生命并获得 1 点护甲。"},
+	"tailwind_spell": {"cost": 1, "name": "顺风", "kind": "spell", "icon": "crossed_wind_chimes", "element": "wind", "ready_move": 2,
+		"trait": "选一枚友方棋子，下次移动时可横竖走最多 2 格，路径须畅通。减速时仍最多走 1 格。"},
+	"sidestep_spell": {"cost": 1, "name": "斜步", "kind": "spell", "icon": "trail_boots", "element": "wind", "ready_diagonal": true,
+		"trait": "选一枚友方棋子，下次移动时可以斜走 1 格，落点须为空格。"},
 }
-const UNLOCKABLE_SPELLS = ["ember_spell", "ice_spell", "mend_spell"]
+const UNLOCKABLE_SPELLS = ["ember_spell", "ice_spell", "mend_spell", "tailwind_spell", "sidestep_spell"]
 const PREP_CARDS = ["bandage_card", "broth_card", "cup_card", "loaf_card"]
 const KINDS = {"all": "全部", "partner": "伙伴", "weapon": "武器", "equipment": "装备", "defense": "防御", "spell": "法术"}
 const ELEMENTS = {"earth": "地", "fire": "火", "water": "水", "ice": "冰", "wind": "风", "lightning": "雷"}
