@@ -86,8 +86,11 @@ func check_equipment() -> void:
 		"An unmounted copy can be transferred while the worn copy remains equipped")
 	var sale: Dictionary = run.gear_trade("lorne", spare, false)
 	expect(sale.ok and spare in run.gear_owned("shop", shop), "Sale moves the original instance into stock")
+	var deck_before_purchase: Array = run.card_deck()
+	var purchased_card: String = "gear:" + spare
 	expect(run.gear_trade("hero", spare, true).ok and spare in run.gear_owned("actor", "hero")
-		and run.data.gear_instances[spare].enhance_level == 1, "Buying back preserves ID and enhancement")
+		and run.data.gear_instances[spare].enhance_level == 1 and run.card_deck() == deck_before_purchase + [purchased_card],
+		"Buying back appends the exact instance without duplicating it in the default deck")
 	expect(run.equip("hero", spare).ok and run.stat("hero", "attack") == hero.attack + 6, "Enhanced weapon is reflected in stats")
 	equip_set(run, "hero", "frontier_guard", 2)
 	expect(run.set_count("hero", "frontier_guard") == 2 and run.set_count("lorne", "frontier_guard") == 0,
@@ -95,6 +98,7 @@ func check_equipment() -> void:
 	expect(run.save_game().ok and duplicate.load_game(run.save_path).ok, "Gear save loads successfully")
 	var saved_copy: Dictionary = duplicate.data.gear_instances.get(spare, {})
 	expect(saved_copy.get("enhance_level") == 1 and saved_copy.get("definition_id") == "trail_blade"
+		and duplicate.card_deck() == deck_before_purchase + [purchased_card]
 		and saved_copy.get("owner") == {"kind": "actor", "id": "hero"} and duplicate.data.gear_instances.size() == run.data.gear_instances.size(),
 		"Saving and loading preserves gear identity")
 
@@ -127,10 +131,12 @@ func check_shop_refresh() -> void:
 	var saved: bool = run.save_game().ok and run.load_game().ok
 	var stock: Dictionary = run.shop_at(first).relic_stock
 	var previous_stock: Dictionary = before.battle_shop.relic_stock
-	expect(saved and run.shop_refresh_cost(first) == 3
+	expect(saved and run.shop_refresh_cost(first) == 3 and ("gear:" + purchased) in run.card_deck()
 		and stock.size() == previous_stock.size()
 		and stock.keys().all(func(id): return int(stock[id]) == int(previous_stock.get(id, 0))),
 		"Save and load preserve the refreshed stock and price")
+	expect(run.gear_trade("hero", purchased, false).ok and ("gear:" + purchased) not in run.card_deck(),
+		"Selling purchased equipment removes its card")
 
 func check_bulk_trade() -> void:
 	var run = fixture()

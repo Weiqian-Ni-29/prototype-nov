@@ -128,16 +128,21 @@ func gear_trade(id: String, uid: String, buying: bool, voucher: String = "") -> 
 		return quote
 	if buying and data.lamp_coins < quote.price:
 		return fail("灯铢不足。")
+	var card_id := "gear:" + uid
+	# Read the default deck before the new equipment becomes available.
+	if buying:
+		data.card_deck = card_deck() + [card_id]
 	data.lamp_coins += -quote.price if buying else quote.price
 	instance.owner = {"kind": "actor" if buying else "shop", "id": id if buying else a.position}
 	if not buying:
 		if data.has("card_deck"):
-			data.card_deck.erase("gear:" + uid)
+			data.card_deck.erase(card_id)
 		for slot in a.equipment:
 			if a.equipment[slot] == uid:
 				a.equipment[slot] = ""
 	_commit_price(quote)
-	return _item_result("%s「%s」，%d 灯铢。" % ["买入" if buying else "卖出", Gear.label(instance), quote.price])
+	var message := "%s「%s」，%d 灯铢。" % ["买入" if buying else "卖出", Gear.label(instance), quote.price]
+	return _item_result(message + ("已加入卡组。" if buying else ""))
 
 func gear_transfer(id: String, target: String, uid: String) -> Dictionary:
 	var a = actor(id)
@@ -673,12 +678,13 @@ func recruit_companion(id: String) -> Dictionary:
 	if not result.ok:
 		data = previous
 		return result
+	data.card_deck = card_deck() + [id]
 	if not result.relic.is_empty():
 		data.pending_story_rewards = {"source": "招募 · " + actor(id).name,
 			"items": [{"kind": "relic", "id": result.relic, "count": 1}]}
 	var saved := _save_companion_purchase(previous)
 	if saved.ok:
-		saved.message = "%s已入队，伙伴牌已解锁。可在卡组中更换一张牌。" % actor(id).name
+		saved.message = "%s已入队，伙伴牌已加入卡组。" % actor(id).name
 	return saved
 
 func breakthrough_quote(id: String) -> Dictionary:
@@ -912,10 +918,11 @@ func buy_spell(id: String, spell: String) -> Dictionary:
 	if spell.is_empty() or spell not in spell_shop_offers(cell) or data.lamp_coins < price:
 		return fail("这张法术牌谱当前无法购买。")
 	unlock_spell(spell)
+	data.card_deck = card_deck() + [spell]
 	data.lamp_coins -= price
 	data.relic_effect_flags.erase("chess_spell_discount")
 	shop_at(cell).spell_sold = true
-	return _item_result("解锁法术「%s」，可编入卡组。" % Cards.ACTIONS[spell].name)
+	return _item_result("已解锁「%s」并加入卡组。" % Cards.ACTIONS[spell].name)
 
 func preparation_options() -> Array[String]:
 	var result: Array[String] = []

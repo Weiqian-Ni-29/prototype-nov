@@ -43,9 +43,11 @@ func execute() -> void:
 	var offer: String = run.spell_shop_offers(store)[0]
 	var balance: int = run.data.lamp_coins
 	expect(run.buy_spell("hero", offer).ok and run.data.lamp_coins == balance - 8
-		and offer in Cards.collection(run.data.actors, run.data) and run.spell_shop_offers(store).is_empty(),
-		"A paid spell becomes a collection card and takes the store's current blueprint slot")
-	expect(not run.buy_spell("hero", offer).ok and run.shop_refresh_cost(store) == 1, "A spell purchase cannot repeat or alter refresh costs")
+		and offer in Cards.collection(run.data.actors, run.data) and run.card_deck() == deck + [offer]
+		and run.spell_shop_offers(store).is_empty(),
+		"A paid spell is appended to the current deck and takes the store's current blueprint slot")
+	expect(not run.buy_spell("hero", offer).ok and run.shop_refresh_cost(store) == 1
+		and run.card_deck() == deck + [offer], "A spell purchase cannot repeat or alter refresh costs")
 	run.retreat_party(start)
 	run.data.tiles[start].enemies = ["boar"]
 	var encounter := {"position": start, "origin": start, "npc": "", "ambush": false}
@@ -98,18 +100,19 @@ func check_mobility_spell_shop() -> void:
 	run.data.lamp_coins = 40
 	run.open_battle_shop()
 	var mobility := ["tailwind_spell", "sidestep_spell"]
-	var deck := run.card_deck() + mobility
-	expect(not run.save_card_deck(deck).ok, "The movement spells must be unlocked before adding them to the deck")
+	var deck := run.card_deck()
+	expect(not run.save_card_deck(deck + mobility).ok, "The movement spells must be unlocked before adding them to the deck")
 	for i in 3:
 		var offers := run.spell_shop_offers(cell)
 		expect(offers.size() == 1, "The post-battle shop stocks one remaining spell blueprint")
 		if offers.is_empty():
 			return
 		expect(run.buy_spell("hero", offers[0]).ok, "The spell can be bought from the current shop stock")
+		deck.append(offers[0])
 		if i < 2:
 			expect(run.refresh_shop("hero").ok, "Refreshing shop stock offers another locked spell")
-	expect(run.save_card_deck(deck).ok and run.load_game().ok and run.card_deck() == deck
-		and mobility.all(func(id): return id in run.data.spell_collection),
+	expect(run.card_deck() == deck and run.save_game().ok and run.load_game().ok and run.card_deck() == deck
+		and mobility.all(func(id): return id in deck and id in run.data.spell_collection),
 		"Both purchased movement spells remain unlocked and in the saved deck after reloading")
 
 

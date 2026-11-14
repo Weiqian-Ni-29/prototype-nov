@@ -658,7 +658,7 @@ func _reward_entries(items: Array) -> Array[Dictionary]:
 				entry.story = card.story
 			"spell":
 				var card: Dictionary = Cards.ACTIONS[id]
-				entry.merge({"title": card.name, "category": "法术牌谱", "effect": card.trait + " 购买后永久解锁到本次远征的卡牌收藏。"})
+				entry.merge({"title": card.name, "category": "法术牌谱", "effect": card.trait + "\n购买后自动加入卡组。"})
 				entry.element = card.get("element", "")
 				entry.icon = card.icon
 			"companion":
@@ -740,6 +740,8 @@ func _shop_offers(trader_id: String, buying: bool) -> Array[Dictionary]:
 				entry.base = Gear.price(instance)
 				entry.owned = 0 if buying else 1
 				entry.title = Gear.DATA[instance.definition_id].name
+				if buying:
+					entry.effect += "\n购买后自动加入卡组。"
 				var grade: String = Gear.QUALITY_NAMES[Gear.QUALITIES.find(instance.quality)]
 				entry.grade = "%s +%d" % [grade, int(instance.enhance_level)]
 			"companion":

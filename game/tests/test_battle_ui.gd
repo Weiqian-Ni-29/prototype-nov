@@ -597,7 +597,8 @@ func check_companion_growth() -> void:
 	expect(not run.recruit_companion("lorne").ok and run.data.lamp_coins == 5, "Recruitment requires the full price")
 	run.data.lamp_coins = 6
 	expect(run.recruit_companion("lorne").ok and run.data.lamp_coins == 0 and "lorne" in Cards.collection(run.data.actors)
-		and not run.recruit_companion("lorne").ok, "Recruitment charges once and unlocks the companion card")
+		and not run.recruit_companion("lorne").ok and run.card_deck().count("lorne") == 1,
+		"Recruitment charges once and appends the companion card")
 	expect(not run.breakthrough_companion("lorne", 0).ok, "Breakthrough requires funds")
 	run.data.lamp_coins = 44
 	var normal_path: String = run.save_path
@@ -618,7 +619,6 @@ func check_companion_growth() -> void:
 	expect(saved.load_game(normal_path).ok and saved.actor("lorne").breakthrough == 3,
 		"Paid recruitment and breakthroughs survive loading")
 	var deck: Array = saved.card_deck()
-	deck[1] = "lorne"
 	saved.data.tiles[cell].enemies = ["boar"]
 	saved.close_battle_shop()
 	saved.data.erase("pending_victory")
