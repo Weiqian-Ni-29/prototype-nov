@@ -3,11 +3,11 @@ extends RefCounted
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const STARTING_COINS = 8
-const PRICES = {"salve": 6, "ether": 7, "trail_food": 3, "trail_blade": 12, "padded_coat": 15, "lamp_charm": 18}
+const PRICES = {"trail_food": 3, "trail_blade": 12, "padded_coat": 15, "lamp_charm": 18}
 const GEAR = ["trail_blade", "padded_coat", "lamp_charm"]
 const RETIRED_KINDS = ["choice", "haunt"]
 const LABELS = {
-	"story": "地点", "trade": "交易", "supply": "补给",
+	"story": "地点", "supply": "补给",
 	"cache": "寻宝", "battle": "遭遇", "elite": "险地",
 }
 static var events: Dictionary = {}
@@ -67,7 +67,7 @@ static func _kind(tile: Dictionary, has_relic: bool, defeated: bool, roll: int) 
 	if not tile.resource.is_empty():
 		return "supply"
 	if roll < 7:
-		return "trade"
+		return "story" if tile.site == "boss" else "battle"
 	if roll < 19:
 		return "rest"
 	if roll < 27:
@@ -79,11 +79,11 @@ static func _kind(tile: Dictionary, has_relic: bool, defeated: bool, roll: int) 
 static func _local_kind(roll: int) -> String:
 	return "choice" if roll % 2 == 0 else "rest"
 
-static func _set_local_reward(node: Dictionary, biome: String, roller: RandomNumberGenerator) -> void:
+static func _set_local_reward(node: Dictionary, roller: RandomNumberGenerator) -> void:
 	if node.kind == "choice":
 		node.coins = roller.randi_range(3, 5)
 	else:
-		node.item = "ether" if biome in ["swamp", "ruins", "desert"] else "salve"
+		node.item = "trail_food"
 
 static func replace_legacy_clues(nodes: Dictionary, tiles: Dictionary, seed_value: int) -> void:
 	_load_events()
@@ -96,7 +96,7 @@ static func replace_legacy_clues(nodes: Dictionary, tiles: Dictionary, seed_valu
 		var kind = _local_kind(roller.randi_range(0, 99))
 		var candidates: Array = pools[kind + ":" + biome]
 		var node = {"kind": kind, "event": candidates[roller.randi_range(0, candidates.size() - 1)], "result": ""}
-		_set_local_reward(node, biome, roller)
+		_set_local_reward(node, roller)
 		nodes[cell] = node
 
 static func generate(tiles: Dictionary, seed_value: int, relic_sites: Dictionary, rewards: Dictionary, relic_checks: Dictionary) -> Dictionary:
@@ -106,9 +106,11 @@ static func generate(tiles: Dictionary, seed_value: int, relic_sites: Dictionary
 	var cells = tiles.keys()
 	cells.sort()
 	var roller = RandomNumberGenerator.new()
+	var start := ""
 	var nearby_haunts: Array = []
 	for cell in cells:
 		if tiles[cell].site == "start":
+			start = cell
 			nearby_haunts = Hex.neighbors(cell, tiles).filter(func(next): return Hex.is_land(tiles, next) and tiles[next].site.is_empty())
 			nearby_haunts.sort_custom(func(a, b): return hash("clue:%s:%s" % [seed_value, a]) < hash("clue:%s:%s" % [seed_value, b]))
 			nearby_haunts = nearby_haunts.slice(0, 3)
@@ -141,19 +143,18 @@ static func generate(tiles: Dictionary, seed_value: int, relic_sites: Dictionary
 			var least_used = candidates.filter(func(id): return int(use_counts.get(id, 0)) == fewest)
 			node.event = least_used[roller.randi_range(0, least_used.size() - 1)]
 			use_counts[node.event] = int(fewest) + 1
-		if kind == "trade":
-			var stock := shop_supplies(biome, roller)
-			stock[GEAR[roller.randi_range(0, GEAR.size() - 1)]] = 1
-			node.stock = stock
-		elif kind in ["rest", "choice"]:
-			_set_local_reward(node, biome, roller)
+		if kind in ["rest", "choice"]:
+			_set_local_reward(node, roller)
 		elif kind == "cache":
-			var items = GEAR + ["salve", "ether"]
+			var items = GEAR + ["trail_food", "trail_food"]
 			node.item = items[roller.randi_range(0, items.size() - 1)]
 			if relic_checks.has("site:" + cell):
 				node.result = "search"
 		elif kind in ["battle", "elite"]:
 			node.coins = battle_coins(seed_value, cell, kind == "elite")
+			if kind == "battle" and tile.enemies.is_empty() and not defeated:
+				var near_start := not start.is_empty() and Hex.distance(Hex.coord(cell), Hex.coord(start)) <= 2
+				_place_enemy(tile, roller, false, near_start, false, false)
 	return nodes
 
 static func replace_retired_nodes(data: Dictionary) -> void:
@@ -189,7 +190,7 @@ static func merge_supplies(data: Dictionary) -> void:
 			node.gear_definition = Gear.roll_definition(tile.base_terrain, roller)
 			node.gear_quality = Gear.roll_quality(roller)
 		elif roll < 35:
-			node.item = ["salve", "ether", "trail_food"][roller.randi_range(0, 2)]
+			node.item = "trail_food"
 		data.nodes[cell] = node
 		tile.resource = ""
 		tile.quantity = 0
@@ -225,6 +226,10 @@ static func _replace_with_battle(data: Dictionary, cell: String, roller: RandomN
 	var event: String = candidates[roller.randi_range(0, candidates.size() - 1)]
 	data.nodes[cell] = {"kind": kind, "event": event, "result": "cleared" if cleared else "",
 		"coins": battle_coins(int(data.seed), cell, elite)}
+	_place_enemy(tile, roller, elite, opening, cleared, data.get("visited", {}).has(cell))
+
+static func _place_enemy(tile: Dictionary, roller: RandomNumberGenerator, elite: bool, opening: bool, cleared: bool, visited: bool) -> void:
+	var biome: String = tile.base_terrain
 	tile.resource = ""
 	tile.quantity = 0
 	tile.hidden = false
@@ -234,51 +239,56 @@ static func _replace_with_battle(data: Dictionary, cell: String, roller: RandomN
 		tile.enemies = ["furnace_elite" if biome in ["mountain", "ruins", "desert"] else "hunter_elite"]
 	else:
 		tile.enemies = ["boar"] if opening else Hex._composition(biome, roller, true)
-	tile.discovered_enemy = not cleared and data.get("visited", {}).has(cell)
+	tile.discovered_enemy = not cleared and visited
 
-static func place_opening_shop(data: Dictionary, relic_sites: Dictionary) -> void:
+static func replace_shop_nodes(data: Dictionary) -> void:
+	_load_events()
+	var roller := RandomNumberGenerator.new()
+	for cell in data.nodes:
+		var node: Dictionary = data.nodes[cell]
+		if node.kind != "trade":
+			continue
+		if cell == data.boss:
+			data.nodes[cell] = {"kind": "story", "event": "", "result": ""}
+			continue
+		roller.seed = hash("shop-to-battle:%s:%s" % [data.seed, cell])
+		var opening := Hex.distance(Hex.coord(cell), Hex.coord(data.start)) <= 2
+		_replace_with_battle(data, cell, roller, false, opening, data.rewards.has(cell + ":"))
+	for uid in data.gear_instances.keys():
+		if data.gear_instances[uid].owner.kind == "shop":
+			data.gear_instances.erase(uid)
+
+static func place_opening_battles(data: Dictionary, relic_sites: Dictionary) -> void:
 	var start: String = data.start
 	var tiles: Dictionary = data.tiles
 	var neighbors := Hex.neighbors(start, tiles)
 	var roller := RandomNumberGenerator.new()
-	roller.seed = hash("opening-shop:%s" % data.seed)
+	roller.seed = hash("opening-battles:%s" % data.seed)
 	var candidates: Array = []
 	var best := -10
 	for battle in neighbors:
 		if not Hex.is_land(tiles, battle) or not tiles[battle].npc.is_empty():
 			continue
-		for shop in Hex.neighbors(battle, tiles):
-			if Hex.distance(Hex.coord(start), Hex.coord(shop)) != 2 or not Hex.is_land(tiles, shop):
+		for next in Hex.neighbors(battle, tiles):
+			if Hex.distance(Hex.coord(start), Hex.coord(next)) != 2 or not Hex.is_land(tiles, next):
 				continue
-			var tile: Dictionary = tiles[shop]
+			var tile: Dictionary = tiles[next]
 			if tile.site.is_empty() and tile.npc.is_empty():
 				var priority := 4 * int(tile.enemies.is_empty()) + 2 * int(data.nodes[battle].kind == "battle")
-				priority += int(data.nodes[shop].kind == "trade")
-				if relic_sites.has(battle) or relic_sites.has(shop):
+				if relic_sites.has(battle) or relic_sites.has(next):
 					priority -= 8
 				if priority > best:
 					candidates.clear()
 					best = priority
 				if priority == best:
-					candidates.append([battle, shop])
+					candidates.append([battle, next])
 	if candidates.is_empty():
 		return
 	var pair: Array = candidates[roller.randi_range(0, candidates.size() - 1)]
 	_replace_with_battle(data, pair[0], roller, false, true, false)
 	data.nodes[pair[0]].intro_duel = true
-	var shop: String = pair[1]
-	var biome: String = tiles[shop].base_terrain
-	var events: Array = pools["trade:" + biome]
-	tiles[shop].resource = ""
-	tiles[shop].quantity = 0
-	tiles[shop].enemies = []
-	tiles[shop].hidden = false
-	tiles[shop].discovered_enemy = false
-	data.nodes[shop] = {"kind": "trade", "event": events[roller.randi_range(0, events.size() - 1)],
-		"result": "", "stock": shop_supplies(biome, roller), "starter_shop": true}
+	_replace_with_battle(data, pair[1], roller, false, true, false)
+	data.nodes[pair[1]].intro_duel = true
 
-static func shop_supplies(biome: String, roller: RandomNumberGenerator) -> Dictionary:
-	var stock := {"salve": 1, "ether": 1, "trail_food": 1}
-	var local_supply := "ether" if biome in ["swamp", "ruins", "desert"] else "salve"
-	stock[local_supply] += roller.randi_range(0, 1)
-	return stock
+static func shop_supplies(roller: RandomNumberGenerator) -> Dictionary:
+	return {"trail_food": roller.randi_range(1, 2)}

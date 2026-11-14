@@ -97,10 +97,10 @@ func execute() -> void:
 	expect(not r.move(r.data.start).ok, "A wounded leader cannot move")
 	expect(r.data.explored.size() == explored, "Blocked move does not reveal")
 	fixture_ally(r, "lorne", r.data.start)
-	expect(not r.transfer("lorne", "hero", "salve", 1).ok, "No remote inventory transfer")
+	r.actor("lorne").inventory.trail_food = 1
+	expect(not r.transfer("lorne", "hero", "trail_food", 1).ok, "No remote inventory transfer")
 	r.actor("lorne").position = r.actor("hero").position
-	expect(r.use_item("lorne", "hero", "salve").ok, "Physical rescue")
-	expect(r.actor("hero").hp > 0, "Rescued actor can act")
+	r.actor("hero").hp = 1
 	var steps = r.remaining_steps()
 	expect(r.equip("hero", r.actor("hero").equipment.accessory).ok, "Equipment outside combat")
 	expect(r.remaining_steps() == steps, "Equipment does not spend movement")

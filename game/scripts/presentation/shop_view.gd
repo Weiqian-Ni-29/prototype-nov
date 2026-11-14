@@ -3,6 +3,7 @@ extends VBoxContainer
 signal trade_requested
 signal refresh_requested
 signal return_requested
+signal loot_requested
 
 const InventoryPage = preload("res://scripts/presentation/inventory_page.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
@@ -56,7 +57,7 @@ func setup(expedition: RefCounted, actor_id: String, stock: Dictionary, width: f
 	var heading := VBoxContainer.new()
 	heading.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(heading)
-	_label(heading, run.location_name(actor.position), 29, GOLD)
+	_label(heading, "战后商店", 29, GOLD)
 	_label(heading, "交易者 · " + actor.name, 15, MUTED)
 	var wallet := PanelContainer.new()
 	wallet.add_theme_stylebox_override("panel", _style(Color("1d322d"), Color("887b58"), 8))
@@ -84,7 +85,7 @@ func setup(expedition: RefCounted, actor_id: String, stock: Dictionary, width: f
 	refresh.name = "RefreshShop"
 	refresh.disabled = int(run.data.lamp_coins) < cost
 	refresh.tooltip_text = ("还差 %d 灯铢。\n" % (cost - int(run.data.lamp_coins)) if refresh.disabled else "") \
-		+ "补充补给并更换装备和遗器。每次刷新后，这家店的下次刷新费用增加 1 灯铢。"
+		+ "补充补给并更换装备和遗器。本场商店每次刷新后，下次刷新费用增加 1 灯铢。"
 	add_child(HSeparator.new())
 
 	var body := HBoxContainer.new()
@@ -121,7 +122,8 @@ func setup(expedition: RefCounted, actor_id: String, stock: Dictionary, width: f
 	var footer := HBoxContainer.new()
 	footer.add_theme_constant_override("separation", 12)
 	add_child(footer)
-	_button(footer, "返回地图", func(): return_requested.emit())
+	_button(footer, "查看结局" if run.data.status == "won" else "返回地图", func(): return_requested.emit())
+	_button(footer, "查看战利品", func(): loot_requested.emit())
 	if not feedback.is_empty():
 		_label(footer, feedback, 15, GOLD, true).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_render_catalog(resume.get("id", ""))

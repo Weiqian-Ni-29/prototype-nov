@@ -78,6 +78,8 @@ func check_victory_receipt(save_path: String) -> void:
 	await process_frame
 	game.run.save_path = save_path
 	game._continue_run()
+	expect(game.modal_layer.find_child("ShopView", true, false) != null, "Reload opens the post-battle shop")
+	game._victory_dialog()
 	var result = game.modal_layer.get_node_or_null("VictoryScreen")
 	expect(result != null and not game.modal_layer.has_node("StoryScreen"), "Battle loot opens the settlement")
 	if result != null:
@@ -91,10 +93,7 @@ func check_victory_receipt(save_path: String) -> void:
 					break
 			expect(rows.details.find_children("*", "Label", true, false).any(
 				func(label): return label.text == Relics.DATA[relic].story), "The earned relic story is readable before leaving")
-		for button in result.find_children("*", "Button", true, false):
-			if button.text == "继续远征":
-				button.pressed.emit()
-				break
+		game._leave_battle_shop()
 		expect(game.run.relic_intro().is_empty(), "Acknowledging victory clears the earned relic introduction")
 	game.queue_free()
 

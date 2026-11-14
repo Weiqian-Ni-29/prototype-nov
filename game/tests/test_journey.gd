@@ -68,7 +68,11 @@ func fight(r: RefCounted) -> bool:
 	commander.armor = 100
 	for turn in range(40):
 		if not battle.outcome.is_empty():
-			return battle.outcome == "victory"
+			if battle.outcome != "victory":
+				return false
+			r.close_battle_shop()
+			r.data.erase("pending_victory")
+			return true
 		if battle.reveal_pending:
 			battle.awaken_death_power()
 		if battle.turn == Chess.ENEMY:
@@ -94,4 +98,4 @@ func fight(r: RefCounted) -> bool:
 					break
 			if battle.can_act():
 				battle.pass_turn()
-	return battle.outcome == "victory"
+	return false

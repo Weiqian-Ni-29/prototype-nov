@@ -76,14 +76,14 @@ func check_rules() -> void:
 	battle.board[battle.board.find(battle.commanders[Chess.ENEMY])] = {}
 	battle.board[1] = battle.commanders[Chess.ENEMY]
 	var spot: String = battle.position
-	var before: int = battle.run.actor("hero").inventory.salve
+	var before: Dictionary = battle.run.actor("hero").inventory.duplicate()
 	expect(battle.move(4, 1) and battle.outcome == "victory" and battle.run.data.pending_battle.is_empty()
 		and battle.run.data.tiles[spot].enemies.is_empty(), "Capturing the enemy commander settles the actual encounter")
-	expect(battle.run.actor("hero").inventory.salve == before + 1 and battle.run.data.has("pending_victory")
+	expect(battle.run.actor("hero").inventory == before and battle.run.data.has("pending_victory")
 		and battle.run.data.peace.has(spot) and battle.run.data.pending_victory.coins >= 4,
 		"Victory awards loot and creates a saved receipt")
 	battle._finish("victory")
-	expect(battle.run.actor("hero").inventory.salve == before + 1, "Settlement cannot grant twice")
+	expect(battle.run.actor("hero").inventory == before, "Settlement cannot grant twice")
 
 func check_fatigue() -> void:
 	var battle = fixture()
@@ -185,9 +185,11 @@ func check_companion_growth() -> void:
 	run.new_run(41, "wayfarer")
 	expect(not "lorne" in Cards.collection(run.data.actors) and Cards.valid_deck(run.card_deck(), run.data.actors, true, run.data),
 		"The solo starter deck is complete and named cards require recruitment")
-	expect(not run.recruit_companion("lorne").ok and run.data.lamp_coins == 8, "Recruitment requires a shop with that companion")
-	var cell: String = run.data.nodes.keys().filter(func(pos): return run.node_at(pos).get("starter_shop", false))[0]
-	run.retreat_party(cell)
+	expect(not run.recruit_companion("lorne").ok and run.data.lamp_coins == 8, "Recruitment requires a post-battle shop")
+	var cell: String = run.data.start
+	run.data.battles = 1
+	run.data.pending_victory = {"enemies": 1, "members": ["hero"], "revived": [], "relic": ""}
+	run.open_battle_shop()
 	run.data.tiles[cell].enemies = ["boar"]
 	expect(not run.recruit_companion("lorne").ok, "Enemies block recruitment")
 	run.data.tiles[cell].enemies.clear()
@@ -218,6 +220,8 @@ func check_companion_growth() -> void:
 	var deck: Array = saved.card_deck()
 	deck[1] = "lorne"
 	saved.data.tiles[cell].enemies = ["boar"]
+	saved.close_battle_shop()
+	saved.data.erase("pending_victory")
 	var battle := Chess.new()
 	expect(battle.begin(saved, {"position": cell, "origin": cell, "npc": "", "ambush": false}, deck).ok,
 		"Recruited cards enter a real battle")

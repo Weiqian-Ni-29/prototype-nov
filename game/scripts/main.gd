@@ -382,10 +382,10 @@ func _continue_run() -> void:
 	_refresh()
 	if not run.data.pending_battle.is_empty():
 		_show_encounter_intro()
-	elif run.data.has("pending_victory"):
-		_victory_dialog()
 	elif run.data.has("pending_story_rewards"):
 		_show_pending_story_rewards()
+	elif run.data.has("pending_victory"):
+		_shop_dialog()
 	elif run.data.status == "exploring":
 		_show_arrival()
 
@@ -523,8 +523,6 @@ func _node_interaction(cell: String) -> String:
 	if tile.site.is_empty() or (tile.site == "boss" and not run.boss_known()):
 		if node.get("result", "").is_empty():
 			match node.get("kind"):
-				"trade":
-					return "trade"
 				"supply":
 					return "collect"
 				"cache":
@@ -536,10 +534,6 @@ func _node_interaction(cell: String) -> String:
 	return ""
 
 func _enter_node(cell: String, interaction: String) -> void:
-	if interaction == "trade":
-		run.save_game()
-		_shop_dialog()
-		return
 	var result: Dictionary
 	match interaction:
 		"collect", "search":
@@ -599,7 +593,7 @@ func _show_pending_story_rewards() -> void:
 		_button(footer, "查看卡组", _deck_dialog.bind(false, _show_pending_story_rewards)).custom_minimum_size = Vector2(144, 44)
 	var save_error := _text(box, "", 15, gold)
 	save_error.hide()
-	var confirm := _button(footer, "返回地图  →", func():
+	var confirm := _button(footer, "返回商店  →" if run.data.has("pending_victory") else "返回地图  →", func():
 		var introductions: Array = run.data.relic_intros
 		_remove_reward_intros(receipt.items)
 		run.data.erase("pending_story_rewards")
@@ -612,7 +606,10 @@ func _show_pending_story_rewards() -> void:
 			return
 		_close_modal()
 		_refresh()
-		_show_day_transition())
+		if run.data.has("pending_victory"):
+			_shop_dialog()
+		else:
+			_show_day_transition())
 	confirm.custom_minimum_size = Vector2(144, 44)
 	confirm.add_theme_stylebox_override("normal", _style(Color("dbc18a"), gold, 6))
 	confirm.add_theme_stylebox_override("hover", _style(Color("f0d69d"), gold, 6))
@@ -696,7 +693,8 @@ func _shop_dialog(feedback: String = "", resume: Dictionary = {}) -> void:
 	shop.refresh_requested.connect(func():
 		if shop.is_inside_tree() and shop.buying and not shop.refresh.disabled:
 			_shop_action(restock, shop.selection()))
-	shop.return_requested.connect(_close_modal)
+	shop.return_requested.connect(_leave_battle_shop)
+	shop.loot_requested.connect(_victory_dialog)
 
 func _shop_action(action: Callable, resume: Dictionary) -> void:
 	sound.play("click")
@@ -706,12 +704,11 @@ func _shop_action(action: Callable, resume: Dictionary) -> void:
 		_show_pending_story_rewards()
 		return
 	var message: String = result.get("message", toast_text)
-	if not result.ok or not _show_relic_intro(_shop_dialog.bind(message, resume)):
-		_shop_dialog(message, resume)
+	_shop_dialog(message, resume)
 
 func _shop_offers(trader_id: String, buying: bool) -> Array[Dictionary]:
 	var trader: Dictionary = run.actor(trader_id)
-	var node: Dictionary = run.node_at(trader.position)
+	var node: Dictionary = run.shop_at(trader.position)
 	var items: Array[Dictionary] = []
 	var supplies: Dictionary = node.stock if buying else trader.inventory
 	for id in supplies:
@@ -1277,7 +1274,9 @@ func _finish_battle() -> void:
 	selected_cell = run.actor(selected_id).position
 	if victory:
 		sound.play("victory")
-		_victory_dialog()
+		selected_id = "hero"
+		_refresh()
+		_shop_dialog()
 		return
 	_close_modal()
 	_refresh()
@@ -1286,6 +1285,32 @@ func _finish_battle() -> void:
 	else:
 		_show_relic_intro()
 
+func _victory_items(result: Dictionary) -> Array[Dictionary]:
+	var items: Array[Dictionary] = []
+	if not result.relic.is_empty():
+		items.append({"kind": "relic", "id": result.relic, "count": 1,
+			"status": "再次获得遗器" if result.get("relic_duplicate", false) else "发现遗器"})
+	if result.get("coins", 0) > 0:
+		items.append({"kind": "coins", "id": "lamp_coin", "count": result.coins})
+	return items
+
+func _leave_battle_shop() -> void:
+	var previous: Dictionary = run.data.duplicate(true)
+	_remove_reward_intros(_victory_items(run.data.pending_victory))
+	run.close_battle_shop()
+	run.data.erase("pending_victory")
+	var saved: Dictionary = run.save_game()
+	if not saved.ok:
+		run.data = previous
+		_shop_dialog(saved.message)
+		return
+	_close_modal()
+	_refresh()
+	if run.data.status == "won":
+		_ending_story()
+	else:
+		_show_arrival()
+
 func _victory_dialog() -> void:
 	var result: Dictionary = run.data.pending_victory
 	var box = _modal("战斗胜利", 730, 590)
@@ -1293,14 +1318,7 @@ func _victory_dialog() -> void:
 	ui.hide()
 	var content = _scroll_content(box)
 	_text(content, "击倒主战者 · " + str(result.opponent) if result.has("opponent") else "已击败 %d 名敌人" % int(result.enemies), 19, muted)
-	var items: Array[Dictionary] = []
-	if not result.salve_receiver.is_empty():
-		items.append({"kind": "item", "id": "salve", "count": 1})
-	if not result.relic.is_empty():
-		items.append({"kind": "relic", "id": result.relic, "count": 1,
-			"status": "再次获得遗器" if result.get("relic_duplicate", false) else "发现遗器"})
-	if result.get("coins", 0) > 0:
-		items.append({"kind": "coins", "id": "lamp_coin", "count": result.coins})
+	var items := _victory_items(result)
 	if items.is_empty():
 		_text(content, "这场没有战利品。", 17, muted)
 	else:
@@ -1308,34 +1326,13 @@ func _victory_dialog() -> void:
 		rewards.custom_minimum_size.y = 305
 		content.add_child(rewards)
 		rewards.setup(_reward_entries(items))
-		if not result.salve_receiver.is_empty():
-			_text(content, "疗伤药已放入%s的背包。" % run.actor(result.salve_receiver).name, 15, muted)
 	content.add_child(HSeparator.new())
 	_text(content, "参战队员", 20, gold)
 	for id in result.members:
 		var actor = run.actor(id)
 		var recovered = " · 倒下后已恢复至 1 HP" if id in result.revived else ""
 		_text(content, "%s · HP %d/%d%s" % [actor.name, actor.hp, actor.hp_max, recovered], 16)
-	var save_error = _text(box, "", 15, gold)
-	save_error.hide()
-	var next = _button(box, "继续远征", func():
-		var introductions: Array = run.data.relic_intros
-		_remove_reward_intros(items)
-		run.data.erase("pending_victory")
-		var saved = run.save_game()
-		if not saved.ok:
-			run.data.pending_victory = result
-			run.data.relic_intros = introductions
-			save_error.text = saved.message
-			save_error.show()
-			return
-		_close_modal()
-		_refresh()
-		if run.data.status == "won":
-			_ending_story()
-		else:
-			_show_arrival())
-	next.grab_focus()
+	_button(box, "返回商店", _shop_dialog).grab_focus()
 
 func _process(delta: float) -> void:
 	if combat == null or modal_layer.get_child_count() > 0:
@@ -1404,7 +1401,7 @@ func _resume_final_battle() -> void:
 
 func _talk(id: String) -> void:
 	if not run.actor(id).get("joined", false):
-		_notice("可在商店招募伙伴。")
+		_notice("可在战后商店招募伙伴。")
 		return
 	var intro = narrative.encounter_intro(selected_id, id)
 	if not intro.ok:
@@ -1416,7 +1413,7 @@ func _talk(id: String) -> void:
 
 func _begin_dialogue(id: String) -> void:
 	if not run.actor(id).get("joined", false):
-		_notice("可在商店招募伙伴。")
+		_notice("可在战后商店招募伙伴。")
 		return
 	dialogue_subject = id
 	_render_dialogue()
@@ -1951,7 +1948,7 @@ func _to_menu() -> void:
 		_show_opening(Screen.MENU)
 
 func _guide() -> void:
-	_notice("点相邻格预览，再点一次确认。伙伴跟随旅人一起移动，每走五格自动进入第二天。\n\n抵达商店会打开货架，抵达补给或寻宝地点会显示获得的物品。可点击脚下的商店重新查看货架。灯铢由全队共享。\n\n在「卡组」里选满 12 张牌。对战开局抽 3 张，之后每回合抽 1 张，只能走子、部署或用牌一次。攻击先扣护甲，击倒才占格。击倒对方主战者获胜。")
+	_notice("点相邻格预览，再点一次确认。伙伴跟随旅人一起移动，每走五格自动进入第二天。\n\n战斗胜利后会直接打开商店。抵达补给或寻宝地点会显示获得的物品。灯铢由全队共享。\n\n在「卡组」里选满 12 张牌。对战开局抽 3 张，之后每回合抽 1 张，只能走子、部署或用牌一次。攻击先扣护甲，击倒才占格。击倒对方主战者获胜。")
 
 func _settings_dialog() -> void:
 	var box = _modal("设置与操作", 650, 430)
