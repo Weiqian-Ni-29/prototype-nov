@@ -654,7 +654,10 @@ func check_ui() -> void:
 	editor.search.text = "冰针"
 	editor.search.text_changed.emit(editor.search.text)
 	await process_frame
-	await click(editor.find_child("Collection_ice_spell", true, false))
+	var ice_tile := editor.find_child("Collection_ice_spell", true, false) as Button
+	expect(ice_tile != null and "\n\n减速\n" + Cards.SLOW_DESCRIPTION in ice_tile.tooltip_text,
+		"The collection card tooltip defines Slow")
+	await click(ice_tile)
 	await click(editor.find_child("AddDeckCard", true, false))
 	await click(editor.find_child("AddDeckCard", true, false))
 	var capped := editor.find_child("AddDeckCard", true, false) as Button
@@ -1106,6 +1109,15 @@ func check_hover_details() -> void:
 		"Partner card popup identifies Ivy as ranged and explains retaliation immunity")
 	view._unhover_card(0)
 	expect(not view.hover_detail.visible, "Leaving the hand card closes the popup")
+	game.combat.hands[Chess.PLAYER] = ["ice_spell"]
+	view.render()
+	await process_frame
+	await process_frame
+	await move_mouse(view.hand_buttons[0].get_global_rect().get_center())
+	text = _detail_text(view)
+	expect(view.hover_detail.visible and "冰针" in text and "\n减速\n" + Cards.SLOW_DESCRIPTION in text,
+		"Hovering Ice Needle explains the Slow keyword in the card popup")
+	expect(root.get_visible_rect().encloses(view.hover_detail.get_global_rect()), "Ice Needle tooltip fits the viewport")
 	game.queue_free()
 	await process_frame
 

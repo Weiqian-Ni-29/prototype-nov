@@ -1136,6 +1136,9 @@ func _fill_card_detail(card: Dictionary) -> void:
 	var talent := _split_talent(card.trait)
 	_section("技能说明")
 	UI.label(hover_detail_body, talent.rules, 13, UI.INK, true)
+	if card.get("slow", false):
+		_section("减速")
+		UI.label(hover_detail_body, Cards.SLOW_DESCRIPTION, 13, UI.MUTED, true)
 	if not talent.talent.is_empty():
 		_section("角色天赋")
 		UI.label(hover_detail_body, talent.talent, 13, UI.GREEN, true)

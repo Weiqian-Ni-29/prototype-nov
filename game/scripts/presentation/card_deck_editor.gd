@@ -186,6 +186,8 @@ func _add_tile(id: String) -> void:
 	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	button.accessibility_name = card.name
 	button.tooltip_text = card.trait
+	if card.get("slow", false):
+		button.tooltip_text += "\n\n减速\n" + Cards.SLOW_DESCRIPTION
 	var tint: Color = {"partner": Color("294639"), "weapon": Color("494033"), "equipment": Color("494033"), "defense": Color("344b50"), "spell": Color("3a4659")}[card.kind]
 	button.add_theme_stylebox_override("normal", UI.box(tint, UI.GOLD if id == selected else Color("687f70")))
 	button.add_theme_stylebox_override("hover", UI.box(tint.lightened(0.09), UI.GOLD))
