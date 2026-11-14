@@ -312,10 +312,17 @@ func check_ui() -> void:
 		var grid := view.find_child("ChessGrid", true, false) as GridContainer
 		expect(grid != null and grid.columns == Chess.COLS and grid.get_child_count() == view.cells.size(),
 			"The chess grid contains only the twelve squares")
+		var grid_rect := grid.get_global_rect()
+		var view_rect: Rect2 = view.get_global_rect()
+		expect(is_equal_approx(grid_rect.position.x - view_rect.position.x, 24.0)
+			and is_equal_approx(view_rect.end.x - grid_rect.end.x, 24.0),
+			"The board fills the width between the panel margins")
+		var board_labels: Array[Node] = view.find_children("*", "Label", true, false)
+		expect(not board_labels.any(func(label): return label.text in ["左路", "中路", "右路", "敌方\n后排", "敌方\n前排",
+			"己方\n前排", "己方\n后排", "共鸣遗器", "战斗记录"]), "Board headings and the sidebar are absent")
 		var menu := button_named(view, "主菜单")
 		var retreat_rect: Rect2 = view.retreat.get_global_rect()
 		var menu_rect := menu.get_global_rect() if menu != null else Rect2()
-		var view_rect: Rect2 = view.get_global_rect()
 		var menu_top_right := Vector2(menu_rect.end.x, menu_rect.position.y)
 		var view_top_right := Vector2(view_rect.end.x, view_rect.position.y)
 		expect(menu != null and menu_top_right.distance_to(view_top_right) <= 22
@@ -339,20 +346,19 @@ func check_ui() -> void:
 		await click(view.find_child("ChessSquare7", true, false))
 		expect(game.combat.turn == Chess.ENEMY and view.cells[7].disabled, "Actual mouse move locks out extra actions")
 		game.combat.piles[Chess.PLAYER][0] = "ward"
-		var previous_log: String = view.log_text.text
 		game.battle_timer = 0.0
 		await process_frame
 		await process_frame
 		expect(game.combat.turn == Chess.ENEMY and game.combat.enemy_action_resolved
-			and "敌方回合" in view.phase.text and view.log_text.text != previous_log,
-			"The battle log updates with the enemy action before the player gets another turn")
+			and view.turn_banner_text.text == "敌方回合" and not game.combat.last_enemy_action.is_empty(),
+			"The enemy resolves its action before the player gets another turn")
 		game.battle_timer = 0.0
 		await process_frame
 		await process_frame
 		expect(game.combat.round_number == 2 and view.hand_buttons.size() == 4, "Enemy responds once and the next card animates into the hand")
 		await create_timer(0.5).timeout
 		await click(view.hand_buttons[-1])
-		expect(view.selected_card == 3 and (not view._legal().is_empty() or view.find_child("CastChessSpell", true, false) != null),
+		expect(view.selected_card == 3 and (not view._legal().is_empty() or view.cast_button.visible),
 			"Clicking the drawn card raises it and offers legal targets or a spell confirmation")
 		await click(menu)
 		await click(button_named(game.modal_layer, "确认"))
@@ -404,6 +410,23 @@ func check_board_badges() -> void:
 	view.render()
 	expect(right.get_node("Health").get_child(0).text == str(battle.board[11].hp)
 		and right.get_node("Armor").get_child(0).text == "0", "Re-rendering shows the latest health and armor")
+	battle.hands[Chess.PLAYER] = ["rain"]
+	view.render()
+	await click(view.hand_buttons[0])
+	expect(view.cast_button.visible and view.cast_button.text == "打出唤雨", "Selecting a weather card offers confirmation above the board")
+	await click(view.cast_button)
+	expect(battle.weather == "rain" and not view.cast_button.visible, "Confirming plays the weather card")
+	battle.turn = Chess.PLAYER
+	battle.board[10].move = 0
+	battle.board[10].diagonal = false
+	battle.board[10].range = 0
+	battle.board[11].move = 0
+	battle.board[11].diagonal = false
+	battle.board[11].range = 0
+	view.render()
+	expect(view.wait_button.visible, "A blocked player can pass from above the board")
+	await click(view.wait_button)
+	expect(battle.turn == Chess.ENEMY and not view.wait_button.visible, "Passing hands the turn to the enemy")
 	view.queue_free()
 	await process_frame
 
@@ -439,11 +462,13 @@ func check_hover_details() -> void:
 	expect(view.hover_detail.visible and view.hover_detail.size.y > 90, "Hovering the commander opens a sized detail popup")
 	expect("移动 · " in text and "攻击 · " in text, "Commander popup lists movement and attack")
 	expect(root.get_visible_rect().encloses(view.hover_detail.get_global_rect()), "The popup stays inside the viewport")
+	game.combat.revealed_enemy = ["rain"]
 	view._hover_tile(1)
 	await process_frame
 	await process_frame
 	text = _detail_text(view)
-	expect("敌方主战者" in text, "Enemy commander popup marks its side")
+	expect("敌方主战者" in text and "已知敌方手牌" in text and "唤雨" in text,
+		"Enemy commander popup shows its side and known enemy cards")
 	view._unhover_tile(1)
 	view._hover_tile(7)
 	await process_frame
