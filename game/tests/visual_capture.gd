@@ -605,7 +605,11 @@ func execute() -> void:
 	await capture("story-village-decision")
 	await advance_until_text("一路平安")
 	await capture("story-village-farewell")
-	await click_story_button("历史对话")
+	var history_button = game.modal_layer.find_child("StoryHistoryButton", true, false) as Button
+	expect(history_button != null and history_button.icon != null and history_button.text.is_empty(),
+		"History is presented as an icon in the rendered header")
+	if history_button != null:
+		await click_at(history_button.get_global_rect().get_center())
 	expect(game.modal_layer.has_node("StoryHistory/HistoryPanel"), "Story history opens over the village illustration")
 	await capture("story-dialogue-history")
 	await click_story_button("关闭")

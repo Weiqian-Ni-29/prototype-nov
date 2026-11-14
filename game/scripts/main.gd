@@ -26,6 +26,9 @@ const Sound = preload("res://scripts/presentation/sound.gd")
 enum Screen { MENU, OPENING_STORY, EXPEDITION }
 const OBJECTIVE_ICON = preload("res://assets/ui/expedition-objective.svg")
 const LAMP_COIN_ICON = preload("res://assets/ui/lamp-coin.svg")
+const STORY_HISTORY_ICON = preload("res://assets/ui/story-history.svg")
+const STORY_MAIN_MENU_ICON = preload("res://assets/ui/story-main-menu.svg")
+const STORY_SKIP_ICON = preload("res://assets/ui/story-skip.svg")
 const CREW_PANEL_WIDTH = 230
 const STORY_TERRAIN = {
 	"plains": "road", "forest": "woodland", "mountain": "highland", "ruins": "ruins",
@@ -300,7 +303,7 @@ func _opening_world_page(terrain: String, pages: Array[Dictionary], index: int) 
 				_opening_world_page(terrain, pages, index + 1)
 			else:
 				_village_page(terrain, 0),
-		{"返回主菜单": _cancel_opening})
+		{"返回主菜单": _cancel_opening}, Color.WHITE, 0, {}, Callable(), _village_page.bind(terrain, 0))
 
 func _cancel_opening() -> void:
 	_close_modal()
@@ -323,7 +326,7 @@ func _village_page(terrain: String, index: int) -> void:
 				_village_page(terrain, index + 1)
 			else:
 				_start_new(),
-		{"返回主菜单": _cancel_opening})
+		{"返回主菜单": _cancel_opening}, Color.WHITE, 0, {}, Callable(), _start_new)
 
 func _seed_value() -> int:
 	if chosen_seed.is_empty():
@@ -1489,12 +1492,15 @@ func _final_battle_page(index: int) -> void:
 	var portraits = [] if index < 2 else [_story_portrait("hero", "battle"), _story_portrait("war_god", "surprise" if river_revealed else "anger")]
 	_show_story("记忆回来了", page[0], page[1], scene, portraits, [],
 		func(_option: String):
-			if index + 1 < pages.size():
+			if not river_revealed:
 				_final_battle_page(index + 1)
 			else:
-				combat.awaken_death_power()
-				_close_modal()
-				_refresh(), {})
+				_resume_final_battle(), {}, Color.WHITE, 0, {}, Callable(), _resume_final_battle)
+
+func _resume_final_battle() -> void:
+	combat.awaken_death_power()
+	_close_modal()
+	_refresh()
 
 func _talk(id: String) -> void:
 	if not run.actor(id).get("joined", false):
@@ -1594,7 +1600,8 @@ func _story_balanced_end(text: String, sentence_ends: PackedInt32Array, label: L
 
 func _show_story(title: String, speaker: String, body: String, scene: String,
 		portraits: Array, options: Array, on_choice: Callable, actions: Dictionary, tint: Color = Color.WHITE,
-		page_index: int = 0, history_entry: Dictionary = {}, on_last_page: Callable = Callable()) -> void:
+		page_index: int = 0, history_entry: Dictionary = {}, on_last_page: Callable = Callable(),
+		on_skip: Callable = Callable()) -> void:
 	day_transition.dismiss()
 	_clear_map_move()
 	move_preview.hide()
@@ -1707,13 +1714,27 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	counter.autowrap_mode = TextServer.AUTOWRAP_OFF
 	counter.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	header.add_spacer(false).mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_button(header, "历史对话", _show_story_history.bind(overlay))
+	_story_icon_button(header, STORY_HISTORY_ICON, "历史对话", _show_story_history.bind(overlay)).name = "StoryHistoryButton"
 	for label in actions:
+		if label == "返回主菜单":
+			_story_icon_button(header, STORY_MAIN_MENU_ICON, label, actions[label]).name = "StoryMainMenu"
+			continue
 		var button = _button(header, label, actions[label])
 		if label in ["结束交谈", "返回角色图鉴"]:
 			button.name = "StoryCancel"
 	var turn_page = func(index: int):
-		_show_story(title, speaker, body, scene, portraits, options, on_choice, actions, tint, index, history_entry, on_last_page)
+		_show_story(title, speaker, body, scene, portraits, options, on_choice, actions, tint, index, history_entry, on_last_page, on_skip)
+	var has_more_pages = page_index < pages.size() - 1
+	if has_more_pages or options.is_empty():
+		var skip = on_skip
+		if not skip.is_valid():
+			skip = turn_page.bind(pages.size() - 1)
+			if options.is_empty():
+				skip = func():
+					if has_more_pages and on_last_page.is_valid():
+						on_last_page.call()
+					on_choice.call("")
+		_story_icon_button(header, STORY_SKIP_ICON, "跳过当前剧情", skip).name = "StorySkip"
 	var navigation = HBoxContainer.new()
 	navigation.name = "StoryNavigation"
 	navigation.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -1723,9 +1744,9 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	_story_region(navigation, 0.64, 0.90, 0.95, 0.955)
 	if page_index > 0:
 		_button(navigation, "上一页", turn_page.bind(page_index - 1))
-	if page_index < pages.size() - 1 or options.is_empty():
+	if has_more_pages or options.is_empty():
 		var advance = func():
-			if page_index < pages.size() - 1:
+			if has_more_pages:
 				turn_page.call(page_index + 1)
 			else:
 				on_choice.call("")
@@ -1765,6 +1786,17 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 			first_enabled = button
 	if first_enabled != null:
 		first_enabled.grab_focus()
+
+func _story_icon_button(header: HBoxContainer, icon: Texture2D, label: String, callback: Callable) -> Button:
+	var button = _button(header, "", callback)
+	button.icon = icon
+	button.expand_icon = true
+	button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	button.add_theme_constant_override("icon_max_width", 24)
+	button.custom_minimum_size.x = 48
+	button.tooltip_text = label
+	button.accessibility_name = label
+	return button
 
 func _speak_story_reply(title: String, scene: String, portraits: Array, line: String, choose: Callable, tint: Color) -> void:
 	_show_story(title, run.actor(selected_id).name, line, scene, portraits, [],
