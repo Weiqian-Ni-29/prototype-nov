@@ -490,7 +490,7 @@ func execute() -> void:
 	hero.hp = 1
 	var attack := b.attack_power(enemy)
 	b.awaken_death_power()
-	expect(b.river and b.weather == "river" and r.actor("hero").name == "伊文洛"
+	expect(b.river and r.actor("hero").name == "伊文洛"
 		and hero.hp == hero.hp_max, "Remembering restores Ivenlo and summons the river")
 	expect(b.attack_power(enemy) < attack and not b.retreat(), "The river strips Kadran's strength and prevents retreat")
 	b.hands[Chess.PLAYER] = ["ember_spell"]

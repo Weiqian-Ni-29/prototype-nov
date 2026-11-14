@@ -39,14 +39,14 @@ func equip_set(run, actor: String, set_id: String, pieces: int = 3) -> void:
 		expect(run.equip(actor, uid).ok, "Equip fixture piece " + set_id + "_" + slot)
 
 func check_catalogs() -> void:
-	expect(Gear.DATA.size() == 39 and Gear.SETS.size() == 12 and Relics.DATA.size() == 100, "Complete catalog sizes")
+	expect(Gear.DATA.size() == 39 and Gear.SETS.size() == 12 and Relics.DATA.size() == 81, "Complete catalog sizes")
 	var counts = {"P": 0, "C": 0, "L": 0}
 	for id in Relics.DATA:
 		var definition = Relics.DATA[id]
 		counts[definition.type] += 1
 		expect(not definition.effect.is_empty() and not definition.story.is_empty() and (definition.params.has("limit") or not Relics.is_active(id)),
 			"Relic has effect parameters and player text: " + id)
-	expect(counts == {"P": 80, "C": 19, "L": 1}, "Relic categories")
+	expect(counts == {"P": 62, "C": 18, "L": 1}, "Relic categories")
 	for id in Gear.SETS:
 		for slot in Gear.SLOTS:
 			var item = Gear.DATA[id + "_" + slot]
@@ -159,14 +159,14 @@ func check_bulk_trade() -> void:
 func check_relics() -> void:
 	var run = fixture()
 	var hero: Dictionary = run.actor("hero")
-	var first: Array = ["telescope", "uphill_kneepad", "ranged_sight", "lamp_badge", "herbal_case", "rainstone"]
+	var first: Array = ["telescope", "uphill_kneepad", "ranged_sight", "lamp_badge", "herbal_case", "rime_thimble"]
 	for id in first:
 		run.grant_relic(id, "hero", hero.position)
 	run.grant_relic("opening_flint", "hero", hero.position)
 	run.grant_relic("telescope", "hero", hero.position)
 	expect(run.data.relic_attunement == first and run.data.relic_inventory.telescope == 2,
 		"Only six distinct passives auto-attune")
-	expect(not run.attune_relic("hero", "opening_flint").ok and run.attune_relic("hero", "rainstone").ok
+	expect(not run.attune_relic("hero", "opening_flint").ok and run.attune_relic("hero", "rime_thimble").ok
 		and run.attune_relic("hero", "opening_flint").ok, "Full slots require deliberate replacement")
 	var shop = open_shop(run)
 	hero.position = shop
