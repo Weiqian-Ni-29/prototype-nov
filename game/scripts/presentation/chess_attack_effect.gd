@@ -21,6 +21,7 @@ var attacker: Panel
 var defender: Panel
 var particles: Node2D
 var losses: HBoxContainer
+var retaliation_losses: HBoxContainer
 var ranged: bool
 var arrow: bool
 var contact_time: float
@@ -30,6 +31,7 @@ var contacted := false
 var direction: Vector2
 var muzzle: Vector2
 var strike_point: Vector2
+var retaliation_point: Vector2
 
 func play(event: Dictionary, source: Control, target: Control, face: Callable) -> void:
 	attack = event
@@ -39,7 +41,7 @@ func play(event: Dictionary, source: Control, target: Control, face: Callable) -
 	ranged = attack.attacker.get("attack_delivery", "melee") == "ranged"
 	arrow = ranged and attack.attacker.get("attack_projectile") == "arrow"
 	contact_time = 0.235 + 0.035 * float(attack.distance - 1) if ranged else MELEE_CONTACT
-	duration = contact_time + (0.54 if attack.lethal else 0.475)
+	duration = contact_time + (0.54 if attack.lethal or attack.retaliation.lethal else 0.475)
 	name = "ChessAttackEffect"
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	z_index = 10
@@ -49,12 +51,8 @@ func play(event: Dictionary, source: Control, target: Control, face: Callable) -
 	particles = Node2D.new()
 	particles.draw.connect(_draw_particles)
 	add_child(particles)
-	losses = HBoxContainer.new()
-	losses.name = "DamageNumbers"
-	losses.add_theme_constant_override("separation", 5)
-	losses.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	losses.hide()
-	add_child(losses)
+	losses = _loss_row("DamageNumbers")
+	retaliation_losses = _loss_row("RetaliationNumbers")
 	_animate(0.0)
 
 	var tween := create_tween()
@@ -79,26 +77,40 @@ func _plate(node_name: String, unit: Dictionary) -> Panel:
 
 func _on_contact() -> void:
 	contacted = true
-	var unit: Dictionary = attack.defender.duplicate()
-	unit.hp = attack.hp
-	unit.armor = attack.armor
-	UI.clear(defender)
-	build_face.call(defender, unit, "")
-	if attack.armor_loss > 0:
-		_add_loss("护甲 −%d" % attack.armor_loss, CYAN)
-	if attack.hp_loss > 0:
-		_add_loss("生命 −%d" % attack.hp_loss, Color("ff9c88"))
-	if losses.get_child_count() == 0:
-		_add_loss("未造成伤害", Color("e0e1d2"))
-	losses.show()
-	impact.emit("chess_block" if attack.hp_loss == 0 else "chess_shot" if ranged else "chess_strike")
+	_show_hit(defender, attack.defender, attack, losses)
+	_show_hit(attacker, attack.attacker, attack.retaliation, retaliation_losses)
+	var lost_health: bool = attack.hp_loss > 0 or attack.retaliation.hp_loss > 0
+	impact.emit("chess_block" if not lost_health else "chess_shot" if ranged else "chess_strike")
 	_animate(contact_time)
 
-func _add_loss(value: String, color: Color) -> void:
+func _loss_row(node_name: String) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.name = node_name
+	row.add_theme_constant_override("separation", 5)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.hide()
+	add_child(row)
+	return row
+
+func _show_hit(plate: Panel, before: Dictionary, hit: Dictionary, row: HBoxContainer) -> void:
+	var unit := before.duplicate()
+	unit.hp = hit.hp
+	unit.armor = hit.armor
+	UI.clear(plate)
+	build_face.call(plate, unit, "")
+	if hit.armor_loss > 0:
+		_add_loss(row, "护甲 −%d" % hit.armor_loss, CYAN)
+	if hit.hp_loss > 0:
+		_add_loss(row, "生命 −%d" % hit.hp_loss, Color("ff9c88"))
+	if row.get_child_count() == 0:
+		_add_loss(row, "未造成伤害", Color("e0e1d2"))
+	row.show()
+
+func _add_loss(row: HBoxContainer, value: String, color: Color) -> void:
 	var pill := PanelContainer.new()
 	pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pill.add_theme_stylebox_override("panel", UI.box(Color("252925"), color, 5, 5))
-	losses.add_child(pill)
+	row.add_child(pill)
 	var label := UI.label(pill, value, 18, color)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
@@ -120,12 +132,14 @@ func _animate(time: float) -> void:
 	var collision := start + direction * maxf(0.0, start.distance_to(end) - source_edge - target_edge + 12.0)
 	muzzle = start + direction * source_edge * 0.32
 	strike_point = end - direction * (target_edge - (18.0 if ranged else 5.0))
+	retaliation_point = start + direction * (source_edge - 8.0)
 
 	var attacker_pos := start
 	var defender_pos := end
 	var tilt := 0.0
 	var attacker_scale := 1.0
 	var defender_scale := 1.0
+	var attacker_alpha := 1.0
 	var defender_alpha := 1.0
 	var tilt_sign := -1.0 if direction.x < -0.1 or (absf(direction.x) <= 0.1 and direction.y < 0.0) else 1.0
 	if not contacted:
@@ -154,19 +168,28 @@ func _animate(time: float) -> void:
 		if attack.lethal:
 			defender_alpha = 1.0 - _progress(age, hold, 0.19)
 			defender_scale -= 0.09 * (1.0 - defender_alpha)
+		if attack.retaliation.lethal:
+			attacker_alpha = 1.0 - _progress(age, hold, 0.19)
+			attacker_scale -= 0.09 * (1.0 - attacker_alpha)
+		elif attack.lethal:
 			var occupy := _ease_out(_progress(age, 0.19, 0.415))
 			attacker_pos = (start if ranged else collision).lerp(end, occupy)
 			tilt = 0.028 * tilt_sign * (1.0 - occupy) if not ranged else 0.0
-		var float_size := losses.get_combined_minimum_size()
-		var float_x := target.position.x + target.size.x * 0.70 - float_size.x / 2.0
-		losses.position = Vector2(clampf(float_x, 4.0, maxf(4.0, size.x - float_size.x - 4.0)),
-			maxf(5.0, target.position.y + 20.0 - 43.0 * _ease_out(_progress(time, contact_time, duration))))
-		losses.modulate.a = 1.0 - _progress(time, duration - 0.12, duration)
+		_float_losses(losses, target, time)
+		_float_losses(retaliation_losses, source, time)
 
 	_pose(attacker, attacker_pos, source.size, attacker_scale, tilt)
 	_pose(defender, defender_pos, target.size, defender_scale)
+	attacker.modulate.a = attacker_alpha
 	defender.modulate.a = defender_alpha
 	particles.queue_redraw()
+
+func _float_losses(row: HBoxContainer, tile: Rect2, time: float) -> void:
+	var float_size := row.get_combined_minimum_size()
+	var float_x := tile.position.x + tile.size.x * 0.70 - float_size.x / 2.0
+	row.position = Vector2(clampf(float_x, 4.0, maxf(4.0, size.x - float_size.x - 4.0)),
+		maxf(5.0, tile.position.y + 20.0 - 43.0 * _ease_out(_progress(time, contact_time, duration))))
+	row.modulate.a = 1.0 - _progress(time, duration - 0.12, duration)
 
 func _pose(plate: Control, center: Vector2, plate_size: Vector2, zoom: float, tilt: float = 0.0) -> void:
 	plate.size = plate_size
@@ -179,7 +202,10 @@ func _draw_particles() -> void:
 	if direction.is_zero_approx():
 		return
 	if contacted:
-		_draw_burst(elapsed - contact_time)
+		var age := elapsed - contact_time
+		_draw_burst(strike_point, age, ranged, attack.hp_loss == 0)
+		if attack.retaliation.hp_loss > 0 or attack.retaliation.armor_loss > 0:
+			_draw_burst(retaliation_point, age, false, attack.retaliation.hp_loss == 0)
 	elif ranged:
 		_draw_projectile()
 	elif elapsed >= WINDUP:
@@ -210,20 +236,20 @@ func _draw_projectile() -> void:
 		particles.draw_circle(head, 9.0, Color(CYAN, 0.3), true, -1.0, true)
 		particles.draw_circle(head, 4.0, WHITE, true, -1.0, true)
 
-func _draw_burst(age: float) -> void:
+func _draw_burst(point: Vector2, age: float, projectile: bool, blocked: bool) -> void:
 	var fade := 1.0 - _progress(age, 0.0, 0.25)
 	if fade <= 0.0:
 		return
-	var tint := CYAN if ranged or attack.hp_loss == 0 else GOLD
-	var radius := (29.0 if ranged else 43.0) * _ease_out(1.0 - fade)
-	particles.draw_circle(strike_point, 21.0 + radius * 0.55, Color(tint, fade * 0.12), true, -1.0, true)
-	particles.draw_circle(strike_point, 11.0 + radius * 0.46, Color(tint, fade * 0.28), true, -1.0, true)
-	particles.draw_circle(strike_point, 4.0 + fade * 6.0, Color(WHITE, fade * fade), true, -1.0, true)
-	particles.draw_arc(strike_point, 7.0 + radius, 0.0, TAU, 32, Color(tint, fade * 0.7), 2.0 + fade * 2.0, true)
-	for i in (8 if ranged else 12):
+	var tint := CYAN if projectile or blocked else GOLD
+	var radius := (29.0 if projectile else 43.0) * _ease_out(1.0 - fade)
+	particles.draw_circle(point, 21.0 + radius * 0.55, Color(tint, fade * 0.12), true, -1.0, true)
+	particles.draw_circle(point, 11.0 + radius * 0.46, Color(tint, fade * 0.28), true, -1.0, true)
+	particles.draw_circle(point, 4.0 + fade * 6.0, Color(WHITE, fade * fade), true, -1.0, true)
+	particles.draw_arc(point, 7.0 + radius, 0.0, TAU, 32, Color(tint, fade * 0.7), 2.0 + fade * 2.0, true)
+	for i in (8 if projectile else 12):
 		var ray := direction.rotated(float(i) * 2.39996)
-		var length := (19.0 if ranged else 28.0) + float(i % 3) * 8.0
-		var near := strike_point + ray * radius * (0.38 + float(i % 4) * 0.13)
+		var length := (19.0 if projectile else 28.0) + float(i % 3) * 8.0
+		var near := point + ray * radius * (0.38 + float(i % 4) * 0.13)
 		var far := near + ray * length * (0.45 + 1.0 - fade)
 		particles.draw_line(near, far, Color(tint, fade * 0.84), 2.0 + fade * 2.0, true)
 		particles.draw_line(near, near.lerp(far, 0.56), Color(WHITE, fade), 1.5, true)

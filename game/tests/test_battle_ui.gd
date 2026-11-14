@@ -144,17 +144,20 @@ func check_rules() -> void:
 	expect(hit.from == 7 and hit.target == 4 and hit.defender.hp == 6 and hit.defender.armor == 1
 		and hit.hp == 2 and hit.armor == 0 and hit.hp_loss == 4 and hit.armor_loss == 1
 		and not hit.lethal and battle.take_attack().is_empty(), "Attack presentation receives pre-hit cards and actual losses once")
+	expect(hit.retaliation.armor_loss == 1 and hit.retaliation.hp_loss == 2 and battle.board[7].hp == 6,
+		"The defender's attack damages the initiator in the same exchange, armor first")
 	battle._start_turn(Chess.PLAYER)
 	expect(battle.move(7, 4) and battle.board[7].is_empty() and battle.board[4].name == "铅翼",
 		"Only the lethal attack captures the square")
 	hit = battle.take_attack()
-	expect(hit.lethal and hit.hp_loss == 2 and hit.hp == 0, "Overkill displays only the health the defender lost")
+	expect(hit.lethal and hit.hp_loss == 2 and hit.hp == 0 and hit.retaliation.hp_loss == 3
+		and battle.board[4].hp == 3, "A defeated unit still returns its full damage before the survivor occupies its square")
 	battle.board[4].hp = 3
 	battle.hands[Chess.PLAYER] = ["eve"]
 	expect(battle.play(0, 7) and battle.board[4].hp == 6, "Ivy heals the adjacent wounded ally on deployment")
 	battle.hands[Chess.PLAYER] = ["ward"]
 	battle.mana[Chess.PLAYER] = 2
-	expect(battle.play(0, 7) and battle.board[7].armor == 2 and battle.board[4].armor == 3 and battle.board[10].armor == 3,
+	expect(battle.play(0, 7) and battle.board[7].armor == 2 and battle.board[4].armor == 2 and battle.board[10].armor == 3,
 		"Column defense applies to every friendly piece in the column")
 	battle.hands[Chess.PLAYER] = ["pike"]
 	battle.mana[Chess.PLAYER] = 2
@@ -183,6 +186,46 @@ func check_rules() -> void:
 		"Victory awards loot and creates a saved receipt")
 	battle._finish("victory")
 	expect(battle.run.actor("hero").inventory == before, "Settlement cannot grant twice")
+
+func check_retaliation() -> void:
+	var battle = fixture()
+	var attacker: Dictionary = battle._piece(Cards.definition("support_archer"), Chess.PLAYER)
+	var defender: Dictionary = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
+	battle.board[7] = attacker
+	battle.board[1] = defender
+	battle.board[0] = battle.commanders[Chess.ENEMY]
+	attacker.hp = 2
+	defender.hp = 2
+	defender.armor = 0
+	expect(not battle.moves(1).has(7) and battle.move(7, 1), "A ranged attack can reach a melee defender")
+	var hit: Dictionary = battle.take_attack()
+	expect(hit.lethal and hit.retaliation.lethal and battle.board[7].is_empty() and battle.board[1].is_empty(),
+		"The lethal counter hits regardless of reach and leaves both squares empty when both pieces fall")
+	expect(battle.ally_losses == 1 and battle.enemy_losses == 1 and not battle.can_move_piece(),
+		"Both deaths are recorded and the exchange spends only the initiating team's board action")
+
+	battle = fixture()
+	battle.board[4] = battle.board[1]
+	battle.board[1] = {}
+	battle.board[7] = battle.board[10]
+	battle.board[10] = {}
+	battle.commanders[Chess.PLAYER].hp = 1
+	battle.commanders[Chess.PLAYER].armor = 0
+	battle.commanders[Chess.ENEMY].hp = 1
+	battle.commanders[Chess.ENEMY].armor = 0
+	expect(battle.move(7, 4) and battle.commanders[Chess.ENEMY].hp == 0 and battle.outcome == "defeat",
+		"Losing the traveler ends the expedition even when the exchange also defeats the rival commander")
+
+	battle = fixture()
+	battle.board[4] = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
+	battle.board[4].hp = 1
+	battle.board[4].armor = 0
+	battle.hands[Chess.PLAYER] = ["ember_spell"]
+	var hp_before: int = battle.board[10].hp
+	var armor_before: int = battle.board[10].armor
+	expect(battle.play(0, 4) and battle.board[4].is_empty() and battle.board[10].hp == hp_before
+		and battle.board[10].armor == armor_before and battle.take_attack().is_empty(),
+		"A targeted damage spell resolves without retaliation")
 
 func check_attack_feedback() -> void:
 	var battle = fixture("archer")
@@ -221,6 +264,10 @@ func check_attack_feedback() -> void:
 			and effect.defender.get_node("Armor").get_child(0).text == str(battle.board[7].armor)
 			and view.cells[7].get_global_rect() == target_rect,
 			"An armor-only projectile leaves the attacker and grid in place and updates only armor")
+		expect(effect.retaliation_losses.visible and effect.retaliation_losses.get_child_count() == 2
+			and effect.retaliation_losses.get_child(1).get_child(0).text.begins_with("生命")
+			and effect.attacker.get_node("Health").get_child(0).text == str(enemy.hp),
+			"The counter damage appears on the attacking archer on the same frame")
 		await effect.finished
 	expect(not view.is_attack_playing() and not view.menu.disabled, "The attack overlay releases its input lock")
 
@@ -836,6 +883,7 @@ func execute() -> void:
 	check_mana()
 	check_enemy_turn_budget()
 	check_rules()
+	check_retaliation()
 	check_fatigue()
 	check_enemy_strategy()
 	check_companion_growth()
