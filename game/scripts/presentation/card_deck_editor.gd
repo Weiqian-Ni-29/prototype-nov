@@ -19,7 +19,6 @@ var grid: GridContainer
 var detail: VBoxContainer
 var slots: VBoxContainer
 var total: Label
-var meter: ProgressBar
 var done: Button
 var guidance: Label
 var error: Label
@@ -99,11 +98,6 @@ func setup(actors: Dictionary, current: Array, encounter: bool, width: float, op
 	UI.label(deck_title, "远征卡组", 21, UI.GOLD).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	total = UI.label(deck_title, "", 17, UI.GOLD)
 	total.name = "DeckCount"
-	meter = ProgressBar.new()
-	meter.max_value = Cards.DECK_SIZE
-	meter.show_percentage = false
-	meter.custom_minimum_size.y = 5
-	right.add_child(meter)
 	_loadout(right, {"portrait": "hero"}, "旅人", "主战者 · 开局站场")
 	if run_model != null and run_model.data.relic_effect_flags.has("life_seed_applied"):
 		_loadout(right, {"icon": "life_seed"}, "生命之种", "己方战棋生命上限 +1")
@@ -254,16 +248,15 @@ func _render_selection() -> void:
 					_render_deck()
 				show_error(result.message))
 			upgrade.disabled = int(quote.price) > int(run_model.data.lamp_coins)
-	var full := deck.size() >= Cards.DECK_SIZE
 	var capped := deck.count(selected) >= Cards.limit(selected)
-	var add := UI.button(row, "已达同名上限" if capped else "牌组已满" if full else "＋ 加入牌组", _add_card.bind(selected))
+	var add := UI.button(row, "已达同名上限" if capped else "＋ 加入牌组", _add_card.bind(selected))
 	add.name = "AddDeckCard"
 	add.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	add.disabled = full or capped
+	add.disabled = capped
 	UI.accent(add)
 
 func _add_card(id: String) -> void:
-	if deck.size() >= Cards.DECK_SIZE or deck.count(id) >= Cards.limit(id):
+	if deck.count(id) >= Cards.limit(id):
 		return
 	deck.append(id)
 	_filter()
@@ -284,10 +277,10 @@ func _remove_card(id: String) -> void:
 		remove.grab_focus()
 
 func _render_deck() -> void:
-	total.text = "%d / %d 张" % [deck.size(), Cards.DECK_SIZE]
-	meter.value = deck.size()
-	var missing := Cards.DECK_SIZE - deck.size()
-	guidance.text = "再加入 %d 张即可出战。" % missing if missing > 0 else "牌组就绪。"
+	total.text = "%d 张" % deck.size()
+	var missing := Cards.MIN_DECK_SIZE - deck.size()
+	guidance.visible = missing > 0
+	guidance.text = "再加入 %d 张即可出战。" % missing
 	done.disabled = in_encounter and missing > 0
 	UI.clear(slots)
 	for id in available:
