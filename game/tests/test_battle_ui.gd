@@ -19,15 +19,45 @@ func expect(value: bool, message: String) -> void:
 		failures += 1
 		printerr("FAIL: ", message)
 
-func fixture(enemy: String = "boar") -> RefCounted:
+func fixture(enemy: String = "boar", ambush: bool = false) -> RefCounted:
 	var run := Run.new()
 	run.save_path = "user://test-card-chess-domain.json"
 	run.new_run(41, "wayfarer")
 	var cell: String = run.actor("hero").position
 	run.data.tiles[cell].enemies = [enemy]
 	var battle := Chess.new()
-	expect(battle.begin(run, {"position": cell, "origin": cell, "npc": "", "ambush": false}, run.card_deck()).ok, "Battle fixture starts")
+	expect(battle.begin(run, {"position": cell, "origin": cell, "npc": "", "ambush": ambush}, run.card_deck()).ok, "Battle fixture starts")
 	return battle
+
+func check_mana() -> void:
+	var battle = fixture()
+	expect(battle.mana == [1, 1] and battle.mana_capacity == [1, 1], "Each side opens with one full crystal")
+	battle.hands[Chess.PLAYER] = ["brace", "pike"]
+	battle.hands[Chess.ENEMY] = ["ward"]
+	expect(battle.card_targets(Chess.PLAYER, 1).is_empty() and not battle.play(1, 10)
+		and battle.mana[Chess.PLAYER] == 1 and battle.hands[Chess.PLAYER].size() == 2,
+		"An unaffordable play does not spend mana or the card")
+	expect(not battle.play(0, 1) and battle.mana[Chess.PLAYER] == 1, "An illegal target does not spend mana")
+	expect(battle.play(0, 10) and battle.mana[Chess.PLAYER] == 0 and battle.turn == Chess.ENEMY,
+		"A valid play spends its cost and remains the one action for the turn")
+	battle.enemy_turn()
+	expect(battle.mana[Chess.PLAYER] == 2 and battle.mana_capacity[Chess.PLAYER] == 2
+		and battle.hands[Chess.ENEMY] == ["ward"] and battle.mana[Chess.ENEMY] == 1,
+		"Turn two refills the player and the enemy cannot play an unaffordable card on its first turn")
+	expect(battle.move(10, 7) and battle.mana[Chess.PLAYER] == 2, "Movement does not cost mana")
+	battle.enemy_turn()
+	expect(battle.mana[Chess.PLAYER] == 3 and battle.mana_capacity[Chess.ENEMY] == 2,
+		"Each side gains capacity at the start of its own turn")
+	expect(battle.play(0, 7) and battle.mana[Chess.PLAYER] == 1, "A two-cost card spends two of three crystals")
+	battle.mana_capacity[Chess.PLAYER] = Chess.MANA_LIMIT
+	battle._start_player_turn()
+	expect(battle.mana[Chess.PLAYER] == 10 and battle.mana_capacity[Chess.PLAYER] == 10,
+		"At the cap, spent crystals still refill")
+	var ambushed = fixture("boar", true)
+	ambushed.hands[Chess.ENEMY] = []
+	ambushed.enemy_turn()
+	expect(ambushed.turn == Chess.PLAYER and ambushed.round_number == 1 and ambushed.mana[Chess.PLAYER] == 1,
+		"The player's first turn starts at one even when the enemy goes first")
 
 func check_rules() -> void:
 	var battle = fixture()
@@ -41,6 +71,8 @@ func check_rules() -> void:
 		"Both teams draw exactly three opening cards")
 	expect(battle.moves(10).keys() == [6, 7, 8, 9, 11], "Commander can move one square horizontally, vertically or diagonally")
 	battle.hands[Chess.PLAYER] = ["highdrake"]
+	battle.mana_capacity[Chess.PLAYER] = 2
+	battle.mana[Chess.PLAYER] = 2
 	expect(not battle.play(0, 4) and not battle.play(0, 10) and battle.can_act(), "Cannot deploy onto enemy ground or an occupied square")
 	expect(battle.play(0, 7) and battle.board[7].hp == 8 and battle.turn == Chess.ENEMY,
 		"Partner deployment consumes the turn and uses the relic's life bonus")
@@ -71,10 +103,12 @@ func check_rules() -> void:
 	expect(battle.play(0, 7) and battle.board[4].hp == 6, "Ivy heals the adjacent wounded ally on deployment")
 	battle.turn = Chess.PLAYER
 	battle.hands[Chess.PLAYER] = ["ward"]
+	battle.mana[Chess.PLAYER] = 2
 	expect(battle.play(0, 7) and battle.board[7].armor == 2 and battle.board[4].armor == 3 and battle.board[10].armor == 3,
 		"Column defense applies to every friendly piece in the column")
 	battle.turn = Chess.PLAYER
 	battle.hands[Chess.PLAYER] = ["pike"]
+	battle.mana[Chess.PLAYER] = 2
 	expect(battle.play(0, 10) and battle.attack_power(battle.board[10]) == 5, "Weapon raises the attack of the chosen piece")
 	var wayfarer_gear := Gear.card({"definition_id": "grave_wayfarer_weapon", "enhance_level": 0, "quality": Gear.QUALITIES[0]})
 	var armor_before: int = battle.board[10].armor
@@ -83,6 +117,7 @@ func check_rules() -> void:
 		"Wayfarer gear preserves its affinity guard on the ice commander")
 	battle.turn = Chess.PLAYER
 	battle.hands[Chess.PLAYER] = ["rain"]
+	battle.mana[Chess.PLAYER] = 1
 	expect(battle.play(0, -1) and battle.weather == "rain" and battle.attack_power(battle.board[7]) == 3,
 		"Weather modifies elemental attacks and costs the same one action")
 	expect(battle.take_attack().is_empty(), "Playing a weather card does not create an attack animation")
@@ -193,6 +228,8 @@ func ranged_threat_fixture(card_id: String) -> RefCounted:
 	battle.weather = "rain"
 	battle.weather_rounds = 1
 	battle.hands[Chess.ENEMY] = [card_id]
+	battle.mana_capacity[Chess.ENEMY] = 2
+	battle.mana[Chess.ENEMY] = 2
 	return battle
 
 func check_enemy_strategy() -> void:
@@ -299,6 +336,8 @@ func check_companion_growth() -> void:
 	battle.board[9] = battle.board[10]
 	battle.board[10] = {}
 	battle.hands[Chess.PLAYER] = ["lorne"]
+	battle.mana_capacity[Chess.PLAYER] = 2
+	battle.mana[Chess.PLAYER] = 2
 	expect(battle.play(0, 10) and battle.board[10].attack == base.attack + 1 and battle.board[10].hp == base.hp + 3
 		and battle.moves(10).get(1) == "attack", "The breakthrough card deploys with its improved stats and three-square range")
 	battle.board[4] = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
@@ -401,9 +440,11 @@ func check_ui() -> void:
 			"The chess grid contains only the twelve squares")
 		var grid_rect := grid.get_global_rect()
 		var view_rect: Rect2 = view.get_global_rect()
+		var rail := view.find_child("ChessMana", true, false) as Control
 		expect(is_equal_approx(grid_rect.position.x - view_rect.position.x, 24.0)
-			and is_equal_approx(view_rect.end.x - grid_rect.end.x, 24.0),
-			"The board fills the width between the panel margins")
+			and rail != null and rail.get_global_rect().position.x > grid_rect.end.x
+			and is_equal_approx(rail.get_global_rect().end.x, view_rect.end.x - 15.0),
+			"The board expands up to its right-side mana column")
 		var board_labels: Array[Node] = view.find_children("*", "Label", true, false)
 		expect(not board_labels.any(func(label): return label.text in ["左路", "中路", "右路", "敌方\n后排", "敌方\n前排",
 			"己方\n前排", "己方\n后排", "共鸣遗器", "战斗记录"]), "Board headings and the sidebar are absent")
@@ -485,6 +526,42 @@ func check_hand_layout() -> void:
 	view._hover_card(0)
 	expect(view.hand_buttons[0].z_index > view.hand_buttons[-1].z_index,
 		"A raised card appears above the entire large hand")
+	view.queue_free()
+	await process_frame
+
+func check_mana_display() -> void:
+	var battle = fixture()
+	battle.hands[Chess.PLAYER] = ["ember_spell", "pike", "temp:mend_spell"]
+	battle.draw_count = 0
+	var view := ChessView.new()
+	root.add_child(view)
+	view.setup(battle, null)
+	await process_frame
+	await process_frame
+	var bottom := view.mana_crystals[0]
+	var bottom_y := bottom.global_position.y
+	var ratio_y := view.mana_ratio.global_position.y
+	expect(view.mana_row.get_child_count() == 1 and view.mana_ratio.text == "1/1"
+		and bottom.get_global_rect().end.y <= ratio_y, "The first turn has one crystal and the ratio below it")
+	var pike := view.hand_buttons[1]
+	var badge := pike.find_child("ManaCost", true, false) as TextureRect
+	expect(badge != null and badge.get_child(0).text == "2"
+		and badge.position.x < pike.size.x * 0.5 and badge.position.y < pike.size.y * 0.5,
+		"Hand cards show their cost in the top left")
+	await click(pike)
+	expect(view.selected_card == -1 and "法力不足" in view.hint.text, "Clicking an unaffordable card explains the shortfall")
+	battle.mana_capacity[Chess.PLAYER] = 3
+	battle.mana[Chess.PLAYER] = 1
+	view.render()
+	await process_frame
+	await process_frame
+	expect(view.mana_row.get_child_count() == 3 and view.mana_ratio.text == "1/3"
+		and is_equal_approx(bottom.global_position.y, bottom_y)
+		and is_equal_approx(view.mana_ratio.global_position.y, ratio_y)
+		and view.mana_crystals[2].global_position.y < view.mana_crystals[1].global_position.y
+		and view.mana_crystals[1].global_position.y < bottom_y
+		and bottom.self_modulate == Color.WHITE and view.mana_crystals[2].self_modulate != Color.WHITE,
+		"Crystals grow upwards from a fixed baseline, with spent crystals dimmed")
 	view.queue_free()
 	await process_frame
 
@@ -672,6 +749,9 @@ func check_hover_details() -> void:
 	text = _detail_text(view)
 	expect(view.hover_detail.visible and "技能说明" in text and "护沿短戟" in text, "Hand card popup shows the card's skill text")
 	expect("攻击 + 1" in text and "直线射程 2 格" in text, "Hand weapon popup summarizes its stats")
+	expect("费用 2 · 法力不足" in text, "Unaffordable cards can still be inspected")
+	game.combat.mana_capacity[Chess.PLAYER] = 2
+	game.combat.mana[Chess.PLAYER] = 2
 	expect(game.combat.play(0, 10), "Pike equips the commander for the equipment check")
 	view.render()
 	await process_frame
@@ -697,6 +777,7 @@ func check_hover_details() -> void:
 	await process_frame
 
 func execute() -> void:
+	check_mana()
 	check_rules()
 	check_fatigue()
 	check_enemy_strategy()
@@ -705,6 +786,7 @@ func execute() -> void:
 	await check_attack_feedback()
 	await check_ui()
 	await check_hand_layout()
+	await check_mana_display()
 	await check_deck_draw()
 	await check_board_badges()
 	await check_hover_details()

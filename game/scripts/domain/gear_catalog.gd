@@ -115,7 +115,8 @@ static func card(instance: Dictionary) -> Dictionary:
 	var level := int(instance.enhance_level)
 	var slot: String = item.slot
 	var theme: String = item.set_id
-	var card_data := {"kind": "equipment", "name": label(instance), "icon": id, "level": level,
+	var cost := 3 if slot == "accessory" else 1 if id == "trail_blade" or id == "padded_coat" else 2
+	var card_data := {"kind": "equipment", "name": label(instance), "icon": id, "level": level, "cost": cost,
 		"slot": slot, "element": "", "story": item.story}
 	var text: Array[String] = []
 	var tiers := floori(level / 2.0)
