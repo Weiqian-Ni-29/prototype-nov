@@ -274,6 +274,7 @@ func _show_item(entry: Dictionary) -> void:
 	_label(title, entry.title, 24, GOLD, true)
 	var count := "库存 %d 件 · 已持有 %d 件" % [entry.count, entry.owned] if buying else "持有 %d 件" % entry.count
 	_label(title, "入队后解锁专属伙伴牌" if entry.kind == "companion" else count, 14, MUTED, true)
+	CardUI.add_element_icon(title, entry.get("element", ""))
 	_label(detail, entry.effect, 16, INK, true)
 	if not entry.story.is_empty():
 		_label(detail, entry.story, 14, MUTED, true)

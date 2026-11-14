@@ -4,6 +4,7 @@ const Catalog = preload("res://scripts/domain/catalog.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const Chess = preload("res://scripts/domain/chess_battle.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
+const UI = preload("res://scripts/presentation/card_ui.gd")
 const SYMBOLS = preload("res://assets/ui/codex-symbols.svg")
 const POSES = {"": "常规", "serious": "严肃", "friendly": "友善", "grief": "悲伤", "anger": "愤怒", "surprise": "惊讶", "battle": "战斗"}
 const FILTERS = ["全部", "已入队", "见过未加入"]
@@ -484,8 +485,8 @@ func _overview(id: String) -> void:
 	elif race == "神":
 		title += "的化身"
 	game._text(details, title + " · " + race, 19, game.gold)
-	var element = str(actor.get("element", "none"))
-	game._text(details, "属性 · " + Catalog.ELEMENT_NAMES.get(element, "无常规属性"), 16)
+	var piece := Chess.commander_definition(game.run) if id == "hero" else Cards.owned_definition(id, game.run.data.actors)
+	UI.add_element_icon(details, piece.get("element", ""))
 	var introduction = "在村庄醒来的旅人，会用重力魔法。" if id == "hero" else "在这次远征中遇见的伙伴。"
 	if id == "hero" and game.narrative.hero_identity_known():
 		introduction = "想起自己姓名和来历的死神，能用重力引渡亡魂。"
@@ -514,7 +515,7 @@ func _equipment(id: String) -> void:
 func _piece(id: String) -> void:
 	var piece := Chess.commander_definition(game.run) if id == "hero" else Cards.owned_definition(id, game.run.data.actors)
 	game._text(details, "主战者 · 开局登场" if id == "hero" else "伙伴 · 部署至己方半场", 18, game.gold)
-	game._text(details, Cards.stats(piece), 16)
+	UI.element_summary(details, piece.element, Cards.stats(piece), 16)
 	game._text(details, piece.trait, 16)
 	if id == "cen":
 		game._text(details, "森林采集时多拿一份。", 16)

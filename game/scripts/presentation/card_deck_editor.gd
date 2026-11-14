@@ -60,11 +60,18 @@ func setup(actors: Dictionary, current: Array, encounter: bool, width: float, op
 	attribute.add_item("全部属性")
 	attribute.set_item_metadata(0, "")
 	for element in Cards.ELEMENTS:
-		if element == "gravity":
-			continue
-		attribute.add_item(Cards.ELEMENTS[element] + "属性")
-		attribute.set_item_metadata(attribute.item_count - 1, element)
-	attribute.item_selected.connect(func(_index): _filter())
+		var index := attribute.item_count
+		attribute.add_icon_item(UI.ELEMENT_ICONS[element], "")
+		attribute.set_item_metadata(index, element)
+		attribute.get_popup().set_item_tooltip(index, Cards.ELEMENTS[element] + "属性")
+	attribute.add_theme_constant_override("icon_max_width", UI.ELEMENT_SIZE)
+	attribute.get_popup().add_theme_constant_override("icon_max_width", UI.ELEMENT_SIZE)
+	attribute.item_selected.connect(func(index):
+		var element: String = attribute.get_item_metadata(index)
+		var description: String = "全部属性" if element.is_empty() else Cards.ELEMENTS[element] + "属性"
+		attribute.tooltip_text = description
+		attribute.accessibility_name = description
+		_filter())
 	controls.add_child(attribute)
 	var filters := HBoxContainer.new()
 	left.add_child(filters)
@@ -231,7 +238,9 @@ func _render_selection() -> void:
 	row.add_child(text)
 	UI.label(text, card.name, 19, UI.GOLD)
 	if card.kind == "partner":
-		UI.label(text, Cards.stats(card), 14, UI.MUTED, true)
+		UI.element_summary(text, card.element, Cards.stats(card))
+	else:
+		UI.add_element_icon(text, card.get("element", ""))
 	UI.label(text, card.trait, 14, UI.INK, true)
 	if card.kind == "equipment" and run_model != null:
 		var uid := selected.trim_prefix("gear:")

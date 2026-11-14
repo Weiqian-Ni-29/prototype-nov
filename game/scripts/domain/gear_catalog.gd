@@ -143,7 +143,7 @@ static func card(instance: Dictionary) -> Dictionary:
 		text.append("装备时回复 %d 点生命" % heal)
 	var elements := {"ember_warden": "fire", "tide_weaver": "water", "rime_path": "ice",
 		"storm_conductor": "lightning", "gale_runner": "wind", "stone_vow": "earth",
-		"dune_keeper": "water", "grove_mender": "water", "grave_wayfarer": "gravity"}
+		"dune_keeper": "water", "grove_mender": "water", "grave_wayfarer": "ice"}
 	card_data.element = elements.get(theme, "")
 	if not card_data.element.is_empty():
 		card_data.affinity_guard = 1

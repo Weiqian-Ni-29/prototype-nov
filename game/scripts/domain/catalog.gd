@@ -14,7 +14,6 @@ const TERRAIN = {
 	"swamp": {"name": "沼泽", "color": "657c72"},
 	"lake": {"name": "湖泊", "color": "397d84"},
 }
-const ELEMENT_NAMES = {"normal": "普通", "fire": "火", "water": "水", "ice": "冰", "lightning": "雷", "wind": "风", "earth": "土"}
 const PROFESSIONS = {
 	"wayfarer": {"name": "巡路客", "description": "善于探索和支援，行动频繁。", "hp": 95, "mp": 48, "attack": 18, "defense": 5, "speed": 122, "skill": "trail_shot", "ultimate": "rally", "color": "caa76d", "attack_delivery": "ranged"},
 	"guardian": {"name": "守灯卫", "description": "高生命与防护，机动较低。", "hp": 145, "mp": 35, "attack": 24, "defense": 10, "speed": 83, "skill": "guard_all", "ultimate": "dawn_strike", "color": "799cba", "attack_delivery": "melee"},

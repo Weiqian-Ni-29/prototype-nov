@@ -47,8 +47,7 @@ const ACTIONS = {
 const UNLOCKABLE_SPELLS = ["ember_spell", "ice_spell", "mend_spell", "fog_spell"]
 const PREP_CARDS = ["bandage_card", "broth_card", "cup_card", "loaf_card"]
 const KINDS = {"all": "全部", "partner": "伙伴", "weapon": "武器", "equipment": "装备", "defense": "防御", "spell": "法术"}
-const ELEMENTS = {"gravity": "重力", "normal": "物理", "earth": "地", "fire": "火", "water": "水",
-	"ice": "冰", "wind": "风", "lightning": "雷"}
+const ELEMENTS = {"earth": "地", "fire": "火", "water": "水", "ice": "冰", "wind": "风", "lightning": "雷"}
 const WEATHER = {
 	"rain": {"name": "降雨", "hint": "水伤 +1 · 火伤 −1", "damage": {"water": 1, "fire": -1}},
 	"sun": {"name": "烈日", "hint": "火伤 +1 · 水伤 −1", "damage": {"fire": 1, "water": -1}},
@@ -76,7 +75,7 @@ static func definition(id: String, rank: int = 0) -> Dictionary:
 	var actor: Dictionary = Catalog.COMPANIONS[id]
 	var ranged: bool = actor.get("attack_delivery") == "ranged"
 	var entry := {"name": actor.name, "kind": "partner", "portrait": id,
-		"element": actor.get("element", "normal"), "attack": maxi(2, roundi(float(actor.attack) / 6.0)),
+		"element": chess_element(actor), "attack": maxi(2, roundi(float(actor.attack) / 6.0)),
 		"hp": maxi(4, roundi(float(actor.hp) / 16.0)), "armor": 0, "move": 1, "range": 2 if ranged else 1,
 		"trait": "横竖走一格，可沿无阻挡的直线攻击两格。" if ranged else "横竖移动或攻击一格。"}
 	entry.merge(PARTNERS.get(id, {}), true)
@@ -157,5 +156,9 @@ static func valid_deck(deck: Variant, actors: Dictionary, require_full: bool = f
 			return false
 	return true
 
+static func chess_element(entry: Dictionary) -> String:
+	var element: String = entry.get("element", "")
+	return element if ELEMENTS.has(element) else ""
+
 static func stats(entry: Dictionary) -> String:
-	return "%s属性 · 攻 %d · 血 %d · 甲 %d" % [ELEMENTS.get(entry.element, "物理"), entry.attack, entry.hp, entry.armor]
+	return "攻 %d · 血 %d · 甲 %d" % [entry.attack, entry.hp, entry.armor]
