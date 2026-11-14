@@ -11,7 +11,7 @@ const RULES = {
 	"rainstone": ["opening_weather", "", "weather", "rain", 1, "选择此开局天气时，前两轮为降雨。"],
 	"life_seed": ["growth", "", "entry", "", 0, "启用后，本次远征所有己方棋子的战棋生命上限 +1。重复启用不叠加。"],
 	"opening_flint": ["attack", "own_front_from", "bonus", 1, 1, "第一次从己方前排发起的普通攻击伤害 +1。"],
-	"patient_knot": ["turn_end", "patient", "leader_armor", 2, 1, "前两手都未普通攻击或施放伤害法术，第二手结束时主战者获得 2 甲。"],
+	"patient_knot": ["action_end", "patient", "leader_armor", 2, 1, "前两次行动均未普攻或施放伤害法术，第二次行动后主战者获得 2 甲。"],
 	"dry_ink_seal": ["spell", "", "bonus", 1, 2, "本场前两张伤害法术各 +1 伤害。"],
 	"untouched_edge": ["equip", "weapon", "edge", 1, 1, "第一次装备武器时，装备者下一次普通攻击伤害 +1。"],
 	"closing_weight": ["attack", "weak_enemy", "bonus", 1, 1, "首次普通攻击生命不超过 2 的敌方伙伴时，伤害 +1。"],
@@ -130,9 +130,9 @@ static func fire(b, event: String, context: Dictionary) -> void:
 				ally.erase("relay")
 				context.unit.armor += 1
 				break
-	elif not b.public_preview and event == "turn_end" and b.prep == "stillwater_stone" and b.player_actions == 1:
+	elif not b.public_preview and event == "turn_end" and b.prep == "stillwater_stone" and b.round_number == 1:
 		b._heal(b.commanders[0], 2, "relic")
-	elif event == "turn_start" and b.prep == "patient_recovery_oil" and b.player_actions < 2:
+	elif event == "turn_start" and b.prep == "patient_recovery_oil" and b.round_number <= 2:
 		b._heal(b.commanders[0], 1, "relic")
 
 static func _condition(b, tag: String, c: Dictionary) -> bool:

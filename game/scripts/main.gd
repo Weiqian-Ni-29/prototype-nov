@@ -1352,7 +1352,7 @@ func _process(delta: float) -> void:
 	elif combat.turn == Chess.ENEMY:
 		combat.enemy_turn(true)
 		chess_view.present_action()
-		battle_timer = 0.15 if chess_view.is_attack_playing() else 0.8 if combat.enemy_action_resolved else 0.25
+		battle_timer = 0.15 if chess_view.is_attack_playing() else 0.45
 
 func _chapter_pages() -> Array:
 	return [
@@ -1953,7 +1953,7 @@ func _to_menu() -> void:
 		_show_opening(Screen.MENU)
 
 func _guide() -> void:
-	_notice("点相邻格预览，再点一次确认。伙伴跟随旅人一起移动，每走五格自动进入第二天。\n\n战斗胜利后会直接打开商店。抵达补给或寻宝地点会显示获得的物品。灯铢由全队共享。\n\n出战至少需要 %d 张牌，卡组总张数无上限。对战开局抽 3 张，之后每回合抽 1 张，只能走子、部署或用牌一次。攻击先扣护甲，击倒才占格。击倒对方主战者获胜。" % Cards.MIN_DECK_SIZE)
+	_notice("点相邻格预览，再点一次确认。伙伴跟随旅人一起移动，每走五格自动进入第二天。\n\n战斗胜利后会直接打开商店。抵达补给或寻宝地点会显示获得的物品。灯铢由全队共享。\n\n出战至少需要 %d 张牌，卡组总张数无上限。对战开局抽 3 张，之后每回合抽 1 张。全队每回合可移动或普攻一次，法力足够时可连续出牌。点「结束回合」交给敌方。攻击先扣护甲，击倒才占格。击倒对方主战者获胜。" % Cards.MIN_DECK_SIZE)
 
 func _settings_dialog() -> void:
 	var box = _modal("设置与操作", 650, 430)

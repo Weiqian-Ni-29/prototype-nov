@@ -45,8 +45,10 @@ func execute() -> void:
 	root.get_texture().get_image().save_png("user://chess-opening.png")
 	chess.cells[10].pressed.emit()
 	chess.cells[7].pressed.emit()
+	expect(b.turn == Chess.PLAYER and not b.can_move_piece(), "Moving leaves the player in control with their board action spent")
+	chess.end_turn_button.pressed.emit()
 	await create_timer(0.65).timeout
-	expect(b.enemy_action_resolved and b.turn == Chess.ENEMY and not b.last_enemy_action.is_empty()
+	expect(b.enemy_turn_started and b.turn == Chess.ENEMY and not b.last_enemy_action.is_empty()
 		and chess.cells[7].disabled, "The enemy acts while player input is locked")
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("user://chess-enemy-turn.png")
@@ -70,13 +72,13 @@ func execute() -> void:
 	b.board[7].hp = 8
 	b.board[7].armor = 1
 	b.hands[Chess.ENEMY] = []
-	b.enemy_drew = true
-	b.turn = Chess.ENEMY
+	b.piles[Chess.ENEMY] = ["mend_spell"]
+	b.end_turn()
 	game.battle_timer = 0.0
 	await process_frame
 	await process_frame
 	var shot = chess.attack_effect
-	expect(shot != null and shot.ranged and shot.attack.distance == 2 and b.enemy_action_resolved,
+	expect(shot != null and shot.ranged and shot.attack.distance == 2 and b.board_action_used[Chess.ENEMY],
 		"The normal turn loop presents the real enemy archer's two-square attack")
 	if shot != null:
 		while not shot.contacted and shot.elapsed < 0.19:
@@ -92,7 +94,7 @@ func execute() -> void:
 		expect(b.turn == Chess.ENEMY and b.round_number == 2 and shot.losses.get_child_count() > 0,
 			"The enemy hit and loss numbers play before the next round")
 		await shot.finished
-	await create_timer(0.25).timeout
+	await create_timer(0.35).timeout
 	expect(b.turn == Chess.PLAYER and b.round_number == 3, "The next round resumes when the enemy attack completes")
 
 	# Stage the last attack after exercising the normal opening and turn loop.

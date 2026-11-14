@@ -96,6 +96,6 @@ func fight(r: RefCounted) -> bool:
 				if not targets.is_empty():
 					battle.play(index, targets[0])
 					break
-			if battle.can_act():
-				battle.pass_turn()
+		if battle.can_act():
+			battle.end_turn()
 	return false

@@ -38,19 +38,30 @@ func check_mana() -> void:
 		and battle.mana[Chess.PLAYER] == 1 and battle.hands[Chess.PLAYER].size() == 2,
 		"An unaffordable play does not spend mana or the card")
 	expect(not battle.play(0, 1) and battle.mana[Chess.PLAYER] == 1, "An illegal target does not spend mana")
-	expect(battle.play(0, 10) and battle.mana[Chess.PLAYER] == 0 and battle.turn == Chess.ENEMY,
-		"A valid play spends its cost and remains the one action for the turn")
+	expect(battle.play(0, 10) and battle.mana[Chess.PLAYER] == 0 and battle.can_move_piece(),
+		"A valid play spends mana and leaves the board action available")
+	expect(battle.end_turn() and not battle.end_turn(), "The turn can be ended manually exactly once")
 	battle.enemy_turn()
 	expect(battle.mana[Chess.PLAYER] == 2 and battle.mana_capacity[Chess.PLAYER] == 2
 		and battle.hands[Chess.ENEMY] == ["ward"] and battle.mana[Chess.ENEMY] == 1,
 		"Turn two refills the player and the enemy cannot play an unaffordable card on its first turn")
 	expect(battle.move(10, 7) and battle.mana[Chess.PLAYER] == 2, "Movement does not cost mana")
+	expect(battle.end_turn(), "The player can end with unspent mana")
 	battle.enemy_turn()
 	expect(battle.mana[Chess.PLAYER] == 3 and battle.mana_capacity[Chess.ENEMY] == 2,
 		"Each side gains capacity at the start of its own turn")
-	expect(battle.play(0, 7) and battle.mana[Chess.PLAYER] == 1, "A two-cost card spends two of three crystals")
+	battle.hands[Chess.PLAYER] = ["brace", "pike"]
+	battle.board[9] = battle._piece(Cards.definition("eve"), Chess.PLAYER)
+	battle.board[4] = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
+	expect(battle.play(0, 7) and battle.mana[Chess.PLAYER] == 2, "The player can play a card before moving")
+	expect(battle.move(7, 4) and battle.mana[Chess.PLAYER] == 2 and battle.can_act(),
+		"A basic attack uses the free board action and leaves the turn active")
+	expect(not battle.move(9, 6) and not battle.can_move_piece(), "Another unit cannot move after the team's attack")
+	var hero_square: int = battle.board.find(battle.commanders[Chess.PLAYER])
+	expect(battle.play(0, hero_square) and battle.mana[Chess.PLAYER] == 0 and battle.can_act(),
+		"The player can spend the remaining mana after their board action")
 	battle.mana_capacity[Chess.PLAYER] = Chess.MANA_LIMIT
-	battle._start_player_turn()
+	battle._start_turn(Chess.PLAYER)
 	expect(battle.mana[Chess.PLAYER] == 10 and battle.mana_capacity[Chess.PLAYER] == 10,
 		"At the cap, spent crystals still refill")
 	var ambushed = fixture("boar", true)
@@ -58,6 +69,46 @@ func check_mana() -> void:
 	ambushed.enemy_turn()
 	expect(ambushed.turn == Chess.PLAYER and ambushed.round_number == 1 and ambushed.mana[Chess.PLAYER] == 1,
 		"The player's first turn starts at one even when the enemy goes first")
+
+func check_enemy_turn_budget() -> void:
+	var battle = fixture()
+	battle.hands[Chess.ENEMY] = ["brace", "brace"]
+	expect(not battle.play(0, 1, Chess.ENEMY) and not battle.move(1, 4, Chess.ENEMY),
+		"The enemy cannot use its cards or pieces during the player's turn")
+	battle.mana_capacity[Chess.ENEMY] = 2
+	battle.mana[Chess.ENEMY] = 2
+	var first_pile: Array = battle.piles[Chess.ENEMY].duplicate()
+	battle.end_turn()
+	var moves_taken := 0
+	var cards_played := 0
+	for step in 4:
+		if battle.turn != Chess.ENEMY:
+			break
+		var previous_mana: int = battle.mana[Chess.ENEMY]
+		battle.enemy_turn(true)
+		if battle.turn == Chess.ENEMY:
+			if battle.mana[Chess.ENEMY] < previous_mana:
+				cards_played += 1
+			elif battle.last_enemy_action.has("from"):
+				moves_taken += 1
+	expect(moves_taken == 1 and cards_played == 2 and battle.turn == Chess.PLAYER
+		and battle.round_number == 2 and battle.mana[Chess.ENEMY] == 0,
+		"The enemy can play several cards and uses at most one board action per turn")
+	expect(battle.piles[Chess.ENEMY] == first_pile and battle.turns_started == [2, 1],
+		"The first enemy turn uses the opening hand without an extra draw")
+	battle.piles[Chess.ENEMY] = ["ward", "pike"]
+	battle.end_turn()
+	battle.enemy_turn(true)
+	expect(battle.turn == Chess.ENEMY and battle.piles[Chess.ENEMY] == ["pike"]
+		and battle.mana_capacity[Chess.ENEMY] == 3 and battle.turns_started == [2, 2],
+		"The second enemy turn gains one crystal and draws from its own pile")
+	var enemy_square: int = battle.board.find(battle.commanders[Chess.ENEMY])
+	expect(not battle.play(0, battle.board.find(battle.commanders[Chess.PLAYER]), Chess.ENEMY)
+		and not battle.move(battle.board.find(battle.commanders[Chess.PLAYER]), enemy_square, Chess.ENEMY),
+		"Enemy card targets and moving pieces obey the same ownership rules as player actions")
+	battle.enemy_turn()
+	expect(battle.turn == Chess.PLAYER and battle.piles[Chess.ENEMY] == ["pike"],
+		"Resolving further enemy actions does not draw again")
 
 func check_rules() -> void:
 	var battle = fixture()
@@ -74,9 +125,10 @@ func check_rules() -> void:
 	battle.mana_capacity[Chess.PLAYER] = 2
 	battle.mana[Chess.PLAYER] = 2
 	expect(not battle.play(0, 4) and not battle.play(0, 10) and battle.can_act(), "Cannot deploy onto enemy ground or an occupied square")
-	expect(battle.play(0, 7) and battle.board[7].hp == 8 and battle.turn == Chess.ENEMY,
-		"Partner deployment consumes the turn and uses the relic's life bonus")
-	expect(not battle.move(7, 4), "A second action during the enemy turn is rejected")
+	expect(battle.play(0, 7) and battle.board[7].hp == 8 and battle.can_move_piece(),
+		"Partner deployment uses the relic's life bonus and leaves the board action available")
+	battle.end_turn()
+	expect(not battle.move(7, 4), "The player cannot move during the enemy turn")
 	battle.enemy_turn()
 	expect(battle.round_number == 2 and battle.hands[Chess.PLAYER].size() == 1 and battle.piles[Chess.ENEMY].size() == 9,
 		"Next friendly turn draws once and the enemy opening turn uses its three opening cards")
@@ -92,21 +144,18 @@ func check_rules() -> void:
 	expect(hit.from == 7 and hit.target == 4 and hit.defender.hp == 6 and hit.defender.armor == 1
 		and hit.hp == 2 and hit.armor == 0 and hit.hp_loss == 4 and hit.armor_loss == 1
 		and not hit.lethal and battle.take_attack().is_empty(), "Attack presentation receives pre-hit cards and actual losses once")
-	battle.turn = Chess.PLAYER
+	battle._start_turn(Chess.PLAYER)
 	expect(battle.move(7, 4) and battle.board[7].is_empty() and battle.board[4].name == "铅翼",
 		"Only the lethal attack captures the square")
 	hit = battle.take_attack()
 	expect(hit.lethal and hit.hp_loss == 2 and hit.hp == 0, "Overkill displays only the health the defender lost")
-	battle.turn = Chess.PLAYER
 	battle.board[4].hp = 3
 	battle.hands[Chess.PLAYER] = ["eve"]
 	expect(battle.play(0, 7) and battle.board[4].hp == 6, "Ivy heals the adjacent wounded ally on deployment")
-	battle.turn = Chess.PLAYER
 	battle.hands[Chess.PLAYER] = ["ward"]
 	battle.mana[Chess.PLAYER] = 2
 	expect(battle.play(0, 7) and battle.board[7].armor == 2 and battle.board[4].armor == 3 and battle.board[10].armor == 3,
 		"Column defense applies to every friendly piece in the column")
-	battle.turn = Chess.PLAYER
 	battle.hands[Chess.PLAYER] = ["pike"]
 	battle.mana[Chess.PLAYER] = 2
 	expect(battle.play(0, 10) and battle.attack_power(battle.board[10]) == 5, "Weapon raises the attack of the chosen piece")
@@ -115,13 +164,12 @@ func check_rules() -> void:
 	battle._apply_card(Chess.PLAYER, "gear:wayfarer", wayfarer_gear, 10)
 	expect(wayfarer_gear.element == "ice" and battle.board[10].armor == armor_before + 1,
 		"Wayfarer gear preserves its affinity guard on the ice commander")
-	battle.turn = Chess.PLAYER
 	battle.hands[Chess.PLAYER] = ["rain"]
 	battle.mana[Chess.PLAYER] = 1
 	expect(battle.play(0, -1) and battle.weather == "rain" and battle.attack_power(battle.board[7]) == 3,
-		"Weather modifies elemental attacks and costs the same one action")
+		"Weather modifies elemental attacks after the board action")
 	expect(battle.take_attack().is_empty(), "Playing a weather card does not create an attack animation")
-	battle.turn = Chess.PLAYER
+	battle._start_turn(Chess.PLAYER)
 	battle.commanders[Chess.ENEMY].hp = 1
 	battle.commanders[Chess.ENEMY].armor = 0
 	battle.board[battle.board.find(battle.commanders[Chess.ENEMY])] = {}
@@ -224,7 +272,6 @@ func ranged_threat_fixture(card_id: String) -> RefCounted:
 		battle.board[square] = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
 		battle.board[square].move = 0
 	battle.turn = Chess.ENEMY
-	battle.player_has_played = true
 	battle.weather = "rain"
 	battle.weather_rounds = 1
 	battle.hands[Chess.ENEMY] = [card_id]
@@ -246,15 +293,18 @@ func check_enemy_strategy() -> void:
 	battle.hands[Chess.PLAYER] = ["sun", "blade", "pike"]
 	battle.piles[Chess.PLAYER].reverse()
 	expect(battle._choose_enemy_action() == action, "The same public position produces the same action with different hidden cards")
-	battle.enemy_turn()
-	expect(battle.turn == Chess.PLAYER and battle.weather.is_empty() and battle.hands[Chess.ENEMY].is_empty()
+	battle.enemy_turn(true)
+	expect(battle.turn == Chess.ENEMY and battle.weather == "rain" and battle.hands[Chess.ENEMY].is_empty()
 		and battle.board[4].get("side") == Chess.ENEMY and not battle.moves(7).has(1) and battle.board[6].hp == 1,
-		"The real turn commits the single blocking play and preserves the other pieces")
+		"The enemy first uses its hand to block the lane and preserves its free board action")
+	battle.enemy_turn()
+	expect(battle.turn == Chess.PLAYER and battle.weather.is_empty() and not battle.moves(7).has(1),
+		"The lane stays blocked when the full turn ends and rain expires")
 
 	battle = ranged_threat_fixture("coat")
-	battle.enemy_turn()
+	battle.enemy_turn(true)
 	expect(battle.commanders[Chess.ENEMY].armor == 3 and battle.board[6].hp == 1
-		and battle.moves(7).has(1) and battle.attack_power(battle.board[7]) == 3,
+		and battle.moves(7).has(1) and battle.attack_power(battle.board[7]) == 2,
 		"Enemy equips armor when it must survive an open firing lane")
 
 	battle = fixture()
@@ -435,6 +485,8 @@ func check_ui() -> void:
 			"Board fits the viewport with twelve squares and a three-card opening hand")
 		expect(game.combat.piles[Chess.PLAYER].size() == 10 and game.combat.piles[Chess.ENEMY].size() == 9,
 			"The battle uses all thirteen player cards and the usual twelve enemy cards")
+		expect(view.enemy_cards.text == "手牌 3\n牌库 9" and view.enemy_mana_ratio.text == "1/1"
+			and view.enemy_deck_back.visible, "The rail shows the opponent's opening resources without showing card faces")
 		var grid := view.find_child("ChessGrid", true, false) as GridContainer
 		expect(grid != null and grid.columns == Chess.COLS and grid.get_child_count() == view.cells.size(),
 			"The chess grid contains only the twelve squares")
@@ -477,12 +529,16 @@ func check_ui() -> void:
 		await click(button_named(game.modal_layer, "取消，继续远征"))
 		await click(view.find_child("ChessSquare10", true, false))
 		await click(view.find_child("ChessSquare7", true, false))
-		expect(game.combat.turn == Chess.ENEMY and view.cells[7].disabled, "Actual mouse move locks out extra actions")
+		expect(game.combat.turn == Chess.PLAYER and not game.combat.can_move_piece()
+			and not view.end_turn_button.disabled, "A mouse move spends the board action and leaves End Turn available")
 		game.combat.piles[Chess.PLAYER][0] = "ward"
+		game.combat.hands[Chess.ENEMY] = []
+		await click(view.end_turn_button)
+		expect(view.end_turn_button.disabled and view.end_turn_button.text == "敌方回合", "End Turn hands off to the enemy")
 		game.battle_timer = 0.0
 		await process_frame
 		await process_frame
-		expect(game.combat.turn == Chess.ENEMY and game.combat.enemy_action_resolved
+		expect(game.combat.turn == Chess.ENEMY and game.combat.board_action_used[Chess.ENEMY]
 			and view.turn_banner_text.text == "敌方回合" and not game.combat.last_enemy_action.is_empty(),
 			"The enemy resolves its action before the player gets another turn")
 		game.battle_timer = 0.0
@@ -543,6 +599,8 @@ func check_mana_display() -> void:
 	var ratio_y := view.mana_ratio.global_position.y
 	expect(view.mana_row.get_child_count() == 1 and view.mana_ratio.text == "1/1"
 		and bottom.get_global_rect().end.y <= ratio_y, "The first turn has one crystal and the ratio below it")
+	expect(view.end_turn_button.get_global_rect().position.y >= view.mana_ratio.get_global_rect().end.y,
+		"End Turn sits at the bottom of the rail below the player's mana")
 	var pike := view.hand_buttons[1]
 	var badge := pike.find_child("ManaCost", true, false) as TextureRect
 	expect(badge != null and badge.get_child(0).text == "2"
@@ -552,6 +610,10 @@ func check_mana_display() -> void:
 	expect(view.selected_card == -1 and "法力不足" in view.hint.text, "Clicking an unaffordable card explains the shortfall")
 	battle.mana_capacity[Chess.PLAYER] = 3
 	battle.mana[Chess.PLAYER] = 1
+	battle.hands[Chess.ENEMY] = ["brace"]
+	battle.piles[Chess.ENEMY] = []
+	battle.mana_capacity[Chess.ENEMY] = 2
+	battle.mana[Chess.ENEMY] = 0
 	view.render()
 	await process_frame
 	await process_frame
@@ -562,6 +624,8 @@ func check_mana_display() -> void:
 		and view.mana_crystals[1].global_position.y < bottom_y
 		and bottom.self_modulate == Color.WHITE and view.mana_crystals[2].self_modulate != Color.WHITE,
 		"Crystals grow upwards from a fixed baseline, with spent crystals dimmed")
+	expect(view.enemy_cards.text == "手牌 1\n牌库 0" and view.enemy_mana_ratio.text == "0/2"
+		and not view.enemy_deck_back.visible, "Enemy resources update separately and an exhausted deck loses its card back")
 	view.queue_free()
 	await process_frame
 
@@ -657,20 +721,12 @@ func check_board_badges() -> void:
 	battle.hands[Chess.PLAYER] = ["rain"]
 	view.render()
 	await click(view.hand_buttons[0])
-	expect(view.cast_button.visible and view.cast_button.text == "打出唤雨", "Selecting a weather card offers confirmation above the board")
+	expect(view.cast_button.visible and view.cast_button.tooltip_text == "打出唤雨", "Selecting a weather card offers confirmation in the right column")
 	await click(view.cast_button)
 	expect(battle.weather == "rain" and not view.cast_button.visible, "Confirming plays the weather card")
-	battle.turn = Chess.PLAYER
-	battle.board[10].move = 0
-	battle.board[10].diagonal = false
-	battle.board[10].range = 0
-	battle.board[11].move = 0
-	battle.board[11].diagonal = false
-	battle.board[11].range = 0
-	view.render()
-	expect(view.wait_button.visible, "A blocked player can pass from above the board")
-	await click(view.wait_button)
-	expect(battle.turn == Chess.ENEMY and not view.wait_button.visible, "Passing hands the turn to the enemy")
+	expect(battle.can_move_piece() and not view.end_turn_button.disabled, "Playing a card leaves the board action and End Turn available")
+	await click(view.end_turn_button)
+	expect(battle.turn == Chess.ENEMY and view.end_turn_button.disabled, "The player can end even with legal moves")
 	var traveler_icon := view.cells[10].find_child("ElementIcon", true, false) as TextureRect
 	expect(traveler_icon != null and traveler_icon.texture.resource_path.ends_with("/ice.svg")
 		and view.cells[1].find_child("ElementIcon", true, false) == null,
@@ -778,6 +834,7 @@ func check_hover_details() -> void:
 
 func execute() -> void:
 	check_mana()
+	check_enemy_turn_budget()
 	check_rules()
 	check_fatigue()
 	check_enemy_strategy()

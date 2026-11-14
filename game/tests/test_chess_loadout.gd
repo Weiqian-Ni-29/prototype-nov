@@ -55,7 +55,7 @@ func execute() -> void:
 		and battle.hands[1].size() == 3 and battle.piles[0].size() == 9, "Both sides draw exactly three from shuffled decks")
 	battle.hands[0] = [blade_id]
 	expect(battle.play(0, 10) and battle.board[10].armor == 2 and battle.attack_power(battle.board[10]) == 6
-		and battle.board[10].weapon == blade_id and not battle.can_act(), "The enhanced card equips the commander and uses the turn")
+		and battle.board[10].weapon == blade_id and battle.can_move_piece(), "The enhanced card equips the commander without using the board action")
 	battle.retreat() # The next encounter below starts from a separate expedition.
 	run.new_run(81, "wayfarer")
 	start = run.actor("hero").position
@@ -78,7 +78,7 @@ func execute() -> void:
 	expect(4 not in battle.card_targets(0, spell_index), "A blocker stops a two-square spell")
 	battle.board[7] = {}
 	expect(battle.play(spell_index, 4) and enemy.armor == 0 and enemy.hp == old_hp - 2
-		and battle.board[10].leader and not battle.can_act(), "Fire, weather, relic damage and armor resolve together without moving a piece")
+		and battle.board[10].leader and battle.can_move_piece(), "Fire, weather, relic damage and armor resolve together without moving a piece")
 	var loaded := Run.new()
 	expect(loaded.load_game(run.save_path).ok and "ice_spell" in Cards.collection(loaded.data.actors, loaded.data),
 		"A relic spell unlock survives reloading")
@@ -106,12 +106,25 @@ func check_progression() -> void:
 		var enemy_deck: Array = battle.hands[Chess.ENEMY] + battle.piles[Chess.ENEMY]
 		expect(enemy_deck.size() == 12 and enemy_deck.filter(func(card): return card.begins_with("foe:")).size() == tier,
 			"Enemy deck retains the same size and gains a reinforcement at each band")
+		expect(enemy_deck.all(func(card): return not battle.definition(card).is_empty() and enemy_deck.count(card) <= 2),
+			"Generated enemy decks use playable cards and obey the copy limits")
 		earlier_hp = battle.commanders[Chess.ENEMY].hp
 		expect(battle.hands[Chess.PLAYER].any(func(card):
 			var entry := battle.definition(card)
 			return entry.has("damage") or entry.get("slot") == "weapon"), "First battle guarantees an attack option")
 	expect(Chess.difficulty_tier(0, true, false) == 1 and Chess.difficulty_tier(80, true, false) == 4,
 		"Elite encounters use the next band, capped at the maximum")
+
+	var battle := Chess.new()
+	var roller := RandomNumberGenerator.new()
+	var boar_deck := battle._enemy_deck(["boar"], "boar", roller)
+	var spiders := battle._enemy_deck(["spider"], "spider", roller)
+	expect(boar_deck.count("brace") == 2 and "fog_spell" in spiders and "fog_spell" not in boar_deck,
+		"Facing a different commander changes the enemy deck even in the first difficulty band")
+	battle.difficulty = 2
+	var squad := battle._enemy_deck(["boar", "swarm", "swarm"], "boar", roller)
+	expect(squad.count("foe:swarm") == 1 and "foe:archer" in squad,
+		"The enemy recruits from its encounter first, with at most one copy of each reinforcement")
 
 	for seed in 24:
 		run.new_run(seed, "wayfarer")
