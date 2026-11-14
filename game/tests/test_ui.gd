@@ -1195,7 +1195,7 @@ func execute() -> void:
 		names.append("%s ×%d" % [title, quantities[title]])
 	var rewards = game.modal_layer.find_child("RewardItems", true, false)
 	expect(game.modal_layer.has_node("StoryRewards") and contains_text(game.modal_layer, "获得初始卡组")
-		and deck.size() == Cards.DECK_SIZE and rewards != null and names == PackedStringArray(
+		and deck.size() == Cards.DEFAULT_DECK.size() and rewards != null and names == PackedStringArray(
 			rewards.find_children("*", "Button", true, false).map(func(button): return button.accessibility_name)),
 		"Departure lists exactly the starter deck, including duplicate counts")
 	for id in ["ember_spell", "sun"]:

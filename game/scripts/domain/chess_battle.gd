@@ -9,6 +9,7 @@ const COLS = 3
 const ROWS = 4
 const PLAYER = 0
 const ENEMY = 1
+const ENEMY_DECK_SIZE = 12
 const MANA_LIMIT = 10
 const COMMANDER_DEFEAT_SCORE = 1000000
 
@@ -68,7 +69,8 @@ func _relic(event: String, context: Dictionary = {}) -> void:
 
 func begin(expedition: RefCounted, encounter: Dictionary, deck: Array) -> Dictionary:
 	if expedition.data.status != "exploring" or not Cards.valid_deck(deck, expedition.data.actors, true, expedition.data):
-		return {"ok": false, "message": "请先编好 12 张牌。"}
+		var message := "出战至少需要 %d 张牌。" % Cards.MIN_DECK_SIZE if deck.size() < Cards.MIN_DECK_SIZE else "这套牌组无法出战。"
+		return {"ok": false, "message": message}
 	var cell: String = encounter.get("position", "")
 	var hero: Dictionary = expedition.actor("hero")
 	if not expedition.data.tiles.has(cell) or hero.position != cell or hero.hp <= 0:
@@ -198,7 +200,7 @@ func _enemy_deck(types: Array, lead: String, roller: RandomNumberGenerator) -> A
 			deck.append_array(["ice_spell", "ember_spell"])
 	var filler := ["pike", "ward", "ember_spell", "brace", "rain", "sun", "ice_spell", "ward"]
 	var i := 0
-	while deck.size() < Cards.DECK_SIZE:
+	while deck.size() < ENEMY_DECK_SIZE:
 		deck.append(filler[i])
 		i += 1
 	_shuffle(deck, roller)

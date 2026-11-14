@@ -667,7 +667,7 @@ func _start_draw(index: int, delay: float) -> void:
 	button.self_modulate.a = 0.0
 	button.size = Vector2(HAND_CARD_WIDTH, HAND_CARD_HEIGHT)
 	button.pivot_offset = button.size * 0.5
-	button.z_index = 30 + index
+	button.z_index = 30
 	var sample := _animate_draw.bind(index, front, back)
 	var flight := button.create_tween()
 	if delay > 0.0:
@@ -726,7 +726,7 @@ func _pose_card(index: int) -> void:
 	button.pivot_offset = button.size * 0.5
 	button.position = _fan_position(index, count, raised)
 	button.rotation = 0.0 if raised else deg_to_rad(_fan_curve(index, count) * 8.0)
-	button.z_index = 24 if raised else index
+	button.z_index = 24 if raised else 0
 
 func _fan_position(index: int, count: float, raised: bool) -> Vector2:
 	# Allow room for the two outside corners when the cards tilt.

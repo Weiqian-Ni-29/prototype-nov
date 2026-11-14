@@ -1143,7 +1143,7 @@ func _validate_save(loaded: Dictionary) -> String:
 	var spells: Variant = loaded.get("spell_collection", [])
 	if not spells is Array or spells.any(func(spell): return spell not in Cards.UNLOCKABLE_SPELLS) or spells.any(func(spell): return spells.count(spell) > 1):
 		return "法术牌谱无效"
-	if loaded.has("card_deck") and not (loaded.card_deck is Array and loaded.card_deck.size() <= Cards.DECK_SIZE
+	if loaded.has("card_deck") and not (loaded.card_deck is Array
 			and (int(loaded.version) >= 8 or Cards.valid_deck(loaded.card_deck, loaded.actors, false, {}, true))):
 		return "卡组记录无效"
 	if loaded.has("choices") and not loaded.choices is Array:

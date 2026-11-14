@@ -408,16 +408,20 @@ func check_ui() -> void:
 		"The water icon filters the collection to water cards")
 	editor.attribute.select(0)
 	editor.attribute.item_selected.emit(0)
-	var equipment: String = game.run.card_deck().filter(func(id): return id.begins_with("gear:"))[0]
-	await click(editor.find_child("Remove_" + equipment.replace(":", "_"), true, false))
 	editor.search.text = "唤雨"
 	editor.search.text_changed.emit(editor.search.text)
 	await process_frame
 	await click(editor.find_child("Collection_rain", true, false))
 	await click(editor.find_child("AddDeckCard", true, false))
+	await click(editor.find_child("AddDeckCard", true, false))
+	var capped := editor.find_child("AddDeckCard", true, false) as Button
+	expect(editor.total.text == "14 张" and capped != null and capped.disabled,
+		"The editor adds cards beyond twelve and still enforces the per-card limit")
+	await click(editor.find_child("Remove_rain", true, false))
 	await click(editor.find_child("ConfirmCardDeck", true, false))
 	var saved := Run.new()
-	expect(saved.load_game(game.run.save_path).ok and saved.card_deck().count("rain") == 1, "Edited deck persists in the expedition save")
+	expect(saved.load_game(game.run.save_path).ok and saved.card_deck().size() == 13 and saved.card_deck().count("rain") == 1,
+		"The thirteen-card deck persists in the expedition save")
 	var cell: String = game.run.actor("hero").position
 	game.run.data.tiles[cell].enemies = ["boar"]
 	game._open_current_encounter(false)
@@ -429,6 +433,8 @@ func check_ui() -> void:
 	if view != null:
 		expect(root.get_visible_rect().encloses(view.get_global_rect()) and view.cells.size() == 12 and view.hand_buttons.size() == 3,
 			"Board fits the viewport with twelve squares and a three-card opening hand")
+		expect(game.combat.piles[Chess.PLAYER].size() == 10 and game.combat.piles[Chess.ENEMY].size() == 9,
+			"The battle uses all thirteen player cards and the usual twelve enemy cards")
 		var grid := view.find_child("ChessGrid", true, false) as GridContainer
 		expect(grid != null and grid.columns == Chess.COLS and grid.get_child_count() == view.cells.size(),
 			"The chess grid contains only the twelve squares")
@@ -500,7 +506,8 @@ func check_ui() -> void:
 
 func check_hand_layout() -> void:
 	var battle = fixture()
-	battle.hands[Chess.PLAYER] = Cards.DEFAULT_DECK.duplicate()
+	var large_hand: Array = Cards.DEFAULT_DECK + Cards.DEFAULT_DECK + ["rain", "sun"]
+	battle.hands[Chess.PLAYER] = large_hand
 	battle.draw_count = 0
 	var view := ChessView.new()
 	root.add_child(view)
@@ -513,9 +520,12 @@ func check_hand_layout() -> void:
 		var card_transform := view.hand.get_global_transform().affine_inverse() * button.get_global_transform()
 		for corner in [Vector2.ZERO, Vector2(button.size.x, 0), button.size, Vector2(0, button.size.y)]:
 			all_inside = all_inside and hand_bounds.has_point(card_transform * corner)
-	expect(view.hand_buttons.size() == Cards.DECK_SIZE and all_inside, "A full hand fits inside its panel")
+	expect(view.hand_buttons.size() == large_hand.size() and all_inside, "A large hand fits inside its panel")
 	expect(view.hand_buttons.all(func(button): return is_equal_approx(button.size.aspect(), 5.0 / 7.0)),
 		"Every hand card has a five-by-seven portrait aspect ratio")
+	view._hover_card(0)
+	expect(view.hand_buttons[0].z_index > view.hand_buttons[-1].z_index,
+		"A raised card appears above the entire large hand")
 	view.queue_free()
 	await process_frame
 
