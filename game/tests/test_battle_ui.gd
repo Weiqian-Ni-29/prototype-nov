@@ -4,6 +4,7 @@ const Main = preload("res://scenes/main.tscn")
 const Run = preload("res://scripts/domain/expedition.gd")
 const Chess = preload("res://scripts/domain/chess_battle.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
+const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const ChessView = preload("res://scripts/presentation/chess_battle_view.gd")
 
 var checks := 0
@@ -34,6 +35,8 @@ func check_rules() -> void:
 		"Three-by-four board begins with just the commanders")
 	expect(battle.board[1].side == Chess.ENEMY and battle.board[10].side == Chess.PLAYER,
 		"Both commanders start in their center rear squares")
+	expect(battle.board[10].element == "ice" and battle.board[1].element == "",
+		"The traveler is an ice unit and the boar is untyped")
 	expect(battle.hands.all(func(hand): return hand.size() == 3) and battle.piles.all(func(pile): return pile.size() == 9),
 		"Both teams draw exactly three opening cards")
 	expect(battle.moves(10).keys() == [6, 7, 8, 9, 11], "Commander can move one square horizontally, vertically or diagonally")
@@ -67,6 +70,11 @@ func check_rules() -> void:
 	battle.turn = Chess.PLAYER
 	battle.hands[Chess.PLAYER] = ["pike"]
 	expect(battle.play(0, 10) and battle.attack_power(battle.board[10]) == 5, "Weapon raises the attack of the chosen piece")
+	var wayfarer_gear := Gear.card({"definition_id": "grave_wayfarer_weapon", "enhance_level": 0, "quality": Gear.QUALITIES[0]})
+	var armor_before: int = battle.board[10].armor
+	battle._apply_card(Chess.PLAYER, "gear:wayfarer", wayfarer_gear, 10)
+	expect(wayfarer_gear.element == "ice" and battle.board[10].armor == armor_before + 1,
+		"Wayfarer gear preserves its affinity guard on the ice commander")
 	battle.turn = Chess.PLAYER
 	battle.hands[Chess.PLAYER] = ["rain"]
 	expect(battle.play(0, -1) and battle.weather == "rain" and battle.attack_power(battle.board[7]) == 3,
@@ -288,6 +296,17 @@ func check_ui() -> void:
 	expect(editor.grid.get_child_count() == 1 and editor.selected == "mend_spell", "Search finds the starter healing card by effect")
 	editor.search.clear()
 	editor.search.text_changed.emit("")
+	var water_index := Cards.ELEMENTS.keys().find("water") + 1
+	expect(editor.attribute.item_count == 7 and editor.attribute.get_item_text(water_index).is_empty()
+		and editor.attribute.get_item_icon(water_index).resource_path.ends_with("/water.svg"),
+		"The collection filters offer exactly the six element icons")
+	editor.attribute.select(water_index)
+	editor.attribute.item_selected.emit(water_index)
+	expect(editor.grid.get_child_count() > 0 and editor.grid.get_children().all(
+		func(button): return button.name in ["Collection_rain", "Collection_mend_spell"]),
+		"The water icon filters the collection to water cards")
+	editor.attribute.select(0)
+	editor.attribute.item_selected.emit(0)
 	var equipment: String = game.run.card_deck().filter(func(id): return id.begins_with("gear:"))[0]
 	await click(editor.find_child("Remove_" + equipment.replace(":", "_"), true, false))
 	editor.search.text = "唤雨"
@@ -320,16 +339,21 @@ func check_ui() -> void:
 		var board_labels: Array[Node] = view.find_children("*", "Label", true, false)
 		expect(not board_labels.any(func(label): return label.text in ["左路", "中路", "右路", "敌方\n后排", "敌方\n前排",
 			"己方\n前排", "己方\n后排", "共鸣遗器", "战斗记录"]), "Board headings and the sidebar are absent")
-		var menu := button_named(view, "主菜单")
+		var menu := view.find_child("ChessMainMenu", true, false) as Button
 		var retreat_rect: Rect2 = view.retreat.get_global_rect()
 		var menu_rect := menu.get_global_rect() if menu != null else Rect2()
 		var menu_top_right := Vector2(menu_rect.end.x, menu_rect.position.y)
 		var view_top_right := Vector2(view_rect.end.x, view_rect.position.y)
 		expect(menu != null and menu_top_right.distance_to(view_top_right) <= 22
-			and retreat_rect.size.y <= 32 and menu_rect.size.y <= 32
+			and retreat_rect.size == Vector2(48, 40) and menu_rect.size == Vector2(48, 40)
 			and is_equal_approx(menu_rect.position.y, retreat_rect.position.y)
 			and is_equal_approx(menu_rect.position.x - retreat_rect.end.x, 4.0),
 			"Retreat and Main Menu sit side by side in a compact top-right row")
+		expect(menu != null and menu.text.is_empty() and menu.accessibility_name == "主菜单"
+			and menu.icon != null and menu.icon.resource_path.ends_with("/story-main-menu.svg")
+			and view.retreat.text.is_empty() and view.retreat.accessibility_name == "撤退"
+			and view.retreat.icon != null and view.retreat.icon.resource_path.ends_with("/chess-retreat.svg"),
+			"The navigation buttons show only their icons and expose accessible names")
 		for square in [1, 10]:
 			var tile: Button = view.cells[square]
 			var labels := tile.find_children("*", "Label", true, false)
@@ -427,7 +451,12 @@ func check_board_badges() -> void:
 	expect(view.wait_button.visible, "A blocked player can pass from above the board")
 	await click(view.wait_button)
 	expect(battle.turn == Chess.ENEMY and not view.wait_button.visible, "Passing hands the turn to the enemy")
-	var elements := Cards.ELEMENTS.keys()
+	var traveler_icon := view.cells[10].find_child("ElementIcon", true, false) as TextureRect
+	expect(traveler_icon != null and traveler_icon.texture.resource_path.ends_with("/ice.svg")
+		and view.cells[1].find_child("ElementIcon", true, false) == null,
+		"The real traveler shows the ice badge and the untyped boar has no badge")
+	var elements := ["earth", "fire", "water", "ice", "wind", "lightning"]
+	expect(Cards.ELEMENTS.keys() == elements, "The chess catalog defines only the six elements")
 	for square in elements.size():
 		var piece: Dictionary = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
 		piece.element = elements[square]
@@ -475,6 +504,9 @@ func check_hover_details() -> void:
 	await process_frame
 	var text := _detail_text(view)
 	expect(view.hover_detail.visible and view.hover_detail.size.y > 90, "Hovering the commander opens a sized detail popup")
+	var icon := view.hover_detail_body.find_child("ElementIcon", true, false) as TextureRect
+	expect(icon != null and icon.texture.resource_path.ends_with("/ice.svg") and not "冰属性" in text,
+		"The traveler detail shows only the ice icon")
 	expect("移动 · " in text and "攻击 · " in text, "Commander popup lists movement and attack")
 	expect(root.get_visible_rect().encloses(view.hover_detail.get_global_rect()), "The popup stays inside the viewport")
 	game.combat.revealed_enemy = ["rain"]

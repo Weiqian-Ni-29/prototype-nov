@@ -11,17 +11,8 @@ const CROWN = preload("res://assets/ui/crown-badge.svg")
 const ATTACK_ICON = preload("res://assets/ui/chess-attack.png")
 const HEALTH_ICON = preload("res://assets/ui/chess-health.png")
 const ARMOR_ICON = preload("res://assets/ui/chess-armor.png")
-const ELEMENT_ICONS = {
-	"gravity": preload("res://assets/ui/chess-elements/gravity.svg"),
-	"normal": preload("res://assets/ui/chess-elements/normal.svg"),
-	"earth": preload("res://assets/ui/chess-elements/earth.svg"),
-	"fire": preload("res://assets/ui/chess-elements/fire.svg"),
-	"water": preload("res://assets/ui/chess-elements/water.svg"),
-	"ice": preload("res://assets/ui/chess-elements/ice.svg"),
-	"wind": preload("res://assets/ui/chess-elements/wind.svg"),
-	"lightning": preload("res://assets/ui/chess-elements/lightning.svg"),
-}
-const ELEMENT_SIZE = 24
+const RETREAT_ICON = preload("res://assets/ui/chess-retreat.svg")
+const MENU_ICON = preload("res://assets/ui/story-main-menu.svg")
 const STAT_SIZE = 38
 const STAT_INSET = 6
 const GRID_LINE = 2
@@ -90,10 +81,11 @@ func setup(model: RefCounted, scene: Texture2D) -> void:
 			_notify_action())
 	cast_button.name = "CastChessSpell"
 	UI.accent(cast_button)
-	retreat = UI.button(actions, "撤退", func(): retreat_requested.emit())
-	var menu := UI.button(actions, "主菜单", func(): menu_requested.emit())
+	retreat = _icon_button(actions, "ChessRetreat", "撤退", RETREAT_ICON, func(): retreat_requested.emit())
+	var menu := _icon_button(actions, "ChessMainMenu", "主菜单", MENU_ICON, func(): menu_requested.emit())
 	for button in [wait_button, cast_button, retreat, menu]:
-		button.custom_minimum_size.y = 30
+		if button.icon == null:
+			button.custom_minimum_size.y = 30
 		button.add_theme_font_size_override("font_size", 15)
 		for state in ["normal", "hover", "pressed", "disabled"]:
 			var style := button.get_theme_stylebox(state).duplicate() as StyleBox
@@ -264,6 +256,18 @@ func _notify_action() -> void:
 	render()
 	acted.emit()
 
+func _icon_button(actions: HBoxContainer, node_name: String, label: String, icon: Texture2D, callback: Callable) -> Button:
+	var button := UI.button(actions, "", callback)
+	button.name = node_name
+	button.icon = icon
+	button.expand_icon = true
+	button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	button.add_theme_constant_override("icon_max_width", 24)
+	button.custom_minimum_size = Vector2(48, 40)
+	button.tooltip_text = label
+	button.accessibility_name = label
+	return button
+
 func _render_tile(tile: Button, square: int, action: String) -> void:
 	var unit: Dictionary = battle.board[square]
 	var empty := unit.is_empty()
@@ -325,25 +329,18 @@ func _render_tile(tile: Button, square: int, action: String) -> void:
 	text.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content.add_child(text)
 	UI.label(text, unit.name, 19).text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	var details: String = Cards.ELEMENTS.get(unit.element, "物理")
-	var equipment := HBoxContainer.new()
-	equipment.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	text.add_child(equipment)
-	var element := TextureRect.new()
-	element.name = "ElementIcon"
-	element.texture = ELEMENT_ICONS.get(unit.element, ELEMENT_ICONS.normal)
-	element.custom_minimum_size = Vector2(ELEMENT_SIZE, ELEMENT_SIZE)
-	element.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	element.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	element.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	equipment.add_child(element)
-	if not unit.weapon.is_empty():
-		var weapon_name: String = battle._weapon(unit).name
-		details += " · " + weapon_name
-		var weapon := UI.label(equipment, weapon_name, 13, UI.GOLD)
-		weapon.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		weapon.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		weapon.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	var element_name: String = Cards.ELEMENTS.get(unit.element, "")
+	var weapon_name: String = battle._weapon(unit).get("name", "")
+	if not element_name.is_empty() or not weapon_name.is_empty():
+		var equipment := HBoxContainer.new()
+		equipment.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		text.add_child(equipment)
+		UI.add_element_icon(equipment, unit.element)
+		if not weapon_name.is_empty():
+			var weapon := UI.label(equipment, weapon_name, 13, UI.GOLD)
+			weapon.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			weapon.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			weapon.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	if action == "attack":
 		var damage := UI.label(text, "可攻击 · %d 伤害" % battle.attack_power(battle.board[selected_square]), 13, UI.ORANGE)
 		damage.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
@@ -354,8 +351,15 @@ func _render_tile(tile: Button, square: int, action: String) -> void:
 	_stat_badge(tile, "Health", HEALTH_ICON, unit.hp, Control.PRESET_BOTTOM_RIGHT, 4)
 	_stat_badge(tile, "Armor", ARMOR_ICON, unit.armor, Control.PRESET_TOP_RIGHT)
 	var stats := "攻 %d · 血 %d/%d · 甲 %d" % [attack, unit.hp, unit.hp_max, unit.armor]
-	var accessible_name: String = unit.name + (" 主战者" if unit.leader else "")
-	tile.accessibility_name = "%s %s %s %s" % [square_label, accessible_name, details, stats]
+	var accessible_parts: Array[String] = [square_label, unit.name]
+	if unit.leader:
+		accessible_parts.append("主战者")
+	if not element_name.is_empty():
+		accessible_parts.append(element_name + "属性")
+	if not weapon_name.is_empty():
+		accessible_parts.append(weapon_name)
+	accessible_parts.append(stats)
+	tile.accessibility_name = " ".join(accessible_parts)
 
 func _stat_badge(tile: Button, badge_name: String, icon: Texture2D, value: int, corner: int, text_y: int = 0) -> void:
 	var badge := TextureRect.new()
@@ -558,8 +562,8 @@ func _detail_header(entry: Dictionary, kind: String, accent: Color) -> void:
 func _fill_unit_detail(unit: Dictionary) -> void:
 	_detail_header(unit, ("敌方" if unit.side == Battle.ENEMY else "己方") + ("主战者" if unit.leader else "棋子"),
 		UI.ORANGE if unit.side == Battle.ENEMY else UI.GREEN)
-	UI.label(hover_detail_body, "%s属性 · 攻 %d · 血 %d/%d · 甲 %d" % [Cards.ELEMENTS.get(unit.element, "物理"),
-		battle.attack_power(unit), unit.hp, unit.hp_max, unit.armor], 14, UI.MUTED, true)
+	UI.element_summary(hover_detail_body, unit.element, "攻 %d · 血 %d/%d · 甲 %d" % [
+		battle.attack_power(unit), unit.hp, unit.hp_max, unit.armor])
 	_section("移动与攻击")
 	UI.label(hover_detail_body, _movement_text(unit, true), 13, UI.INK, true)
 	var talent := _split_talent(unit.trait)
@@ -587,7 +591,7 @@ func _fill_card_detail(card: Dictionary) -> void:
 	_detail_header(card, ("临时 · " if card.get("temporary", false) else "") + Cards.KINDS[card.kind] + "牌", UI.MUTED)
 	var summary := _card_stats(card)
 	if not summary.is_empty():
-		UI.label(hover_detail_body, summary, 14, UI.MUTED, true)
+		UI.element_summary(hover_detail_body, card.get("element", ""), summary)
 	if card.kind == "partner":
 		_section("移动与攻击")
 		UI.label(hover_detail_body, _movement_text(card, false), 13, UI.INK, true)
@@ -636,7 +640,7 @@ func _card_stats(card: Dictionary) -> String:
 			var climate: Dictionary = Cards.WEATHER[card.weather]
 			return "天气 · %s · %s" % [climate.name, climate.hint]
 		if card.has("damage"):
-			return "%s属性 · 伤害 %d 点%s" % [Cards.ELEMENTS.get(card.element, "物理"), int(card.damage),
+			return "伤害 %d 点%s" % [int(card.damage),
 				" · 施加减速" if card.get("slow", false) else ""]
 		if card.has("heal"):
 			return "治疗 %d 点生命" % int(card.heal)

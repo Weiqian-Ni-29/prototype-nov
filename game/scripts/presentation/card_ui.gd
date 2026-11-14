@@ -1,7 +1,17 @@
 extends RefCounted
 
+const Cards = preload("res://scripts/domain/card_catalog.gd")
 const InventoryPage = preload("res://scripts/presentation/inventory_page.gd")
 const SHIELD = preload("res://assets/ui/shield-badge.svg")
+const ELEMENT_ICONS = {
+	"earth": preload("res://assets/ui/chess-elements/earth.svg"),
+	"fire": preload("res://assets/ui/chess-elements/fire.svg"),
+	"water": preload("res://assets/ui/chess-elements/water.svg"),
+	"ice": preload("res://assets/ui/chess-elements/ice.svg"),
+	"wind": preload("res://assets/ui/chess-elements/wind.svg"),
+	"lightning": preload("res://assets/ui/chess-elements/lightning.svg"),
+}
+const ELEMENT_SIZE = 24
 const GOLD = Color("dec38e")
 const INK = Color("ede6cf")
 const MUTED = Color("b1c3b5")
@@ -27,6 +37,33 @@ static func label(parent: Node, text: String, size: int = 16, color: Color = INK
 		value.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	parent.add_child(value)
 	return value
+
+static func add_element_icon(parent: Node, element: String) -> void:
+	if not ELEMENT_ICONS.has(element):
+		return
+	var badge := TextureRect.new()
+	badge.name = "ElementIcon"
+	badge.texture = ELEMENT_ICONS[element]
+	badge.custom_minimum_size = Vector2(ELEMENT_SIZE, ELEMENT_SIZE)
+	badge.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	badge.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	badge.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	badge.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.accessibility_name = Cards.ELEMENTS[element] + "属性"
+	parent.add_child(badge)
+
+static func element_summary(parent: Node, element: String, text: String, size: int = 14, color: Color = MUTED) -> void:
+	if not ELEMENT_ICONS.has(element):
+		label(parent, text, size, color, true)
+		return
+	var row := HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(row)
+	add_element_icon(row, element)
+	var summary := label(row, text, size, color, true)
+	summary.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	summary.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 
 static func button(parent: Node, text: String, action: Callable) -> Button:
 	var value := Button.new()

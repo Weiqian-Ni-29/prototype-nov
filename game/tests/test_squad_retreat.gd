@@ -14,7 +14,7 @@ func expect(value: bool, label: String):
 func press(text: String):
 	for layer in [game.modal_layer, game.ui]:
 		for button in layer.find_children("*", "Button", true, false):
-			if button.text == text and button.is_visible_in_tree():
+			if (button.text == text or button.accessibility_name == text) and button.is_visible_in_tree():
 				expect(not button.disabled, "button enabled: " + text)
 				button.pressed.emit()
 				await process_frame

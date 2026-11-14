@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://oydyf2uxna21"
-path="res://.godot/imported/gravity.svg-b203e3b67cbbec036cbf1a9e5c3c31f7.ctex"
+uid="uid://brxcvyvvccit0"
+path="res://.godot/imported/chess-retreat.svg-26090433f500bec8f319104f97e0edda.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/ui/chess-elements/gravity.svg"
-dest_files=["res://.godot/imported/gravity.svg-b203e3b67cbbec036cbf1a9e5c3c31f7.ctex"]
+source_file="res://assets/ui/chess-retreat.svg"
+dest_files=["res://.godot/imported/chess-retreat.svg-26090433f500bec8f319104f97e0edda.ctex"]
 
 [params]
 

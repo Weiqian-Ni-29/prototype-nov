@@ -653,16 +653,18 @@ func _reward_entries(items: Array) -> Array[Dictionary]:
 				var gear: Dictionary = run.data.gear_instances[id]
 				var card := Gear.card(gear)
 				entry.merge({"title": card.name, "category": "装备牌", "effect": card.trait, "level": card.level})
+				entry.element = card.element
 				entry.icon = card.icon
 				entry.story = card.story
 			"spell":
 				var card: Dictionary = Cards.ACTIONS[id]
 				entry.merge({"title": card.name, "category": "法术牌谱", "effect": card.trait + " 购买后永久解锁到本次远征的卡牌收藏。"})
+				entry.element = card.get("element", "")
 				entry.icon = card.icon
 			"companion":
 				var card := Cards.owned_definition(id, run.data.actors)
 				var talent := Cards.breakthrough_talent(id)
-				entry.merge({"title": card.name, "category": "招募伙伴", "portrait": card.portrait,
+				entry.merge({"title": card.name, "category": "招募伙伴", "portrait": card.portrait, "element": card.element,
 					"effect": "%s\n%s\n第三次突破 · %s：%s" % [Cards.stats(card), card.trait, talent.name, talent.text]})
 			"coins":
 				entry.merge({"title": "灯铢", "category": "货币", "effect": "可用于招募伙伴、突破和商店交易。"})

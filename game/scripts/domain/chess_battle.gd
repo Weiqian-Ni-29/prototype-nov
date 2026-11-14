@@ -204,7 +204,7 @@ static func commander_definition(expedition: RefCounted) -> Dictionary:
 	var hero: Dictionary = expedition.actor("hero")
 	var attack := 4
 	var armor := 1
-	return {"name": hero.name, "portrait": "hero", "element": "gravity", "attack": attack, "hp": 13,
+	return {"name": hero.name, "portrait": "hero", "element": "ice", "attack": attack, "hp": 13,
 		"armor": armor, "move": 1, "range": 1, "diagonal": true, "trait": "横竖斜走一格。"}
 
 static func enemy_definition(expedition: RefCounted, id: String, leader: bool = false, tier: int = -1) -> Dictionary:
@@ -238,7 +238,7 @@ static func enemy_definition(expedition: RefCounted, id: String, leader: bool = 
 	if healer:
 		movement += "落位时治疗相邻友方。"
 	return {"name": source.name, "kind": "partner", "portrait": actor_id if npc or id == "war_god" else "",
-		"enemy_art": "" if npc or id == "war_god" else id, "element": "fire" if id == "war_god" else source.get("element", "normal"),
+		"enemy_art": "" if npc or id == "war_god" else id, "element": "fire" if id == "war_god" else Cards.chess_element(source),
 		"attack": attack, "hp": hp, "armor": armor, "move": 1, "range": reach, "heal": 2 if healer else 0,
 		"diagonal": leader, "trait": movement}
 
@@ -670,7 +670,7 @@ func _deal_hit(target: int, base: int, context: Dictionary) -> void:
 	var absorbed := _damage(victim, damage, int(context.pierce))
 	context.hp_loss = old_hp - int(victim.hp)
 	_log("%s受到%d 点%s伤害%s。" % [victim.name, damage,
-		Cards.ELEMENTS.get(context.element, "物理"), "（护甲吸收 %d）" % absorbed if absorbed > 0 else ""])
+		Cards.ELEMENTS.get(context.element, ""), "（护甲吸收 %d）" % absorbed if absorbed > 0 else ""])
 	if victim.side == PLAYER and victim.hp > 0:
 		_relic("survive", context)
 	if victim.side == ENEMY:
