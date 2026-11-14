@@ -11,6 +11,17 @@ const CROWN = preload("res://assets/ui/crown-badge.svg")
 const ATTACK_ICON = preload("res://assets/ui/chess-attack.png")
 const HEALTH_ICON = preload("res://assets/ui/chess-health.png")
 const ARMOR_ICON = preload("res://assets/ui/chess-armor.png")
+const ELEMENT_ICONS = {
+	"gravity": preload("res://assets/ui/chess-elements/gravity.svg"),
+	"normal": preload("res://assets/ui/chess-elements/normal.svg"),
+	"earth": preload("res://assets/ui/chess-elements/earth.svg"),
+	"fire": preload("res://assets/ui/chess-elements/fire.svg"),
+	"water": preload("res://assets/ui/chess-elements/water.svg"),
+	"ice": preload("res://assets/ui/chess-elements/ice.svg"),
+	"wind": preload("res://assets/ui/chess-elements/wind.svg"),
+	"lightning": preload("res://assets/ui/chess-elements/lightning.svg"),
+}
+const ELEMENT_SIZE = 24
 const STAT_SIZE = 38
 const STAT_INSET = 6
 const GRID_LINE = 2
@@ -315,9 +326,24 @@ func _render_tile(tile: Button, square: int, action: String) -> void:
 	content.add_child(text)
 	UI.label(text, unit.name, 19).text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	var details: String = Cards.ELEMENTS.get(unit.element, "物理")
+	var equipment := HBoxContainer.new()
+	equipment.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	text.add_child(equipment)
+	var element := TextureRect.new()
+	element.name = "ElementIcon"
+	element.texture = ELEMENT_ICONS.get(unit.element, ELEMENT_ICONS.normal)
+	element.custom_minimum_size = Vector2(ELEMENT_SIZE, ELEMENT_SIZE)
+	element.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	element.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	element.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	equipment.add_child(element)
 	if not unit.weapon.is_empty():
-		details += " · " + battle._weapon(unit).name
-	UI.label(text, details, 13, UI.GOLD).text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		var weapon_name: String = battle._weapon(unit).name
+		details += " · " + weapon_name
+		var weapon := UI.label(equipment, weapon_name, 13, UI.GOLD)
+		weapon.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		weapon.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		weapon.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	if action == "attack":
 		var damage := UI.label(text, "可攻击 · %d 伤害" % battle.attack_power(battle.board[selected_square]), 13, UI.ORANGE)
 		damage.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS

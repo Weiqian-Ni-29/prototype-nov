@@ -427,6 +427,21 @@ func check_board_badges() -> void:
 	expect(view.wait_button.visible, "A blocked player can pass from above the board")
 	await click(view.wait_button)
 	expect(battle.turn == Chess.ENEMY and not view.wait_button.visible, "Passing hands the turn to the enemy")
+	var elements := Cards.ELEMENTS.keys()
+	for square in elements.size():
+		var piece: Dictionary = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
+		piece.element = elements[square]
+		battle.board[square] = piece
+	view.render()
+	await process_frame
+	for square in elements.size():
+		var tile := view.cells[square]
+		var icon := tile.find_child("ElementIcon", true, false) as TextureRect
+		var attribute_name: String = Cards.ELEMENTS[elements[square]]
+		expect(icon != null and icon.texture != null and icon.texture.resource_path.ends_with("/%s.svg" % elements[square])
+			and tile.get_global_rect().encloses(icon.get_global_rect()) and attribute_name in tile.accessibility_name
+			and not tile.find_children("*", "Label", true, false).any(func(label): return label.text == attribute_name),
+			"Each attribute has its own visible icon and accessible name: " + attribute_name)
 	view.queue_free()
 	await process_frame
 
