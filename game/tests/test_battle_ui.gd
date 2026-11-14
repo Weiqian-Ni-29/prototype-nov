@@ -5,6 +5,7 @@ const Run = preload("res://scripts/domain/expedition.gd")
 const Chess = preload("res://scripts/domain/chess_battle.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
+const Items = preload("res://scripts/domain/expedition_items.gd")
 const ChessView = preload("res://scripts/presentation/chess_battle_view.gd")
 
 var checks := 0
@@ -186,6 +187,50 @@ func check_rules() -> void:
 		"Victory awards loot and creates a saved receipt")
 	battle._finish("victory")
 	expect(battle.run.actor("hero").inventory == before, "Settlement cannot grant twice")
+
+func check_equipment_replacement() -> void:
+	var battle = fixture()
+	var unit: Dictionary = battle.board[10]
+	battle.mana[Chess.PLAYER] = 10
+	battle.hands[Chess.PLAYER] = ["temp:pike", "blade"]
+	var base_attack: int = battle.attack_power(unit)
+	expect(battle.play(0, 10) and battle.attack_power(unit) == base_attack + 1 and battle._attack_range(unit) == 2,
+		"The temporary pike grants its attack and range")
+	expect(not battle.play(0, 1) and battle.hands[Chess.PLAYER] == ["blade"] and unit.weapon == "temp:pike",
+		"A replacement cannot target an enemy")
+	expect(battle.play(0, 10) and battle.hands[Chess.PLAYER] == ["temp:pike"] and unit.weapon == "blade"
+		and battle.attack_power(unit) == base_attack + 2 and battle._attack_range(unit) == 1
+		and battle.mana[Chess.PLAYER] == 7 and battle.can_move_piece(),
+		"Swapping the weapon charges only the new card, returns the exact ID, and replaces attack and range")
+
+	var armor_uid := Items.add_gear(battle.run.data, "padded_coat", "common", "actor", "hero")
+	var other_armor_uid := Items.add_gear(battle.run.data, "padded_coat", "common", "actor", "hero")
+	battle.run.data.gear_instances[armor_uid].enhance_level = 2
+	var armor := "gear:" + armor_uid
+	var other_armor := "gear:" + other_armor_uid
+	var base_armor: int = unit.armor
+	battle.hands[Chess.PLAYER] = [armor, other_armor, "brace"]
+	expect(battle.play(0, 10) and unit.armor == base_armor + 5, "The upgraded coat grants five armor")
+	battle._damage(unit, 2)
+	expect(battle.play(1, 10) and battle.play(0, 10) and unit.armor == base_armor + 6
+		and battle.hands[Chess.PLAYER] == [armor] and battle.definition(armor).level == 2 and unit.weapon == "blade",
+		"An armor swap removes remaining armor from the old coat and preserves defense buffs and card upgrades")
+
+	var charm_uid := Items.add_gear(battle.run.data, "lamp_charm", "common", "actor", "hero")
+	var stronger_charm_uid := Items.add_gear(battle.run.data, "lamp_charm", "common", "actor", "hero")
+	battle.run.data.gear_instances[stronger_charm_uid].enhance_level = 2
+	var charm := "gear:" + charm_uid
+	var stronger_charm := "gear:" + stronger_charm_uid
+	var base_hp_max: int = unit.hp_max
+	battle.hands[Chess.PLAYER] = [stronger_charm, charm]
+	battle.mana[Chess.PLAYER] = 6
+	expect(battle.play(0, 10) and unit.hp_max == base_hp_max + 2, "The stronger charm raises maximum health")
+	unit.hp = 1
+	expect(battle.play(0, 10) and unit.hp_max == base_hp_max + 1 and unit.hp == 1
+		and battle.hands[Chess.PLAYER] == [stronger_charm],
+		"Swapping to a weaker charm removes its previous HP bonus without defeating the wearer")
+	expect(not battle.play(0, 10) and unit.hp_max == base_hp_max + 1 and battle.hands[Chess.PLAYER] == [stronger_charm],
+		"An unaffordable replacement leaves the equipment and hand intact")
 
 func check_retaliation() -> void:
 	var battle = fixture()
@@ -804,6 +849,13 @@ func _detail_text(view: Node) -> String:
 			parts.append(node.text)
 	return "\n".join(parts)
 
+func move_mouse(point: Vector2) -> void:
+	var event := InputEventMouseMotion.new()
+	event.position = point
+	root.push_input(event, true)
+	await process_frame
+	await process_frame
+
 func check_hover_details() -> void:
 	var game := Main.instantiate()
 	root.add_child(game)
@@ -863,6 +915,37 @@ func check_hover_details() -> void:
 	await process_frame
 	text = _detail_text(view)
 	expect("当前装备" in text and "护沿短戟" in text, "Equipped popup lists the carried weapon")
+	var tile := view.cells[10] as Button
+	var rack := tile.get_node("PieceFace/EquipmentSlots")
+	var occupied := rack.get_node("weapon") as Control
+	var empty := rack.get_node("armor") as Control
+	await move_mouse(occupied.get_global_rect().get_center())
+	text = _detail_text(view)
+	expect("武器 · 已装备" in text and "护沿短戟" in text and "攻击 +1" in text and "移动与攻击" not in text,
+		"Moving over the weapon slot shows only that equipment and its effects")
+	await move_mouse(empty.get_global_rect().get_center())
+	text = _detail_text(view)
+	expect("护甲" in text and "空槽" in text and "护沿短戟" not in text, "Moving across slots switches to the empty armor tooltip")
+	var identity := tile.get_node("PieceFace/Identity") as Control
+	await move_mouse(identity.get_global_rect().get_center())
+	expect("移动与攻击" in _detail_text(view), "Moving back to the portrait restores the unit tooltip")
+
+	game.combat.hands[Chess.PLAYER] = ["blade"]
+	game.combat.mana[Chess.PLAYER] = 1
+	view.render()
+	await click(view.hand_buttons[0])
+	occupied = tile.get_node("PieceFace/EquipmentSlots/weapon") as Control
+	var point := occupied.get_global_rect().get_center()
+	await move_mouse(point)
+	expect("点击替换" in _detail_text(view), "An occupied target explains where its old card goes")
+	var attack := int(tile.get_node("Attack").get_child(0).text)
+	await click(tile, (point - tile.global_position) / tile.size)
+	expect(view.hand_ids == ["pike"] and tile.get_node("Attack").get_child(0).text == str(attack + 1),
+		"Clicking through a slot replaces the weapon, puts the old card in the hand, and updates the attack badge")
+	expect("巡路短刃" in _detail_text(view) and "护沿短戟" not in _detail_text(view),
+		"A pointer held over the swapped slot sees the new weapon immediately")
+	await move_mouse(view.cells[7].get_global_rect().get_center())
+	expect(not view.hover_detail.visible, "Leaving the piece closes its equipment tooltip")
 	game.combat.turn = Chess.PLAYER
 	game.combat.run.data.actors["eve"] = {"breakthrough": 3}
 	game.combat.hands[Chess.PLAYER] = ["eve"]
@@ -883,6 +966,7 @@ func execute() -> void:
 	check_mana()
 	check_enemy_turn_budget()
 	check_rules()
+	check_equipment_replacement()
 	check_retaliation()
 	check_fatigue()
 	check_enemy_strategy()

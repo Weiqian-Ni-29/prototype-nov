@@ -28,8 +28,8 @@ const PARTNERS = {
 	"oathguard": {"attack": 3, "hp": 7, "armor": 3, "element": "earth", "trait": "横竖走一格，带着 3 点护甲登场。"},
 }
 const ACTIONS = {
-	"blade": {"cost": 1, "name": "巡路短刃", "kind": "weapon", "icon": "trail_blade", "attack": 2, "trait": "给一枚友方棋子装备短刃，本场攻击 +2。每枚棋子装备一把武器。"},
-	"pike": {"cost": 2, "name": "护沿短戟", "kind": "weapon", "icon": "frontier_guard_weapon", "attack": 1, "range": 2, "trait": "攻击 +1，可沿无阻挡的直线攻击两格。每枚棋子装备一把武器。"},
+	"blade": {"cost": 1, "name": "巡路短刃", "kind": "weapon", "icon": "trail_blade", "attack": 2, "trait": "装备后攻击 +2。替换下来的武器牌回到手牌。"},
+	"pike": {"cost": 2, "name": "护沿短戟", "kind": "weapon", "icon": "frontier_guard_weapon", "attack": 1, "range": 2, "trait": "装备后攻击 +1，可沿无阻挡的直线攻击两格。替换下来的武器牌回到手牌。"},
 	"coat": {"cost": 1, "name": "夹棉旅衣", "kind": "defense", "icon": "padded_coat", "armor": 3, "trait": "选一枚友方棋子，增加 3 点护甲。"},
 	"brace": {"cost": 1, "name": "护身", "kind": "defense", "icon": "shield", "armor": 3, "trait": "选一枚友方棋子，增加 3 点护甲。"},
 	"ward": {"cost": 2, "name": "列阵", "kind": "defense", "icon": "shield", "armor": 2, "column": true, "trait": "选一枚友方棋子，同列所有己方棋子各获得 2 点护甲。"},
@@ -97,6 +97,11 @@ static func definition(id: String, rank: int = 0) -> Dictionary:
 		entry.merge(talent.changes, true)
 		entry.trait += "\n天赋 · %s。%s" % [talent.name, talent.text]
 	return entry
+
+static func equipment_slot(card: Dictionary) -> String:
+	if card.get("kind") == "weapon":
+		return "weapon"
+	return card.get("slot", "") if card.get("kind") == "equipment" else ""
 
 static func is_archer(actor: Dictionary) -> bool:
 	return actor.get("skill") in ["frost_arrow", "trail_shot"] or actor.get("ultimate") == "arrow_rain"
