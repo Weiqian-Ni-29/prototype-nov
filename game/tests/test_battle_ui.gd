@@ -56,9 +56,15 @@ func check_rules() -> void:
 		"Enemy blocks the two-square move behind it")
 	expect(battle.move(7, 4) and battle.board[4].hp == 2 and battle.board[4].armor == 0
 		and battle.board[7].name == "铅翼", "Nonlethal attack consumes armor first and leaves both pieces in place")
+	var hit: Dictionary = battle.take_attack()
+	expect(hit.from == 7 and hit.target == 4 and hit.defender.hp == 6 and hit.defender.armor == 1
+		and hit.hp == 2 and hit.armor == 0 and hit.hp_loss == 4 and hit.armor_loss == 1
+		and not hit.lethal and battle.take_attack().is_empty(), "Attack presentation receives pre-hit cards and actual losses once")
 	battle.turn = Chess.PLAYER
 	expect(battle.move(7, 4) and battle.board[7].is_empty() and battle.board[4].name == "铅翼",
 		"Only the lethal attack captures the square")
+	hit = battle.take_attack()
+	expect(hit.lethal and hit.hp_loss == 2 and hit.hp == 0, "Overkill displays only the health the defender lost")
 	battle.turn = Chess.PLAYER
 	battle.board[4].hp = 3
 	battle.hands[Chess.PLAYER] = ["eve"]
@@ -79,6 +85,7 @@ func check_rules() -> void:
 	battle.hands[Chess.PLAYER] = ["rain"]
 	expect(battle.play(0, -1) and battle.weather == "rain" and battle.attack_power(battle.board[7]) == 3,
 		"Weather modifies elemental attacks and costs the same one action")
+	expect(battle.take_attack().is_empty(), "Playing a weather card does not create an attack animation")
 	battle.turn = Chess.PLAYER
 	battle.commanders[Chess.ENEMY].hp = 1
 	battle.commanders[Chess.ENEMY].armor = 0
@@ -93,6 +100,61 @@ func check_rules() -> void:
 		"Victory awards loot and creates a saved receipt")
 	battle._finish("victory")
 	expect(battle.run.actor("hero").inventory == before, "Settlement cannot grant twice")
+
+func check_attack_feedback() -> void:
+	var battle = fixture("archer")
+	var enemy: Dictionary = battle.board[1]
+	battle.board[4] = enemy
+	battle.board[1] = {}
+	expect(enemy.range == 1 and enemy.attack_delivery == "ranged" and enemy.attack_projectile == "arrow"
+		and Cards.definition("support_vanguard").get("attack_delivery", "melee") == "melee",
+		"Attack delivery is independent of legal reach for archers and melee vanguards")
+	battle.board[7] = battle.board[10]
+	battle.board[10] = {}
+	battle.board[7].armor = 10
+	var view := ChessView.new()
+	root.add_child(view)
+	view.setup(battle, null)
+	await process_frame
+	await process_frame
+	var target_rect := view.cells[7].get_global_rect()
+	var round_before: int = battle.round_number
+	# Force the board action to be the archer shooting the neighboring commander.
+	enemy.move = 0
+	enemy.diagonal = false
+	battle.hands[Chess.ENEMY] = []
+	battle.turn = Chess.ENEMY
+	battle.enemy_turn(true)
+	view.present_action()
+	var effect := view.attack_effect
+	expect(effect != null and effect.ranged and effect.arrow and effect.attack.from == 4 and effect.attack.target == 7
+		and battle.round_number == round_before and not view.turn_banner.visible and view.menu.disabled,
+		"The real enemy action animates an adjacent ranged attack before returning player input")
+	if effect != null:
+		var before := effect.attacker.position
+		await effect.impact
+		expect(effect.attacker.position.is_equal_approx(before) and effect.losses.get_child_count() == 1
+			and effect.losses.get_child(0).get_child(0).text.begins_with("护甲")
+			and effect.defender.get_node("Armor").get_child(0).text == str(battle.board[7].armor)
+			and view.cells[7].get_global_rect() == target_rect,
+			"An armor-only projectile leaves the attacker and grid in place and updates only armor")
+		await effect.finished
+	expect(not view.is_attack_playing() and not view.menu.disabled, "The attack overlay releases its input lock")
+
+	battle.turn = Chess.PLAYER
+	battle.board[7].attack = 0
+	view.render()
+	view.cells[7].pressed.emit()
+	view.cells[4].pressed.emit()
+	effect = view.attack_effect
+	expect(effect != null and not effect.ranged, "Normal player input triggers the melee presentation")
+	if effect != null:
+		await effect.impact
+		expect(effect.losses.get_child_count() == 1 and effect.losses.get_child(0).get_child(0).text == "未造成伤害",
+			"A zero-damage hit shows no armor or health loss")
+		await effect.finished
+	view.queue_free()
+	await process_frame
 
 func check_fatigue() -> void:
 	var battle = fixture()
@@ -630,6 +692,7 @@ func execute() -> void:
 	check_enemy_strategy()
 	check_companion_growth()
 	check_battle_income()
+	await check_attack_feedback()
 	await check_ui()
 	await check_hand_layout()
 	await check_deck_draw()

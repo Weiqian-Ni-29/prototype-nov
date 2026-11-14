@@ -49,9 +49,13 @@ func _exit_tree() -> void:
 	cache.clear()
 
 func _synthesize(kind: String) -> AudioStreamWAV:
+	var impact := kind.begins_with("chess_")
 	var frequencies = [523.25, 659.25, 783.99] if kind == "victory" else [440.0]
 	var sample_rate = 22050
-	var duration = 0.11 if kind == "click" else 0.25
+	var duration = 0.13 if impact else 0.11 if kind == "click" else 0.25
+	var pitch := 730.0 if kind == "chess_block" else 340.0 if kind == "chess_shot" else 105.0
+	var noise := RandomNumberGenerator.new()
+	noise.seed = 721
 	var count = int(sample_rate * duration)
 	var pcm = PackedByteArray()
 	pcm.resize(count * 2)
@@ -59,8 +63,14 @@ func _synthesize(kind: String) -> AudioStreamWAV:
 		var t = float(i) / sample_rate
 		var envelope = sin(PI * t / duration) * exp(-t * 8.0)
 		var value = 0.0
-		for f in frequencies:
-			value += sin(TAU * f * t) / frequencies.size()
+		if impact:
+			var tone := sin(TAU * pitch * t * (1.0 - t * 1.8)) * exp(-t * 39.0)
+			var snap := noise.randf_range(-1.0, 1.0) * exp(-t * 125.0)
+			value = tone * 0.68 + snap * 0.30
+			envelope = minf(1.0, t * 1200.0)
+		else:
+			for f in frequencies:
+				value += sin(TAU * f * t) / frequencies.size()
 		pcm.encode_s16(i * 2, int(value * envelope * 18000))
 	var wave = AudioStreamWAV.new()
 	wave.format = AudioStreamWAV.FORMAT_16_BITS
