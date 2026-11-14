@@ -304,11 +304,15 @@ func _open_line(from: int, target: int, reach: int) -> bool:
 			return false
 	return true
 
-func _spell_in_range(side: int, target: int) -> bool:
+func _spell_source(side: int, target: int) -> int:
+	var source := -1
+	var closest := 3
 	for from in board.size():
-		if board[from].get("side", -1) == side and _open_line(from, target, 2):
-			return true
-	return false
+		var distance := _distance(from, target)
+		if distance < closest and board[from].get("side", -1) == side and _open_line(from, target, 2):
+			source = from
+			closest = distance
+	return source
 
 func moves(from: int) -> Dictionary:
 	var options := {}
@@ -359,7 +363,7 @@ func card_targets(side: int, index: int) -> Array[int]:
 			if piece.is_empty() and ((_row(square) >= 2) == (side == PLAYER)):
 				targets.append(square)
 		elif card.has("damage"):
-			if not piece.is_empty() and piece.side != side and _spell_in_range(side, square):
+			if not piece.is_empty() and piece.side != side and _spell_source(side, square) >= 0:
 				targets.append(square)
 		elif piece.get("side", -1) == side:
 			match card.kind:
@@ -731,8 +735,7 @@ func _exchange_hits(from: int, target: int, strike: Dictionary) -> void:
 	var attacker: Dictionary = strike.unit
 	var defender: Dictionary = strike.victim
 	if not public_preview:
-		last_attack = {"from": from, "target": target, "attacker": attacker.duplicate(true),
-			"defender": defender.duplicate(true), "distance": strike.distance}
+		last_attack = _attack_presentation(from, target, strike.distance)
 	if attacker.side == PLAYER:
 		_relic("attack", strike)
 	attacker.erase("sight")
@@ -752,6 +755,10 @@ func _exchange_hits(from: int, target: int, strike: Dictionary) -> void:
 	if not public_preview:
 		last_attack.merge(_hit_result(strike))
 		last_attack.retaliation = {} if counter.is_empty() else _hit_result(counter)
+
+func _attack_presentation(from: int, target: int, distance: int) -> Dictionary:
+	return {"from": from, "target": target, "attacker": board[from].duplicate(true),
+		"defender": board[target].duplicate(true), "distance": distance, "retaliation": {}}
 
 func _hit_damage(base: int, context: Dictionary) -> int:
 	if context.victim.side == PLAYER:
@@ -822,6 +829,11 @@ func _apply_card(side: int, id: String, card: Dictionary, target: int) -> void:
 			_heal_adjacent(target)
 		"spell":
 			if card.has("damage"):
+				if not public_preview:
+					var source := _spell_source(side, target)
+					last_attack = _attack_presentation(source, target, _distance(source, target))
+					last_attack.spell = card.name
+					last_attack.element = card.element
 				var element: String = card.element
 				var context := {"unit": {}, "victim": piece, "square": target, "kind": "spell",
 					"element": element, "id": id, "bonus": 0, "pierce": 0, "block": 0,
@@ -829,8 +841,12 @@ func _apply_card(side: int, id: String, card: Dictionary, target: int) -> void:
 				if side == PLAYER:
 					_relic("spell", context)
 				_deal_hit(int(card.damage), context)
-				if card.get("slow", false) and piece.hp > 0:
+				var slowed: bool = card.get("slow", false) and piece.hp > 0
+				if slowed:
 					piece.slow_until = round_number + int(side == ENEMY and turns_started[PLAYER] > 0)
+				if not public_preview:
+					last_attack.merge(_hit_result(context))
+					last_attack.slowed = slowed
 			elif card.has("heal"):
 				_heal(piece, int(card.heal), "spell")
 		"weapon", "equipment":

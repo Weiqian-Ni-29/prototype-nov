@@ -333,8 +333,43 @@ func check_retaliation() -> void:
 	var hp_before: int = battle.board[10].hp
 	var armor_before: int = battle.board[10].armor
 	expect(battle.play(0, 4) and battle.board[4].is_empty() and battle.board[10].hp == hp_before
-		and battle.board[10].armor == armor_before and battle.take_attack().is_empty(),
-		"A targeted damage spell resolves without retaliation")
+		and battle.board[10].armor == armor_before, "A lethal damage spell leaves its caster in place without retaliation")
+	hit = battle.take_attack()
+	expect(hit.get("spell") == "余烬" and hit.from == 10 and hit.target == 4 and hit.defender.hp == 1
+		and hit.lethal and hit.retaliation.is_empty() and battle.take_attack().is_empty(),
+		"The fire spell supplies its source, pre-hit target, and lethal result exactly once")
+
+func check_spell_feedback() -> void:
+	var battle = fixture()
+	var target: Dictionary = battle.board[1]
+	target.armor = 1
+	var caster: Dictionary = battle._piece(Cards.definition("eve"), Chess.PLAYER)
+	battle.board[4] = caster
+	battle.board[7] = battle.board[10]
+	battle.board[10] = {}
+	battle.hands[Chess.PLAYER] = ["ice_spell"]
+	battle.draw_count = 0
+	var view := ChessView.new()
+	root.add_child(view)
+	view.setup(battle, null)
+	await process_frame
+	await process_frame
+	view.hand_buttons[0].pressed.emit()
+	view.cells[1].pressed.emit()
+	var effect := view.attack_effect
+	expect(effect != null and effect.ice and effect.attack.from == 4 and effect.attack.target == 1
+		and effect.attack.defender.armor == 1 and view.end_turn_button.disabled,
+		"Ice Needle starts at the unobstructed ally and keeps the defender's old armor until contact")
+	if effect != null:
+		if not effect.contacted:
+			await effect.impact
+		expect(effect.attack.hp_loss == 0 and effect.attack.slowed and effect.losses.get_child_count() == 2
+			and target.slow_until == battle.round_number, "An absorbed Ice Needle still shows armor loss and slow at contact")
+		await effect.finished
+	expect(not view.is_action_playing() and not view.end_turn_button.disabled and view.card_history.shown_count == 1,
+		"Input and the card record update after the spell animation")
+	view.queue_free()
+	await process_frame
 
 func check_attack_feedback() -> void:
 	var battle = fixture("archer")
@@ -1087,6 +1122,7 @@ func execute() -> void:
 	check_companion_growth()
 	check_battle_income()
 	await check_attack_feedback()
+	await check_spell_feedback()
 	await check_ui()
 	await check_hand_layout()
 	await check_mana_display()

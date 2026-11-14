@@ -7,12 +7,19 @@ const UI = preload("res://scripts/presentation/card_ui.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const PLATE_INSET = 4.0
 const WINDUP = 0.105
+const SPELL_WINDUP = 0.145
+const SPELL_DURATION = 0.96
 const MELEE_CONTACT = 0.185
 const MELEE_HOLD = 0.045
 const RANGED_HOLD = 0.030
 const GOLD = Color("ffbc5f")
 const CYAN = Color("8ce9ff")
 const WHITE = Color("fff5da")
+const EMBER = Color("fa8244")
+const EMBER_CORE = Color("ffd697")
+const ICE = Color("54bdea")
+const ICE_CORE = Color("a9edff")
+const ICE_WHITE = Color("e8ffff")
 
 var attack: Dictionary
 var source_tile: Control
@@ -25,6 +32,10 @@ var losses: HBoxContainer
 var retaliation_losses: HBoxContainer
 var ranged: bool
 var arrow: bool
+var spell: bool
+var ice: bool
+var spell_tint: Color
+var spell_core: Color
 var contact_time: float
 var duration: float
 var elapsed := 0.0
@@ -40,11 +51,18 @@ func play(event: Dictionary, source: Control, target: Control, face: Callable) -
 	source_tile = source
 	target_tile = target
 	build_face = face
-	ranged = Cards.is_ranged(attack.attacker)
+	spell = attack.has("spell")
+	ice = spell and attack.element == "ice"
+	spell_tint = ICE if ice else EMBER
+	spell_core = ICE_CORE if ice else EMBER_CORE
+	ranged = spell or Cards.is_ranged(attack.attacker)
 	retaliation = attack.retaliation
-	arrow = ranged and attack.attacker.get("attack_projectile") == "arrow"
+	arrow = not spell and ranged and attack.attacker.get("attack_projectile") == "arrow"
 	contact_time = 0.235 + 0.035 * float(attack.distance - 1) if ranged else MELEE_CONTACT
 	duration = contact_time + (0.54 if attack.lethal or retaliation.get("lethal", false) else 0.475)
+	if spell:
+		contact_time = (0.395 if ice else 0.450) - 0.065 * float(2 - attack.distance)
+		duration = SPELL_DURATION
 	name = "ChessAttackEffect"
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	z_index = 10
@@ -108,6 +126,8 @@ func _show_hit(plate: Panel, before: Dictionary, hit: Dictionary, row: HBoxConta
 		_add_loss(row, "生命 −%d" % hit.hp_loss, Color("ff9c88"))
 	if row.get_child_count() == 0:
 		_add_loss(row, "未造成伤害", Color("e0e1d2"))
+	if hit.get("slowed", false):
+		_add_loss(row, "减速", ICE_CORE)
 	row.show()
 
 func _add_loss(row: HBoxContainer, value: String, color: Color) -> void:
@@ -137,6 +157,10 @@ func _animate(time: float) -> void:
 	muzzle = start + direction * source_edge * 0.32
 	strike_point = end - direction * (target_edge - (18.0 if ranged else 5.0))
 	retaliation_point = start + direction * (source_edge - 8.0)
+	if spell:
+		muzzle = _portrait_point(attacker, source) + Vector2(8, 0)
+		strike_point = _portrait_point(defender, target)
+		direction = muzzle.direction_to(strike_point)
 
 	var attacker_pos := start
 	var defender_pos := end
@@ -175,7 +199,7 @@ func _animate(time: float) -> void:
 		if retaliation.get("lethal", false):
 			attacker_alpha = 1.0 - _progress(age, hold, 0.19)
 			attacker_scale -= 0.09 * (1.0 - attacker_alpha)
-		elif attack.lethal:
+		elif attack.lethal and not spell:
 			var occupy := _ease_out(_progress(age, 0.19, 0.415))
 			attacker_pos = (start if ranged else collision).lerp(end, occupy)
 			tilt = 0.028 * tilt_sign * (1.0 - occupy) if not ranged else 0.0
@@ -188,6 +212,13 @@ func _animate(time: float) -> void:
 	attacker.modulate.a = attacker_alpha
 	defender.modulate.a = defender_alpha
 	particles.queue_redraw()
+
+func _portrait_point(plate: Control, tile: Rect2) -> Vector2:
+	var portrait := plate.get_node_or_null("PieceFace/Identity/Portrait") as Control
+	if portrait != null and portrait.size.y > 1.0:
+		var to_plate := plate.get_global_transform().affine_inverse() * portrait.get_global_transform()
+		return tile.position + to_plate * (portrait.size * Vector2(0.56, 0.40))
+	return tile.position + Vector2(clampf(tile.size.x * 0.15, 30.0, 85.0), tile.size.y * 0.63)
 
 func _float_losses(row: HBoxContainer, tile: Rect2, time: float) -> void:
 	var float_size := row.get_combined_minimum_size()
@@ -206,6 +237,9 @@ func _pose(plate: Control, center: Vector2, plate_size: Vector2, zoom: float, ti
 func _draw_particles() -> void:
 	if direction.is_zero_approx():
 		return
+	if spell:
+		_draw_spell()
+		return
 	if contacted:
 		var age := elapsed - contact_time
 		_draw_burst(strike_point, age, ranged, attack.hp_loss == 0)
@@ -220,6 +254,81 @@ func _draw_particles() -> void:
 		for lane in [-1.0, 0.0, 1.0]:
 			var tip := tail + across * float(lane) * 18.0
 			particles.draw_line(tip - direction * (24.0 + strength * 28.0), tip, Color(GOLD, strength * 0.55), 2.0, true)
+
+func _draw_spell() -> void:
+	if contacted:
+		_draw_spell_impact(elapsed - contact_time)
+		return
+	var gather := _progress(elapsed, 0.0, SPELL_WINDUP)
+	var charge := gather * (1.0 - _progress(elapsed, SPELL_WINDUP, SPELL_WINDUP + 0.115))
+	if charge > 0.0:
+		_glow(muzzle, 43.0, spell_tint, charge * 0.70)
+		particles.draw_arc(muzzle, lerpf(28.0, 9.0, gather), 0.0, TAU, 28, Color(spell_core, charge), 1.5, true)
+		for i in 7:
+			var angle := float(i) * TAU / 7.0 + gather * 0.8
+			var spark := muzzle + Vector2.from_angle(angle) * lerpf(39.0, 8.0, gather)
+			_shard(spark, Vector2.from_angle(angle), Vector2(2, 5), Color(spell_core, charge))
+	if elapsed < SPELL_WINDUP:
+		return
+	var travel := _progress(elapsed, SPELL_WINDUP, contact_time)
+	var head := _spell_point(travel)
+	var tail := _spell_point(maxf(0.0, travel - (0.33 if ice else 0.25)))
+	_glow(head, 32.0 if ice else 44.0, spell_tint, 0.9)
+	particles.draw_line(tail, head, Color(spell_tint, 0.38), 7.0 if ice else 15.0, true)
+	particles.draw_line(tail, head, Color(spell_core, 0.85), 2.0 if ice else 5.0, true)
+	for i in range(1, 12):
+		var lag := float(i) * 0.025
+		if travel < lag:
+			break
+		var spread := sin(float(i) * 2.8 + travel * 7.0) * float(i) * (1.0 if ice else 1.65)
+		var fragment := _spell_point(travel - lag) + direction.orthogonal() * spread
+		_shard(fragment, direction, Vector2(maxf(1.0, 4.0 - float(i) * 0.25), 6), Color(spell_core, 0.9 - lag * 2.5))
+	if ice:
+		_shard(head, direction, Vector2(8, 20), ICE_CORE)
+		_shard(head + direction * 3.0, direction, Vector2(3.5, 15), ICE_WHITE)
+	else:
+		_glow(head, 15.0, EMBER_CORE, 1.0)
+		_glow(head, 8.0, WHITE, 1.0)
+
+func _spell_point(travel: float) -> Vector2:
+	return muzzle.lerp(strike_point, travel) + direction.orthogonal() * sin(travel * PI) * (2.0 if ice else 15.0)
+
+func _draw_spell_impact(age: float) -> void:
+	var fade := 1.0 - _progress(age, 0.0, 0.365)
+	var spread := _ease_out(1.0 - fade)
+	if ice and attack.get("slowed", false):
+		var frost := _progress(age, 0.055, 0.18) * (1.0 - _progress(age, 0.27, 0.51))
+		particles.draw_arc(strike_point, 26.0, 0.0, TAU, 30, Color(ICE_CORE, frost), 1.5, true)
+	if fade <= 0.0:
+		return
+	_glow(strike_point, 31.0 + spread * 53.0, spell_tint, fade * 0.88)
+	_glow(strike_point, 25.0, ICE_WHITE if ice else WHITE, pow(fade, 4.0))
+	particles.draw_arc(strike_point, 8.0 + spread * 55.0, 0.0, TAU, 36, Color(spell_core, fade * 0.83), 2.5, true)
+	if ice:
+		for i in 6:
+			var ray := Vector2.from_angle(float(i) * TAU / 6.0 + 0.18)
+			var tip := strike_point + ray * (8.0 + spread * 45.0)
+			particles.draw_line(strike_point, tip, Color(ICE_CORE, fade * 0.62), 1.5, true)
+			_shard(tip, ray, Vector2(4, 9), Color(ICE_WHITE, fade))
+	for i in 24:
+		var ray := Vector2.from_angle(float(i) * 2.39996)
+		var point := strike_point + ray * spread * float(22 + (i * 17) % 54)
+		var width := 1.4 + float(i % 4) * 0.65
+		if ice:
+			_shard(point, ray, Vector2(width * 0.7, width * 2.4), Color(ICE_CORE, fade))
+		else:
+			particles.draw_line(point - ray * 9.0 * fade, point, Color(EMBER_CORE, fade), width, true)
+
+func _glow(point: Vector2, radius: float, tint: Color, opacity: float) -> void:
+	for i in range(7, 0, -1):
+		var fraction := float(i) / 7.0
+		particles.draw_circle(point, radius * fraction, Color(tint, opacity * (0.065 + (1.0 - fraction) * 0.24)), true, -1.0, true)
+
+func _shard(point: Vector2, forward: Vector2, half_size: Vector2, color: Color) -> void:
+	var long_axis := forward * half_size.y
+	var short_axis := forward.orthogonal() * half_size.x
+	particles.draw_colored_polygon(PackedVector2Array([point + long_axis, point + short_axis - long_axis * 0.28,
+		point - long_axis, point - short_axis - long_axis * 0.28]), color)
 
 func _draw_projectile() -> void:
 	var across := direction.orthogonal()

@@ -202,7 +202,7 @@ func _show_turn_banner() -> void:
 	turn_banner_tween.tween_property(turn_banner, "modulate:a", 0.0, 0.22)
 	turn_banner_tween.tween_callback(turn_banner.hide)
 
-func render() -> void:
+func render(hold_square: int = -1) -> void:
 	if is_attack_playing():
 		return
 	var usable: bool = battle.can_act()
@@ -214,6 +214,9 @@ func render() -> void:
 	var selected_equipment := _selected_card_definition()
 	var equipment_slot := Cards.equipment_slot(selected_equipment)
 	for square in cells.size():
+		if square == hold_square:
+			cells[square].disabled = true
+			continue
 		_render_tile(cells[square], square, legal.get(square, ""))
 	if selected_square >= 0:
 		hint.text = "绿格可移动或部署 · 橙格可攻击"
@@ -256,20 +259,25 @@ func present_action() -> void:
 	if is_action_playing():
 		return
 	var event: Dictionary = battle.take_attack()
-	if event.is_empty():
-		var count: int = battle.played_cards.size()
-		if count > card_history.shown_count and battle.played_cards[-1].side == Battle.ENEMY:
-			_present_enemy_card(battle.played_cards[-1])
-		else:
-			render()
-		return
+	var count: int = battle.played_cards.size()
+	if count > card_history.shown_count and battle.played_cards[-1].side == Battle.ENEMY:
+		_present_enemy_card(battle.played_cards[-1], event)
+	elif event.is_empty():
+		render()
+	else:
+		_present_attack(event)
+
+func _present_attack(event: Dictionary) -> void:
 	_hide_detail()
 	_hide_turn_banner()
+	card_history.close_history()
+	card_history.toggle.disabled = true
 	menu.disabled = true
 	retreat.disabled = true
 	end_turn_button.disabled = true
 	end_turn_button.text = "敌方回合" if battle.turn == Battle.ENEMY else "结束回合"
-	hint.text = "%s 攻击 %s" % [event.attacker.name, event.defender.name]
+	hint.text = "%s 对 %s 释放「%s」" % [event.attacker.name, event.defender.name, event.spell] if event.has("spell") \
+		else "%s 攻击 %s" % [event.attacker.name, event.defender.name]
 	for square in cells.size():
 		_render_tile(cells[square], square, "", square == event.from or square == event.target)
 		cells[square].disabled = true
@@ -277,6 +285,10 @@ func present_action() -> void:
 		button.disabled = true
 	_update_enemy_resources()
 	attack_effect = AttackEffect.new()
+	if event.has("spell"):
+		_render_hand()
+		_update_draw_counts()
+		_update_mana_display()
 	add_child(attack_effect)
 	attack_effect.impact.connect(attack_impact.emit)
 	attack_effect.finished.connect(_finish_attack)
@@ -287,15 +299,17 @@ func _hide_turn_banner() -> void:
 		turn_banner_tween.kill()
 	turn_banner.hide()
 
-func _present_enemy_card(play: Dictionary) -> void:
+func _present_enemy_card(play: Dictionary, event: Dictionary) -> void:
 	pending_reveal = true
 	card_history.close_history()
 	_hide_detail()
-	render()
+	render(event.get("target", -1))
 	_hide_turn_banner()
 	menu.disabled = true
 	card_history.toggle.disabled = true
-	hint.text = "敌方打出「%s」 · %s" % [play.card.name, CardHistory.summary(play, 1).replace("\n", " · ")]
+	hint.text = "敌方打出「%s」" % play.card.name
+	if event.is_empty():
+		hint.text += " · " + CardHistory.summary(play, 1).replace("\n", " · ")
 	reveal_card = Panel.new()
 	reveal_card.name = "EnemyCardReveal"
 	reveal_card.z_index = 50
@@ -306,7 +320,7 @@ func _present_enemy_card(play: Dictionary) -> void:
 	var animation := create_tween()
 	animation.tween_interval(ENEMY_CARD_HOLD)
 	animation.tween_method(_position_reveal, 0.0, 1.0, ENEMY_CARD_FLIGHT).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	animation.tween_callback(_finish_card_reveal)
+	animation.tween_callback(_finish_card_reveal.bind(event))
 
 func _position_reveal(progress: float) -> void:
 	var large_scale := clampf(size.y / 435.0, 1.3, 2.0)
@@ -316,16 +330,20 @@ func _position_reveal(progress: float) -> void:
 	reveal_card.position = start.lerp(landing, progress)
 	reveal_card.scale = Vector2.ONE * lerpf(large_scale, small_scale, progress)
 
-func _finish_card_reveal() -> void:
+func _finish_card_reveal(event: Dictionary) -> void:
 	reveal_card.queue_free()
 	reveal_card = null
 	pending_reveal = false
-	render()
+	if event.is_empty():
+		render()
+	else:
+		_present_attack(event)
 
 func _finish_attack() -> void:
 	attack_effect.hide()
 	attack_effect.queue_free()
 	attack_effect = null
+	card_history.toggle.disabled = card_history.shown_count == 0
 	render()
 
 func _legal() -> Dictionary:
@@ -491,7 +509,9 @@ func _build_piece_face(tile: Control, unit: Dictionary, action: String) -> void:
 	var title := UI.label(heading, unit.name, 17)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	UI.art(identity, unit, Vector2.ZERO).size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var portrait := UI.art(identity, unit, Vector2.ZERO)
+	portrait.name = "Portrait"
+	portrait.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	if action == "attack":
 		var damage := UI.label(identity, "可攻击 · %d" % battle.attack_power(battle.board[selected_square]), 12, UI.ORANGE)
 		damage.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -775,7 +795,7 @@ func _render_hand() -> void:
 				border = UI.GOLD if highlighted else MANA_LIT if battle.can_act() else Color("96957a")
 			button.add_theme_stylebox_override(state, UI.box(tint, border, 6, 8))
 		var in_flight := _card_is_drawing(i)
-		button.disabled = in_flight or not battle.can_act()
+		button.disabled = in_flight or is_action_playing() or not battle.can_act()
 		if i >= hand_buttons.size() - pending_animation:
 			button.hide()
 		elif not in_flight:
@@ -888,7 +908,7 @@ func _start_draw(index: int, delay: float) -> void:
 		fan_expansion = 0.0
 		for i in _resting_card_count():
 			_pose_card(i)
-		button.disabled = is_attack_playing() or not battle.can_act()
+		button.disabled = is_action_playing() or not battle.can_act()
 		_update_draw_counts())
 
 func _animate_draw(time: float, index: int, front: Control, back: TextureRect) -> void:
