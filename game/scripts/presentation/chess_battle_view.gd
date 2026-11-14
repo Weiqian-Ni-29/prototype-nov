@@ -28,6 +28,7 @@ const SLOT_LABELS = {"weapon": "武器", "armor": "护甲", "accessory": "饰品
 const SLOT_ICONS = {"weapon": "trail_blade", "armor": "padded_coat", "accessory": "lamp_charm"}
 const HAND_CARD_WIDTH = 114.0
 const HAND_CARD_HEIGHT = HAND_CARD_WIDTH * 7.0 / 5.0
+const CARD_STAT_SIZE = 29
 const DECK_CARD_SIZE = Vector2(84.0, 84.0 * 7.0 / 5.0)
 const DECK_STACK_OFFSET = Vector2(4, 3)
 const DRAW_LIFT = 0.09
@@ -579,14 +580,15 @@ func _build_equipment_slot(rack: HBoxContainer, slot: String, item: Dictionary, 
 	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	cell.resized.connect(func(): label.visible = cell.size.x >= 57.0)
 
-func _stat_badge(tile: Control, badge_name: String, icon: Texture2D, value: int, corner: int, text_y: int = 0) -> void:
+func _stat_badge(tile: Control, badge_name: String, icon: Texture2D, value: int, corner: int,
+		text_y: int = 0, badge_size: int = STAT_SIZE) -> void:
 	var badge := TextureRect.new()
 	badge.name = badge_name
 	badge.texture = icon
 	badge.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	badge.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	badge.size = Vector2(STAT_SIZE, STAT_SIZE)
+	badge.size = Vector2(badge_size, badge_size)
 	tile.add_child(badge)
 	badge.set_anchors_and_offsets_preset(corner, Control.PRESET_MODE_KEEP_SIZE, STAT_INSET)
 	var digits := str(value)
@@ -770,6 +772,8 @@ func _render_hand() -> void:
 			var button := UI.button(hand, "", _select_card.bind(i))
 			button.name = "HandCard%d" % i
 			button.accessibility_name = "%s，%d 费" % [entry.name, entry.cost]
+			if entry.kind == "partner":
+				button.accessibility_name += "，攻击 %d，生命 %d" % [entry.attack, entry.hp]
 			button.mouse_entered.connect(_hover_card.bind(i))
 			button.mouse_exited.connect(_unhover_card.bind(i))
 			_build_card_face(button, entry)
@@ -812,6 +816,10 @@ func _build_card_face(parent: Control, entry: Dictionary, header: String = "") -
 	content.offset_right = -8
 	content.offset_top = 12 if header.is_empty() else 23
 	content.offset_bottom = -8
+	if entry.kind == "partner":
+		content.offset_bottom = -(CARD_STAT_SIZE + STAT_INSET)
+		_stat_badge(face, "Attack", ATTACK_ICON, entry.attack, Control.PRESET_BOTTOM_LEFT, 0, CARD_STAT_SIZE)
+		_stat_badge(face, "Health", HEALTH_ICON, entry.hp, Control.PRESET_BOTTOM_RIGHT, 3, CARD_STAT_SIZE)
 	content.add_theme_constant_override("separation", 2)
 	if not header.is_empty():
 		var heading := UI.label(content, header, 11, UI.ORANGE)
