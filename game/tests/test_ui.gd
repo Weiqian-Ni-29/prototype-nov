@@ -5,6 +5,7 @@ const Hex = preload("res://scripts/domain/hex_map.gd")
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
 const Chess = preload("res://scripts/domain/chess_battle.gd")
+const Cards = preload("res://scripts/domain/card_catalog.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const InventoryPage = preload("res://scripts/presentation/inventory_page.gd")
@@ -96,6 +97,13 @@ func click_button(button: Button) -> void:
 		root.push_input(event, true)
 	await process_frame
 
+func click_story_icon(node_name: String, label: String) -> void:
+	var button = game.modal_layer.find_child(node_name, true, false) as Button
+	expect(button != null and button.icon != null and button.text.is_empty() and not button.disabled
+		and button.tooltip_text == label and button.accessibility_name == label, "Story icon is a labeled icon-only button: " + label)
+	if button != null:
+		await click_button(button)
+
 func option_label(result: Dictionary, id: String) -> String:
 	for option in result.get("options", []):
 		if option.id == id:
@@ -169,10 +177,10 @@ func check_story_layout() -> void:
 		expect(choices == null, "Intermediate pages expose no decisions")
 	if choices != null:
 		expect(not frame.intersects(choices.get_global_rect()), "Choice column does not overlap dialogue")
-	var exit = find_button(stage, "返回主菜单")
-	if exit != null:
-		expect(exit.get_global_rect().end.x >= stage.size.x * 0.94 and exit.position.y < stage.size.y * 0.10,
-			"Return to main menu sits at the upper right")
+	var skip = stage.find_child("StorySkip", true, false) as Button
+	if skip != null:
+		expect(skip.get_global_rect().end.x >= stage.size.x * 0.94 and skip.position.y < stage.size.y * 0.10,
+			"Skip is rightmost in the story header")
 	var leaves: Array[Control] = []
 	for control in stage.find_children("*", "Control", true, false):
 		if (control is Label or control is Button) and control.is_visible_in_tree():
@@ -869,7 +877,7 @@ func check_story_history() -> void:
 	var first_page = story_text().text
 	var page = story_page()
 	expect(page.y >= 3, "History fixture contains multiple unread pages")
-	await click("历史对话")
+	await click_story_icon("StoryHistoryButton", "历史对话")
 	var history = game.modal_layer.get_node_or_null("StoryHistory")
 	expect(history != null, "The story button opens a history overlay")
 	if history == null:
@@ -909,7 +917,7 @@ func check_story_history() -> void:
 	await click_story_blank()
 	var second_page = story_text().text
 	await click("上一页")
-	await click("历史对话")
+	await click_story_icon("StoryHistoryButton", "历史对话")
 	history = game.modal_layer.get_node("StoryHistory")
 	var current_entries = history.find_children("*", "Label", true, false).filter(func(label):
 		return first_page in label.text)
@@ -978,7 +986,7 @@ func check_story_pagination() -> void:
 	await click_story_blank()
 	expect(calls.count == 0, "Blank click on a decision page cannot skip its options")
 	var choice_position = find_button(game.modal_layer, "确认完成").get_global_rect().get_center()
-	await click("历史对话")
+	await click_story_icon("StoryHistoryButton", "历史对话")
 	await click_story_blank(choice_position / root.get_visible_rect().size)
 	expect(calls.count == 0 and game.modal_layer.has_node("StoryHistory"), "A click cannot select a story choice through history")
 	await click("关闭")
@@ -992,6 +1000,48 @@ func check_story_pagination() -> void:
 	expect(story_page().x == 2 and story_text().text == pages[1] and calls.count == 0, "Optional final page_index argument resumes the requested page")
 	game._close_modal()
 	await check_pagination_helpers()
+
+func check_story_skip() -> void:
+	var completed: Array[String] = []
+	var finish = func(choice: String):
+		completed.append(choice)
+		game._close_modal()
+	var body = "这是剧情正文。".repeat(100) + "最后一句。"
+	var options = [{"id": "first", "text": "选择第一个"}, {"id": "second", "text": "选择第二个"}]
+	game._show_story("有选择的剧情", "旁白", body, "road", [], options, finish, {})
+	await process_frame
+	var first = story_page()
+	expect(first.x == 1 and first.y > 2, "Skip fixture starts before several pages of dialogue")
+	await click_story_icon("StorySkip", "跳过当前剧情")
+	expect(story_page() == Vector2i(first.y, first.y) and game.modal_layer.has_node("StoryScreen/StoryChoices")
+		and completed.is_empty() and game.modal_layer.find_child("StorySkip", true, false) == null,
+		"Skipping a decision story reveals choices and waits for the player")
+	await click("选择第二个")
+	expect(completed == ["second"], "The choice taken after skipping is still the player's choice")
+
+	game._show_story("线性剧情", "旁白", body, "road", [], [], finish, {})
+	await process_frame
+	await click_story_icon("StorySkip", "跳过当前剧情")
+	expect(completed == ["second", ""] and not game.modal_layer.has_node("StoryScreen"),
+		"Skipping a linear story completes it once via its normal callback")
+	var entry: Dictionary = game.story_history.back()
+	expect(entry.pages.size() == 1 and not entry.pages[0].contains("最后一句。"),
+		"Skipped pages never appear in dialogue history")
+
+	game._begin_opening_story()
+	await process_frame
+	await click_story_icon("StoryMainMenu", "返回主菜单")
+	expect(game.screen_state == game.Screen.MENU and not game.modal_layer.has_node("StoryScreen")
+		and find_button(game.ui, "开始新远征") != null, "The house returns from the prologue to the main menu")
+	await click("开始新远征")
+	await click_story_icon("StorySkip", "跳过当前剧情")
+	expect(dialogue_contains("你醒了") and story_speaker() == "村民", "Skipping the prologue opens the village dialogue")
+	await click_story_icon("StorySkip", "跳过当前剧情")
+	expect(game.modal_layer.has_node("StoryRewards") and game.run.data.seed == int(game.chosen_seed)
+		and game.run.actor("hero").inventory.get("salve") == 3,
+		"Skipping the village dialogue preserves the chosen seed and the departure supplies")
+	await click("返回地图")
+	expect(game.view.visible and game.modal_layer.get_child_count() == 0, "The skipped introduction can enter the map")
 
 func check_familiarity_dialogue() -> void:
 	game._start_new()
@@ -1127,33 +1177,83 @@ func execute() -> void:
 	var village_dialogue = game.modal_layer.get_node("StoryScreen/Dialogue")
 	expect(story_speaker() == "村民" and village_dialogue.get_children().filter(func(control): return control.visible).size() == 3,
 		"Spoken dialogue retains the speaker and separator")
-	await click("历史对话")
+	await click_story_icon("StoryHistoryButton", "历史对话")
 	var history = game.modal_layer.get_node("StoryHistory")
 	expect(contains_text(history, "维洛丹这片土地，比任何人的记性都老") and contains_text(history, "你醒了"),
 		"History carries over from the world introduction into the village")
 	await click("关闭")
 	await advance_until_text("那我出去走走")
 	expect(dialogue_contains("那我出去走走"), "The traveler accepts the walk in plain words")
-	await click("历史对话")
+	await click_story_icon("StoryHistoryButton", "历史对话")
 	expect(contains_text(game.modal_layer.get_node("StoryHistory"), "那我出去走走"),
 		"History shows the same traveler dialogue as the story screen")
 	await click("关闭")
 	await advance_until_text("一路平安")
-	expect(dialogue_contains("一路平安"), "The villager sends off the traveler with supplies")
+	expect(dialogue_contains("一路平安"), "The villager sends off the traveler with the starter deck")
 	await finish_linear_story()
-	expect(game.modal_layer.has_node("StoryRewards") and contains_text(game.modal_layer, "疗伤药")
-		and contains_text(game.modal_layer, "澄露") and contains_text(game.modal_layer, "巡路短刃"), "Departure lists all village gifts")
-	for item in ["ether", "salve"]:
-		await select_story_reward(Catalog.ITEMS[item].name)
+	var deck: Array = game.run.card_deck()
+	var quantities := {}
+	for id in deck:
+		var card := Cards.owned_definition(id, game.run.data.actors, game.run.data)
+		quantities[card.name] = quantities.get(card.name, 0) + 1
+	var names := PackedStringArray()
+	for title in quantities:
+		names.append("%s ×%d" % [title, quantities[title]])
+	var rewards = game.modal_layer.find_child("RewardItems", true, false)
+	expect(game.modal_layer.has_node("StoryRewards") and contains_text(game.modal_layer, "获得初始卡组")
+		and deck.size() == Cards.DECK_SIZE and rewards != null and names == PackedStringArray(
+			rewards.find_children("*", "Button", true, false).map(func(button): return button.accessibility_name)),
+		"Departure lists exactly the starter deck, including duplicate counts")
+	for id in ["ember_spell", "sun"]:
+		var card: Dictionary = Cards.ACTIONS[id]
+		await select_story_reward(card.name)
 		var detail = game.modal_layer.find_child("RewardDetails", true, false)
-		expect(detail != null and contains_text(detail, Catalog.ITEMS[item].description)
-			and contains_text(detail, Catalog.ITEMS[item].story), "Clicking a consumable shows its use and description")
+		expect(detail != null and contains_text(detail, card.trait), "Selecting a starter card shows its battle effect")
+	var editor_button := find_button(game.modal_layer, "查看卡组")
+	var map_button := find_button(game.modal_layer, "返回地图")
+	expect(editor_button != null and map_button != null
+		and editor_button.get_global_rect().end.x <= map_button.get_global_rect().position.x,
+		"The deck editor button is to the left of Return to Map")
+	var transaction: int = game.run.data.transaction
+	await click("查看卡组")
+	var editor = game.modal_layer.find_child("CardDeckEditor", true, false)
+	expect(editor != null and editor.deck == deck and editor.find_child("Collection_rain", true, false) != null
+		and find_button(game.modal_layer, "保存卡组") != null, "Opening the editor shows the starter deck and the full owned collection")
+	var remove := game.modal_layer.find_child("Remove_sun", true, false) as Button
+	expect(remove != null, "The starter deck editor can remove a card")
+	if remove != null:
+		await click_button(remove)
+		expect(not editor.deck.has("sun"), "Removing a card changes the editor draft")
+	await click("返回奖励")
+	expect(game.modal_layer.has_node("StoryRewards") and game.run.data.transaction == transaction and game.run.card_deck() == deck,
+		"Returning to rewards discards the unsaved deck draft")
+	await click("查看卡组")
+	remove = game.modal_layer.find_child("Remove_sun", true, false) as Button
+	var rain := game.modal_layer.find_child("Collection_rain", true, false) as Button
+	expect(remove != null and rain != null, "Reopening the editor offers the original deck and available cards")
+	if remove != null and rain != null:
+		await click_button(remove)
+		rain = game.modal_layer.find_child("Collection_rain", true, false) as Button
+		await click_button(rain)
+		await click("＋ 加入牌组")
+	await click("保存卡组")
+	var edited := deck.duplicate()
+	edited.erase("sun")
+	edited.append("rain")
+	expect(game.modal_layer.has_node("StoryRewards") and game.run.card_deck() == edited
+		and saved_run().get("card_deck") == edited, "Saving the edited deck persists it and returns to rewards")
+	expect(contains_text(game.modal_layer, "烈日") and not contains_text(game.modal_layer, "唤雨"),
+		"The receipt still lists the cards originally received")
+	game._continue_run()
+	expect(game.modal_layer.has_node("StoryRewards") and find_button(game.modal_layer, "查看卡组") != null
+		and game.run.card_deck() == edited, "Reloading restores the pending reward and the edited deck")
 	await click("返回地图")
 	expect(game.modal_layer.get_child_count() == 0 and game.run.actor("hero").name == "旅人", "Departure enters the map as the fixed traveler")
-	expect(saved_run().get("actors", {}).get("hero", {}).get("inventory", {}).get("salve") == 3, "Village supplies are saved on departure")
+	expect(not saved_run().has("pending_story_rewards"), "Returning to the map acknowledges the deck reward in the save")
 	check_reward_art()
 	await check_story_history()
 	await check_story_pagination()
+	await check_story_skip()
 	await check_personal_dialogue()
 	await check_character_codex()
 	await check_backpack_consumables()
