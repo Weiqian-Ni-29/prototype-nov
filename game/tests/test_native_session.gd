@@ -45,9 +45,10 @@ func execute() -> void:
 	root.get_texture().get_image().save_png("user://chess-opening.png")
 	chess.cells[10].pressed.emit()
 	chess.cells[7].pressed.emit()
+	var previous_log: String = chess.log_text.text
 	await create_timer(0.65).timeout
-	expect(b.enemy_action_resolved and b.turn == Chess.ENEMY and chess.enemy_action_label.visible,
-		"Enemy's actual action is displayed while input is locked")
+	expect(b.enemy_action_resolved and b.turn == Chess.ENEMY and chess.log_text.text != previous_log,
+		"The enemy action updates the battle log while input is locked")
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("user://chess-enemy-turn.png")
 	await create_timer(0.85).timeout

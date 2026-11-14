@@ -303,16 +303,38 @@ func check_ui() -> void:
 	if view != null:
 		expect(root.get_visible_rect().encloses(view.get_global_rect()) and view.cells.size() == 12 and view.hand_buttons.size() == 3,
 			"Board fits the viewport with twelve squares and a three-card opening hand")
+		var grid := view.find_child("ChessGrid", true, false) as GridContainer
+		expect(grid != null and grid.columns == Chess.COLS and grid.get_child_count() == view.cells.size(),
+			"The chess grid contains only the twelve squares")
+		var menu := button_named(view, "主菜单")
+		var retreat_rect: Rect2 = view.retreat.get_global_rect()
+		expect(menu != null and retreat_rect.position.distance_to(view.global_position) <= 22
+			and retreat_rect.size.y <= 32 and menu.size.y <= 32
+			and is_equal_approx(menu.global_position.y, retreat_rect.position.y),
+			"Retreat and Main Menu sit side by side in a compact top-left row")
+		for square in [1, 10]:
+			var tile: Button = view.cells[square]
+			var labels := tile.find_children("*", "Label", true, false)
+			var textures := tile.find_children("*", "TextureRect", true, false)
+			expect(not labels.any(func(label): return "主战者" in label.text),
+				"Commander square %d omits the visible role label" % square)
+			var has_crown := textures.any(func(rect):
+				return rect.is_visible_in_tree() and rect.texture != null and rect.texture.resource_path.ends_with("/crown-badge.svg"))
+			expect(has_crown, "Commander square %d still shows its crown" % square)
+			expect("主战者" in tile.accessibility_name, "Commander square %d announces the role to screen readers" % square)
+		await click(view.retreat)
+		await click(button_named(game.modal_layer, "取消，继续远征"))
 		await click(view.find_child("ChessSquare10", true, false))
 		await click(view.find_child("ChessSquare7", true, false))
 		expect(game.combat.turn == Chess.ENEMY and view.cells[7].disabled, "Actual mouse move locks out extra actions")
 		game.combat.piles[Chess.PLAYER][0] = "ward"
+		var previous_log: String = view.log_text.text
 		game.battle_timer = 0.0
 		await process_frame
 		await process_frame
 		expect(game.combat.turn == Chess.ENEMY and game.combat.enemy_action_resolved
-			and not game.combat.last_enemy_action.is_empty() and view.enemy_action_label.visible,
-			"The enemy action is rendered before the player gets another turn")
+			and "敌方回合" in view.phase.text and view.log_text.text != previous_log,
+			"The battle log updates with the enemy action before the player gets another turn")
 		game.battle_timer = 0.0
 		await process_frame
 		await process_frame
@@ -321,8 +343,7 @@ func check_ui() -> void:
 		await click(view.hand_buttons[-1])
 		expect(view.selected_card == 3 and (not view._legal().is_empty() or view.find_child("CastChessSpell", true, false) != null),
 			"Clicking the drawn card raises it and offers legal targets or a spell confirmation")
-		game._to_menu()
-		await process_frame
+		await click(menu)
 		await click(button_named(game.modal_layer, "确认"))
 		game._continue_run()
 		expect(game.modal_layer.find_child("CardDeckEditor", true, false) != null and not game.run.data.pending_battle.is_empty(),
