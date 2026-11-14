@@ -26,6 +26,9 @@ const Sound = preload("res://scripts/presentation/sound.gd")
 enum Screen { MENU, OPENING_STORY, EXPEDITION }
 const OBJECTIVE_ICON = preload("res://assets/ui/expedition-objective.svg")
 const LAMP_COIN_ICON = preload("res://assets/ui/lamp-coin.svg")
+const STORY_HISTORY_ICON = preload("res://assets/ui/story-history.svg")
+const STORY_MAIN_MENU_ICON = preload("res://assets/ui/story-main-menu.svg")
+const STORY_SKIP_ICON = preload("res://assets/ui/story-skip.svg")
 const CREW_PANEL_WIDTH = 230
 const STORY_TERRAIN = {
 	"plains": "road", "forest": "woodland", "mountain": "highland", "ruins": "ruins",
@@ -300,7 +303,7 @@ func _opening_world_page(terrain: String, pages: Array[Dictionary], index: int) 
 				_opening_world_page(terrain, pages, index + 1)
 			else:
 				_village_page(terrain, 0),
-		{"返回主菜单": _cancel_opening})
+		{"返回主菜单": _cancel_opening}, Color.WHITE, 0, {}, Callable(), _village_page.bind(terrain, 0))
 
 func _cancel_opening() -> void:
 	_close_modal()
@@ -323,7 +326,7 @@ func _village_page(terrain: String, index: int) -> void:
 				_village_page(terrain, index + 1)
 			else:
 				_start_new(),
-		{"返回主菜单": _cancel_opening})
+		{"返回主菜单": _cancel_opening}, Color.WHITE, 0, {}, Callable(), _start_new)
 
 func _seed_value() -> int:
 	if chosen_seed.is_empty():
@@ -352,13 +355,7 @@ func _start_new() -> void:
 	view.focus_cell(selected_cell)
 	toast_text = ""
 	if from_story:
-		var hero = run.actor("hero")
-		var supplies: Array[Dictionary] = []
-		for id in hero.inventory:
-			supplies.append({"kind": "item", "id": id, "count": hero.inventory[id]})
-		for uid in run.gear_owned("actor", "hero"):
-			supplies.append({"kind": "gear", "id": uid, "count": 1})
-		_queue_story_rewards(_node_title(selected_cell), supplies)
+		run.data.pending_story_rewards = {"source": _node_title(selected_cell), "kind": "starter_deck", "items": []}
 	run.save_game()
 	_refresh()
 	if from_story:
@@ -669,17 +666,22 @@ func _queue_story_rewards(source: String, items: Array) -> bool:
 
 func _show_pending_story_rewards() -> void:
 	var receipt: Dictionary = run.data.pending_story_rewards
+	# Earlier opening receipts used the village name and listed its supplies.
+	var starter_deck: bool = receipt.get("kind") == "starter_deck" or receipt.source == run.location_name(run.data.start)
 	var box = _modal("", 780, 590)
 	box.get_parent().name = "StoryRewards"
-	_text(box, "获得物品", 29, gold).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_text(box, "获得初始卡组" if starter_deck else "获得物品", 29, gold).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_text(box, "来自「%s」" % receipt.source, 16, muted).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(HSeparator.new())
 	var rewards := RewardItems.new()
 	box.add_child(rewards)
-	rewards.setup(_reward_entries(receipt.items))
+	rewards.setup(_starter_deck_entries() if starter_deck else _reward_entries(receipt.items),
+		"卡牌详情" if starter_deck else "物品详情")
 	var footer := HBoxContainer.new()
 	footer.alignment = BoxContainer.ALIGNMENT_END
 	box.add_child(footer)
+	if starter_deck:
+		_button(footer, "查看卡组", _deck_dialog.bind(false, _show_pending_story_rewards)).custom_minimum_size = Vector2(144, 44)
 	var save_error := _text(box, "", 15, gold)
 	save_error.hide()
 	var confirm := _button(footer, "返回地图  →", func():
@@ -703,6 +705,18 @@ func _show_pending_story_rewards() -> void:
 	confirm.add_theme_color_override("font_hover_color", Color("1a302a"))
 	confirm.add_theme_color_override("font_focus_color", Color("1a302a"))
 	confirm.grab_focus()
+
+func _starter_deck_entries() -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	var counts := {}
+	for id in run.starter_card_deck():
+		counts[id] = counts.get(id, 0) + 1
+	for id in counts:
+		var card := Cards.owned_definition(id, run.data.actors, run.data)
+		entries.append({"title": card.name, "category": Cards.KINDS[card.kind] + "牌",
+			"count": counts[id], "effect": card.trait, "story": card.get("story", ""),
+			"icon": card.get("icon", ""), "portrait": card.get("portrait", ""), "level": card.get("level", 0)})
+	return entries
 
 func _remove_reward_intros(items: Array) -> void:
 	var relic_ids := items.filter(func(item): return item.kind == "relic").map(func(item): return item.id)
@@ -1306,7 +1320,7 @@ func _show_encounter_intro() -> void:
 	_show_story(_node_title(cell) + " · 战鼓", "旁白", body, _story_scene_at(cell), portraits,
 		[_node_option("deck", "编辑卡组与开战")], func(_option: String): _deck_dialog(true), {}, _node_tint())
 
-func _deck_dialog(encounter: bool = false) -> void:
+func _deck_dialog(encounter: bool = false, back_to_rewards: Callable = Callable()) -> void:
 	var pending: Dictionary = run.data.pending_battle
 	if encounter and pending.is_empty():
 		return
@@ -1327,7 +1341,8 @@ func _deck_dialog(encounter: bool = false) -> void:
 		opponent += " · %s（探索度 %d%%）" % [Chess.difficulty_name(tier), exploration]
 		if pending.ambush:
 			opponent += " · 伏击先手"
-	editor.setup(run.data.actors, run.card_deck(), encounter, (box.get_parent() as Control).size.x, opponent, run)
+	editor.setup(run.data.actors, run.card_deck(), encounter, (box.get_parent() as Control).size.x,
+		opponent, run, "返回奖励" if back_to_rewards.is_valid() else "")
 	editor.completed.connect(func(deck: Array):
 		var saved: Dictionary = run.save_card_deck(deck)
 		if not saved.ok:
@@ -1344,12 +1359,16 @@ func _deck_dialog(encounter: bool = false) -> void:
 			battle_timer = 0.65
 			toast_text = ""
 			_refresh()
+		elif back_to_rewards.is_valid():
+			back_to_rewards.call()
 		else:
 			_close_modal()
 			_refresh())
 	editor.cancelled.connect(func():
 		if encounter:
 			_cell_actions()
+		elif back_to_rewards.is_valid():
+			back_to_rewards.call()
 		else:
 			_close_modal())
 
@@ -1489,12 +1508,15 @@ func _final_battle_page(index: int) -> void:
 	var portraits = [] if index < 2 else [_story_portrait("hero", "battle"), _story_portrait("war_god", "surprise" if river_revealed else "anger")]
 	_show_story("记忆回来了", page[0], page[1], scene, portraits, [],
 		func(_option: String):
-			if index + 1 < pages.size():
+			if not river_revealed:
 				_final_battle_page(index + 1)
 			else:
-				combat.awaken_death_power()
-				_close_modal()
-				_refresh(), {})
+				_resume_final_battle(), {}, Color.WHITE, 0, {}, Callable(), _resume_final_battle)
+
+func _resume_final_battle() -> void:
+	combat.awaken_death_power()
+	_close_modal()
+	_refresh()
 
 func _talk(id: String) -> void:
 	if not run.actor(id).get("joined", false):
@@ -1594,7 +1616,8 @@ func _story_balanced_end(text: String, sentence_ends: PackedInt32Array, label: L
 
 func _show_story(title: String, speaker: String, body: String, scene: String,
 		portraits: Array, options: Array, on_choice: Callable, actions: Dictionary, tint: Color = Color.WHITE,
-		page_index: int = 0, history_entry: Dictionary = {}, on_last_page: Callable = Callable()) -> void:
+		page_index: int = 0, history_entry: Dictionary = {}, on_last_page: Callable = Callable(),
+		on_skip: Callable = Callable()) -> void:
 	day_transition.dismiss()
 	_clear_map_move()
 	move_preview.hide()
@@ -1707,13 +1730,27 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	counter.autowrap_mode = TextServer.AUTOWRAP_OFF
 	counter.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	header.add_spacer(false).mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_button(header, "历史对话", _show_story_history.bind(overlay))
+	_story_icon_button(header, STORY_HISTORY_ICON, "历史对话", _show_story_history.bind(overlay)).name = "StoryHistoryButton"
 	for label in actions:
+		if label == "返回主菜单":
+			_story_icon_button(header, STORY_MAIN_MENU_ICON, label, actions[label]).name = "StoryMainMenu"
+			continue
 		var button = _button(header, label, actions[label])
 		if label in ["结束交谈", "返回角色图鉴"]:
 			button.name = "StoryCancel"
 	var turn_page = func(index: int):
-		_show_story(title, speaker, body, scene, portraits, options, on_choice, actions, tint, index, history_entry, on_last_page)
+		_show_story(title, speaker, body, scene, portraits, options, on_choice, actions, tint, index, history_entry, on_last_page, on_skip)
+	var has_more_pages = page_index < pages.size() - 1
+	if has_more_pages or options.is_empty():
+		var skip = on_skip
+		if not skip.is_valid():
+			skip = turn_page.bind(pages.size() - 1)
+			if options.is_empty():
+				skip = func():
+					if has_more_pages and on_last_page.is_valid():
+						on_last_page.call()
+					on_choice.call("")
+		_story_icon_button(header, STORY_SKIP_ICON, "跳过当前剧情", skip).name = "StorySkip"
 	var navigation = HBoxContainer.new()
 	navigation.name = "StoryNavigation"
 	navigation.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -1723,9 +1760,9 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 	_story_region(navigation, 0.64, 0.90, 0.95, 0.955)
 	if page_index > 0:
 		_button(navigation, "上一页", turn_page.bind(page_index - 1))
-	if page_index < pages.size() - 1 or options.is_empty():
+	if has_more_pages or options.is_empty():
 		var advance = func():
-			if page_index < pages.size() - 1:
+			if has_more_pages:
 				turn_page.call(page_index + 1)
 			else:
 				on_choice.call("")
@@ -1765,6 +1802,17 @@ func _show_story(title: String, speaker: String, body: String, scene: String,
 			first_enabled = button
 	if first_enabled != null:
 		first_enabled.grab_focus()
+
+func _story_icon_button(header: HBoxContainer, icon: Texture2D, label: String, callback: Callable) -> Button:
+	var button = _button(header, "", callback)
+	button.icon = icon
+	button.expand_icon = true
+	button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	button.add_theme_constant_override("icon_max_width", 24)
+	button.custom_minimum_size.x = 48
+	button.tooltip_text = label
+	button.accessibility_name = label
+	return button
 
 func _speak_story_reply(title: String, scene: String, portraits: Array, line: String, choose: Callable, tint: Color) -> void:
 	_show_story(title, run.actor(selected_id).name, line, scene, portraits, [],

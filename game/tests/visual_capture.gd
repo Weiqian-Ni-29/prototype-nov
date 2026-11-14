@@ -605,12 +605,20 @@ func execute() -> void:
 	await capture("story-village-decision")
 	await advance_until_text("一路平安")
 	await capture("story-village-farewell")
-	await click_story_button("历史对话")
+	var history_button = game.modal_layer.find_child("StoryHistoryButton", true, false) as Button
+	expect(history_button != null and history_button.icon != null and history_button.text.is_empty(),
+		"History is presented as an icon in the rendered header")
+	if history_button != null:
+		await click_at(history_button.get_global_rect().get_center())
 	expect(game.modal_layer.has_node("StoryHistory/HistoryPanel"), "Story history opens over the village illustration")
 	await capture("story-dialogue-history")
 	await click_story_button("关闭")
 	await finish_linear_story()
-	expect(game.modal_layer.has_node("StoryRewards"), "The village departure shows its supplies")
+	expect(game.modal_layer.has_node("StoryRewards"), "The village departure shows the starter deck reward")
+	await capture("story-starter-deck-reward")
+	await click_story_button("查看卡组")
+	await capture("story-starter-deck-editor")
+	await click_story_button("返回奖励")
 	await click_story_button("返回地图")
 	for terrain in ["forest", "swamp"]:
 		game._village_page(terrain, 0)

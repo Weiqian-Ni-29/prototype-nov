@@ -60,7 +60,7 @@ static func scroll(parent: Container) -> ScrollContainer:
 	parent.add_child(result)
 	return result
 
-static func art(parent: Node, entry: Dictionary, minimum: Vector2) -> void:
+static func art(parent: Node, entry: Dictionary, minimum: Vector2) -> Control:
 	var texture: Texture2D
 	var portrait: String = entry.get("portrait", "")
 	if not portrait.is_empty():
@@ -84,12 +84,13 @@ static func art(parent: Node, entry: Dictionary, minimum: Vector2) -> void:
 		emblem.custom_minimum_size = minimum
 		emblem.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		emblem.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		return
+		return emblem
 	if texture == null:
 		texture = SHIELD if icon == "shield" else InventoryPage.icon(icon)
 	var image := InventoryPage.item_image(texture, int(entry.get("level", 0)))
 	image.custom_minimum_size = minimum
 	parent.add_child(image)
+	return image
 
 static func clear(parent: Node) -> void:
 	for child in parent.get_children():
