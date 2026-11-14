@@ -465,9 +465,11 @@ func check_personal_dialogue() -> void:
 	game._shop_dialog("", {"category": "companion", "id": "lorne"})
 	expect(game.modal_layer.find_child("ShopView", true, false) != null,
 		"Recruitment is offered inside the shop")
+	var deck: Array = run.card_deck()
 	await click("确认招募 · %d 灯铢" % price)
 	expect(person.joined and person.position == run.actor("hero").position and run.data.lamp_coins == 0
-		and saved_run().actors.lorne.joined, "Recruitment debits the wallet and saves the new companion")
+		and saved_run().actors.lorne.joined and saved_run().get("card_deck") == deck + ["lorne"],
+		"Recruitment debits the wallet and saves the new companion in the current deck")
 	await click("返回地图")
 	game._begin_dialogue("lorne")
 	game._story_choice("unavailable_reply")
@@ -684,6 +686,7 @@ func check_post_battle_shop() -> void:
 	var balance = game.ui.find_child("LampCoinBalance", true, false) as Label
 	expect(balance != null and balance.text == "8", "The header displays the starting wallet balance")
 	var food: int = int(hero.inventory.trail_food)
+	var deck: Array = run.card_deck()
 	game._shop_dialog()
 	await process_frame
 	var shop = game.modal_layer.find_child("ShopView", true, false)
@@ -694,7 +697,7 @@ func check_post_battle_shop() -> void:
 	expect(contains_text(game.modal_layer, Catalog.ITEMS.trail_food.description), "Selecting a shop card exposes its details")
 	await click("确认买入 · 3 灯铢")
 	expect(run.data.lamp_coins == 5 and hero.inventory.trail_food == food + 1, "The shop UI buys into the trader's inventory")
-	expect(saved_run().get("lamp_coins") == 5, "The shop UI saves the transaction")
+	expect(saved_run().get("lamp_coins") == 5 and run.card_deck() == deck, "Buying supplies saves the purchase without adding a card")
 	balance = game.ui.find_child("LampCoinBalance", true, false) as Label
 	expect(balance != null and balance.text == "5", "The header balance updates after a purchase")
 	await click("刷新货物 · 1 灯铢")
@@ -710,6 +713,22 @@ func check_post_battle_shop() -> void:
 	await click("刷新货物 · 2 灯铢")
 	expect(run.data.lamp_coins == 3 and run.shop_refresh_cost(shop_cell) == 3,
 		"Returning to Buy keeps the same shop's refresh count")
+	run.data.lamp_coins = 1000
+	game._shop_dialog("", {"category": "spell"})
+	var spell: String = run.spell_shop_offers(shop_cell)[0]
+	await select_shop_offer(Cards.ACTIONS[spell].name)
+	expect(contains_text(game.modal_layer, "购买后自动加入卡组。"), "The spell offer explains automatic deck addition")
+	await click("确认买入 · 8 灯铢")
+	deck.append(spell)
+	expect(run.card_deck() == deck and saved_run().get("card_deck") == deck,
+		"The shop UI saves the purchased spell in the current deck")
+	var uid: String = run.gear_owned("shop", shop_cell)[0]
+	var gear: Dictionary = run.data.gear_instances[uid]
+	game._shop_dialog("", {"category": "gear", "id": uid})
+	await click("确认买入 · %d 灯铢" % Gear.price(gear))
+	deck.append("gear:" + uid)
+	expect(run.card_deck() == deck and saved_run().get("card_deck") == deck,
+		"The shop UI saves the purchased equipment instance in the current deck")
 	await click("返回地图")
 	expect(game.modal_layer.get_child_count() == 0, "The shop closes directly to the map")
 	game._select_cell(shop_cell)
