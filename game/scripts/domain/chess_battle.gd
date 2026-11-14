@@ -838,6 +838,8 @@ func _finish(result: String) -> void:
 	if result != "victory" or final_battle:
 		run.data.erase("pending_arrival")
 	run.data.status = "failed" if result == "defeat" else "won" if result == "victory" and final_battle else "exploring"
+	if result == "victory":
+		run.open_battle_shop()
 	if result == "defeat":
 		run.data.flags["failure_reason"] = "己方主战者倒下，远征在这里中断了。"
 	for key in run.data.item_effect_counts.keys():
@@ -851,14 +853,10 @@ func _finish(result: String) -> void:
 
 func _grant_victory(npc: String) -> void:
 	var key := position + ":" + npc
-	var receiver := ""
 	var relic := ""
 	var coins := 0
 	var duplicate := false
 	if not run.data.rewards.has(key):
-		receiver = "hero"
-		var inventory: Dictionary = run.actor(receiver).inventory
-		inventory.salve = int(inventory.get("salve", 0)) + 1
 		run.data.rewards[key] = true
 		coins = run.reward_coins("battle", Nodes.battle_coins(int(run.data.seed), position, Nodes.is_elite(enemy_types), final_battle))
 		var bonus := {"amount": 0, "elite": pending.reward_tier == "elite"}
@@ -866,7 +864,7 @@ func _grant_victory(npc: String) -> void:
 		coins += int(bonus.amount)
 		run.data.lamp_coins += coins
 		duplicate = run.data.relic_seen.has(pending.relic_offer)
-		relic = run.claim_relic_reward(pending.battle_uid, pending.relic_offer, receiver, position)
+		relic = run.claim_relic_reward(pending.battle_uid, pending.relic_offer, "hero", position)
 		_relic("loot", {"elite": pending.reward_tier == "elite", "relic": relic})
 		run.data.item_revision += 1
 	for id in participants:
@@ -877,7 +875,7 @@ func _grant_victory(npc: String) -> void:
 		if position not in run.data.knowledge[id].victories:
 			run.data.knowledge[id].victories.append(position)
 	run.data.pending_victory = {"enemies": enemy_types.size(), "opponent": commanders[ENEMY].name, "members": participants,
-		"revived": [], "salve_receiver": receiver, "relic": relic, "relic_duplicate": duplicate, "coins": coins}
+		"revived": [], "relic": relic, "relic_duplicate": duplicate, "coins": coins}
 
 static func _row(square: int) -> int:
 	return floori(float(square) / COLS)

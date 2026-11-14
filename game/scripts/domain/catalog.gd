@@ -67,8 +67,6 @@ const SAVE_SKILL_IDS = [
 	"stonewall",
 ]
 const ITEMS = {
-	"salve": {"name": "疗伤药", "description": "可在商店出售。", "story": "红褐色的草药汤装在缠布的厚玻璃瓶里。村里的人总会给过路的伤员留上一瓶。", "hp": 45},
-	"ether": {"name": "澄露", "description": "可在商店出售。", "story": "清蓝色的露液有一点薄荷味。施术者常用软木塞封紧瓶口，带在身上赶路。", "mp": 30},
 	"trail_food": {"name": "旅途干粮", "description": "可以送给别人或用来完成任务。", "story": "粗布包里是烤得干透的麦饼，掰碎后泡在汤里也能吃。"},
 	"trail_blade": {"name": "巡路短刃", "slot": "weapon", "attack": 4},
 	"padded_coat": {"name": "夹棉旅衣", "slot": "armor", "defense": 3},

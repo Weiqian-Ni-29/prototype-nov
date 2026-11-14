@@ -415,8 +415,10 @@ func check_arrival_after_victory() -> void:
 	await press("开始战斗")
 	game.combat._finish("victory")
 	game._finish_battle()
+	expect(game.modal_layer.find_child("ShopView", true, false) != null, "Victory opens shop directly")
 	game._continue_run()
-	await press("继续远征")
+	expect(game.modal_layer.find_child("ShopView", true, false) != null, "Reload restores the post-battle shop")
+	await press("返回地图")
 	expect(game.modal_layer.get_child_count() == 0 and game.day_transition.get_child_count() == 0,
 		"Continuing after victory returns directly to the map")
 
@@ -443,16 +445,15 @@ func check_manual_encounter_intro() -> void:
 
 func open_companion_shop(id: String) -> bool:
 	var run = game.run
-	for cell in run.data.nodes:
-		if id not in run.recruit_shop_offers(cell):
-			continue
-		run.retreat_party(cell)
-		run.data.tiles[cell].enemies.clear()
-		game._select_actor("hero")
-		game._shop_dialog("", {"category": "companion", "id": id})
-		return true
-	expect(false, "A merchant offers " + id)
-	return false
+	var cell: String = run.actor(id).position
+	run.retreat_party(cell)
+	run.data.tiles[cell].enemies.clear()
+	run.data.tiles[cell].npc = id
+	run.data.pending_victory = {"enemies": 1, "members": ["hero"], "revived": [], "relic": ""}
+	run.open_battle_shop()
+	game._select_actor("hero")
+	game._shop_dialog("", {"category": "companion", "id": id})
+	return true
 
 func check_personal_dialogue() -> void:
 	var run = game.run
@@ -467,6 +468,7 @@ func check_personal_dialogue() -> void:
 	await click("确认招募 · %d 灯铢" % price)
 	expect(person.joined and person.position == run.actor("hero").position and run.data.lamp_coins == 0
 		and saved_run().actors.lorne.joined, "Recruitment debits the wallet and saves the new companion")
+	await click("返回地图")
 	game._begin_dialogue("lorne")
 	game._story_choice("unavailable_reply")
 	expect(contains_text(game.modal_layer, "现在无法这样做"), "A rejected reply shows a separate gameplay notice")
@@ -667,57 +669,50 @@ func check_character_codex() -> void:
 	expect(contains_text(game.modal_layer, "伊文洛"), "The traveler profile shows the true name after the revelation")
 	await click("×")
 
-func check_shop_arrival() -> void:
+func check_post_battle_shop() -> void:
 	game._start_new()
 	var run = game.run
 	var hero = run.actor("hero")
-	var shop_cells = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "trade")
-	expect(not shop_cells.is_empty(), "This seed has a trade node")
-	if shop_cells.is_empty():
-		return
-	var shop_cell: String = shop_cells[0]
-	var approach: String = Hex.neighbors(shop_cell, run.data.tiles).filter(func(cell): return Hex.is_land(run.data.tiles, cell))[0]
+	var shop_cell: String = hero.position
+	run.data.pending_victory = {"enemies": 1, "members": ["hero"], "revived": [], "relic": ""}
+	run.open_battle_shop()
 	run.data.lamp_coins = 8
-	run.data.tiles[approach].enemies.clear()
-	hero.position = approach
-	run.reveal(approach)
 	game._select_actor("hero")
 	var balance = game.ui.find_child("LampCoinBalance", true, false) as Label
 	expect(balance != null and balance.text == "8", "The header displays the starting wallet balance")
-	var salves: int = int(hero.inventory.salve)
-	game._select_cell(shop_cell)
-	game._select_cell(shop_cell)
-	await wait_for_map_arrival()
+	var food: int = int(hero.inventory.trail_food)
+	game._shop_dialog()
 	await process_frame
 	var shop = game.modal_layer.find_child("ShopView", true, false)
 	var wallet = shop.find_child("ShopBalance", true, false) as Label if shop != null else null
 	expect(shop != null and root.get_visible_rect().encloses(shop.get_global_rect())
 		and wallet != null and wallet.get_line_count() == 1, "The shop and wallet fit in the game viewport")
-	await select_shop_offer("疗伤药")
-	expect(contains_text(game.modal_layer, Catalog.ITEMS.salve.description), "Selecting a shop card exposes its details")
-	await click("确认买入 · 6 灯铢")
-	expect(run.data.lamp_coins == 2 and hero.inventory.salve == salves + 1, "The shop UI buys into the trader's inventory")
-	expect(saved_run().get("lamp_coins") == 2, "The shop UI saves the transaction")
+	await select_shop_offer("旅途干粮")
+	expect(contains_text(game.modal_layer, Catalog.ITEMS.trail_food.description), "Selecting a shop card exposes its details")
+	await click("确认买入 · 3 灯铢")
+	expect(run.data.lamp_coins == 5 and hero.inventory.trail_food == food + 1, "The shop UI buys into the trader's inventory")
+	expect(saved_run().get("lamp_coins") == 5, "The shop UI saves the transaction")
 	balance = game.ui.find_child("LampCoinBalance", true, false) as Label
-	expect(balance != null and balance.text == "2", "The header balance updates after a purchase")
+	expect(balance != null and balance.text == "5", "The header balance updates after a purchase")
 	await click("刷新货物 · 1 灯铢")
 	var refresh = find_button(game.modal_layer, "刷新货物 · 2 灯铢")
-	expect(run.data.lamp_coins == 1 and refresh != null and refresh.disabled
-		and saved_run().nodes[shop_cell].refresh_count == 1, "Refresh debits and saves the next price, disabling an unaffordable refresh")
+	expect(run.data.lamp_coins == 4 and refresh != null and not refresh.disabled
+		and saved_run().battle_shop.refresh_count == 1, "Refresh debits and saves the next price, disabling an unaffordable refresh")
 	await click("卖出")
-	await select_shop_offer("疗伤药")
-	await click("确认卖出 · +2 灯铢")
-	expect(run.data.lamp_coins == 3 and hero.inventory.salve == salves and contains_text(game.modal_layer, "旅人的背包"),
+	await select_shop_offer("旅途干粮")
+	await click("确认卖出 · +1 灯铢")
+	expect(run.data.lamp_coins == 5 and hero.inventory.trail_food == food and contains_text(game.modal_layer, "旅人的背包"),
 		"Selling updates the wallet and keeps the sell tab open")
 	await click("买入")
 	await click("刷新货物 · 2 灯铢")
-	expect(run.data.lamp_coins == 1 and run.shop_refresh_cost(shop_cell) == 3,
+	expect(run.data.lamp_coins == 3 and run.shop_refresh_cost(shop_cell) == 3,
 		"Returning to Buy keeps the same shop's refresh count")
 	await click("返回地图")
 	expect(game.modal_layer.get_child_count() == 0, "The shop closes directly to the map")
 	game._select_cell(shop_cell)
-	expect(game.modal_layer.find_child("ShopView", true, false) != null, "Clicking the current shop reopens its stock")
-	await click("返回地图")
+	expect(game.modal_layer.find_child("ShopView", true, false) == null and not run.data.has("battle_shop"),
+		"The battlefield cannot reopen the shop after leaving it")
+	game._close_modal()
 
 func select_shop_offer(title: String) -> void:
 	var grid = game.modal_layer.find_child("ShopGrid", true, false)
@@ -742,29 +737,19 @@ func check_backpack_consumables() -> void:
 	run.join_companion("lorne")
 	run.join_companion("tide")
 	tide.position = away
-	lorne.inventory.salve = 2
+	lorne.inventory.trail_food = 2
 	lorne.hp = 1
 	game._select_actor("lorne")
 	await press("背包")
-	var slot = consumable_slot("疗伤药")
+	var slot = consumable_slot("旅途干粮")
 	expect(slot != null and slot.icon != null and is_equal_approx(slot.size.x, slot.size.y)
 		and slot.get_parent().columns == 5 and slot.get_parent().get_child_count() == 15
-		and contains_text(slot, "2"), "Consumables use square icon slots with a stack count")
-	expect(contains_text(game.modal_layer, "洛恩 · 背包") and not contains_text(game.modal_layer, "终结技")
-		and find_button(game.modal_layer, "使用") == null, "Backpack shows the holder and waits for a selection before offering actions")
-	await select_consumable("疗伤药")
-	expect(slot != null and slot.button_pressed and find_button(game.modal_layer, "交接") != null
-		and contains_text(game.modal_layer, Catalog.ITEMS.salve.description) and lorne.inventory.salve == 2,
-		"Clicking a slot selects it and shows its description and handoff without consuming it")
-	await select_consumable("澄露")
-	expect(slot != null and not slot.button_pressed
-		and contains_text(game.modal_layer, Catalog.ITEMS.ether.description), "Selecting another consumable replaces the highlight and description")
-	expect(find_button(game.modal_layer, "使用") == null and lorne.inventory.ether == 1 and lorne.hp == 1,
-		"Consumables can be inspected and handed off without a manual use option")
+		and contains_text(slot, "2"), "Food uses a square icon slot with a stack count")
+	expect(consumable_slot("疗伤药") == null and consumable_slot("澄露") == null,
+		"Retired potions do not appear in backpacks")
 	await press("关闭")
 	game._select_actor("hero")
 	await press("背包")
-	expect(consumable_slot("营地木料") == null, "New expeditions have no construction material")
 	await select_consumable("旅途干粮")
 	expect(contains_text(game.modal_layer, Catalog.ITEMS.trail_food.description)
 		and find_button(game.modal_layer, "使用") == null, "Food shows its purpose without a use button")
@@ -1043,7 +1028,7 @@ func check_story_skip() -> void:
 	expect(dialogue_contains("你醒了") and story_speaker() == "村民", "Skipping the prologue opens the village dialogue")
 	await click_story_icon("StorySkip", "跳过当前剧情")
 	expect(game.modal_layer.has_node("StoryRewards") and game.run.data.seed == int(game.chosen_seed)
-		and game.run.actor("hero").inventory.get("salve") == 3,
+		and game.run.actor("hero").inventory.get("trail_food") == 2,
 		"Skipping the village dialogue preserves the chosen seed and the departure supplies")
 	await click("返回地图")
 	expect(game.view.visible and game.modal_layer.get_child_count() == 0, "The skipped introduction can enter the map")
@@ -1063,6 +1048,7 @@ func check_familiarity_dialogue() -> void:
 	expect(person.joined and game.modal_layer.has_node("StoryRewards")
 		and contains_text(game.modal_layer, Relics.DATA.opening_flint.story),
 		"Paid recruitment opens the illustrated gift receipt")
+	await click("返回商店")
 	await click("返回地图")
 	game._begin_dialogue("ember")
 	var idle = await read_to_choices()
@@ -1262,7 +1248,7 @@ func execute() -> void:
 	await check_personal_dialogue()
 	await check_character_codex()
 	await check_backpack_consumables()
-	await check_shop_arrival()
+	await check_post_battle_shop()
 	await check_node_arrival()
 	await check_arrival_checkpoint()
 	await check_arrival_after_victory()

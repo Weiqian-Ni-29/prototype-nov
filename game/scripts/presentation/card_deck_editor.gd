@@ -186,7 +186,7 @@ func _filter() -> void:
 			results.append(id)
 	if selected not in results:
 		selected = results[0] if not results.is_empty() else ""
-	count_label.text = ("法术  %d 张 · 从商店牌谱和遗器解锁" if kind == "spell" else "卡片收藏  %d 张") % results.size()
+	count_label.text = ("法术  %d 张 · 从战后商店牌谱和遗器解锁" if kind == "spell" else "卡片收藏  %d 张") % results.size()
 	UI.clear(grid)
 	for id in results:
 		_add_tile(id)

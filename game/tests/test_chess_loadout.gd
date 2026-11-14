@@ -36,14 +36,9 @@ func execute() -> void:
 	var upgraded := Cards.owned_definition(blade_id, run.data.actors, run.data)
 	expect(upgraded.level == 1 and upgraded.equip_guard == 1 and run.card_deck() == deck and original.level == 0,
 		"Upgrading a gear instance updates the card without editing its deck slot")
-	var store := ""
-	for pos in run.data.nodes:
-		if run.node_at(pos).kind == "trade":
-			store = pos
-			break
-	expect(not store.is_empty(), "Fixture has a store")
-	run.retreat_party(store)
-	run.data.tiles[store].enemies.clear()
+	var store: String = run.data.start
+	run.data.pending_victory = {"enemies": 1, "members": ["hero"], "revived": [], "relic": ""}
+	run.open_battle_shop()
 	var offer: String = run.spell_shop_offers(store)[0]
 	var balance: int = run.data.lamp_coins
 	expect(run.buy_spell("hero", offer).ok and run.data.lamp_coins == balance - 8
@@ -53,6 +48,8 @@ func execute() -> void:
 	run.retreat_party(start)
 	run.data.tiles[start].enemies = ["boar"]
 	var encounter := {"position": start, "origin": start, "npc": "", "ambush": false}
+	run.close_battle_shop()
+	run.data.erase("pending_victory")
 	var battle := Chess.new()
 	expect(battle.begin(run, encounter, deck).ok and battle.hands[0].size() == 3
 		and battle.hands[1].size() == 3 and battle.piles[0].size() == 9, "Both sides draw exactly three from shuffled decks")
@@ -118,13 +115,10 @@ func check_progression() -> void:
 
 	for seed in 24:
 		run.new_run(seed, "wayfarer")
-		var shops: Array = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).get("starter_shop", false))
 		var guards: Array = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).get("intro_duel", false))
-		var route: bool = shops.size() == 1 and guards.size() == 1 and guards[0] in Hex.neighbors(run.data.start, run.data.tiles) \
-			and shops[0] in Hex.neighbors(guards[0], run.data.tiles) \
-			and run.data.tiles[shops[0]].enemies.is_empty() and run.data.tiles[guards[0]].enemies == ["boar"]
-		expect(route and run.recruit_shop_offers(shops[0]).size() == 3 and run.recruit_shop_price(shops[0]) == 6,
-			"Seed %d offers a safe, affordable early recruitment shop" % seed)
+		var route: bool = guards.size() == 2 and Hex.distance(Hex.coord(guards[0]), Hex.coord(guards[1])) == 1
+		expect(route and guards.all(func(cell): return run.data.tiles[cell].enemies == ["boar"]),
+			"Seed %d has two opening duels" % seed)
 
 
 func check_legacy_loadout() -> void:

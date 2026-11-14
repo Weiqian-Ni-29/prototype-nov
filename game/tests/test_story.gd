@@ -427,7 +427,7 @@ func execute() -> void:
 		"Opening preserves the identity reveal")
 	expect(r.data.tiles.size() == 217 and Catalog.COMPANIONS.size() == 25, "Map and roster sizes")
 	expect(r.actor("hero").name == "旅人" and r.actor("hero").skill == "gravity" and r.actor("hero").element == "none", "Fixed gravity protagonist")
-	expect(r.actor("hero").inventory.salve == 3 and r.actor("hero").inventory.ether == 2 and r.actor("hero").inventory.trail_food == 2, "Village supplies")
+	expect(r.actor("hero").inventory.trail_food == 2, "Village supplies")
 	expect(r.data.tiles[r.data.boss].enemies.is_empty(), "Boss stays hidden until the fourth story scene")
 	var positions = {}
 	var story = Story.new(r)
@@ -444,17 +444,14 @@ func execute() -> void:
 		expect(not story.dialogue("hero", id).ok, "First meeting opens no story for " + id)
 		check_topics_blocked(story, r, "hero", id, "before recruitment")
 		r.data.lamp_coins = 8
-		var store := ""
-		for candidate in r.data.nodes:
-			if r.data.nodes[candidate].get("kind", "") == "trade" and not r.data.nodes[candidate].get("starter_shop", false) \
-					and id in r.recruit_shop_offers(candidate):
-				store = candidate
-				break
-		expect(not store.is_empty(), id + " is stocked at a regular shop")
-		r.retreat_party(store)
+		r.data.tiles[person.position].npc = id
+		r.data.pending_victory = {"enemies": 1, "members": ["hero"], "revived": [], "relic": ""}
+		r.open_battle_shop()
 		expect(r.recruit_companion(id).ok and person.position == r.actor("hero").position and r.data.lamp_coins == 0,
-			"Paid recruitment " + id)
+			"Paid post-battle recruitment " + id)
 		r.data.erase("pending_story_rewards")
+		r.close_battle_shop()
+		r.data.erase("pending_victory")
 		check_past(story, r, "hero", id, "immediately after first meeting and recruitment")
 		expect(str(r.data.story[id].get("personal_choice", "")).is_empty(), id + " learning the background never selects a personal branch")
 

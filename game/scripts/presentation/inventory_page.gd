@@ -6,8 +6,6 @@ const ITEMS = preload("res://assets/ui/inventory-items.png")
 const COIN = preload("res://assets/ui/lamp-coin.svg")
 const EQUIPMENT_FINISH = preload("res://scripts/presentation/equipment_finish.gdshader")
 const ICON_REGIONS = {
-	"salve": Vector2i(64, 55),
-	"ether": Vector2i(484, 53),
 	"trail_food": Vector2i(930, 73),
 	"trail_blade": Vector2i(1388, 52),
 	"padded_coat": Vector2i(57, 492),

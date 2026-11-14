@@ -41,22 +41,31 @@ static func stock(data: Dictionary, legacy: bool) -> void:
 		elif node.kind == "cache" and node.result.is_empty() and not node.has("gear_uid"):
 			var definition: String = node.item
 			if not legacy:
-				definition = Gear.roll_definition(terrain, roller, Gear.SLOTS, ["salve", "ether"])
+				definition = Gear.roll_definition(terrain, roller, Gear.SLOTS, ["trail_food", "trail_food"])
 			node.item = definition
 			if Gear.DATA.has(definition):
 				node.gear_uid = add_gear(data, definition, "common" if legacy else Gear.roll_quality(roller), "source", "field_cache:" + cell)
 
 static func refresh_shop(data: Dictionary, cell: String, old_gear: Array, refresh_count: int) -> void:
-	var node: Dictionary = data.nodes[cell]
+	var node: Dictionary = data.battle_shop
 	var terrain: String = data.tiles[cell].terrain
 	var roller := RandomNumberGenerator.new()
 	roller.seed = hash("%d:shop_refresh:%s:%d" % [int(data.seed), cell, refresh_count])
-	node.stock = Nodes.shop_supplies(terrain, roller)
+	node.stock = Nodes.shop_supplies(roller)
 	node.relic_stock = _shop_relics(roller, node.relic_stock.keys())
 	for uid in old_gear:
 		data.gear_instances.erase(uid)
 	_stock_shop_gear(data, cell, terrain, roller)
 	node.refresh_count = refresh_count
+	node.erase("spell_sold")
+
+static func open_battle_shop(data: Dictionary, cell: String) -> void:
+	var terrain: String = data.tiles[cell].terrain
+	var roller := RandomNumberGenerator.new()
+	roller.seed = hash("%d:battle-shop:%s:%d" % [int(data.seed), cell, int(data.battles)])
+	data.battle_shop = {"cell": cell, "stock": Nodes.shop_supplies(roller),
+		"relic_stock": _shop_relics(roller), "refresh_count": 0}
+	_stock_shop_gear(data, cell, terrain, roller)
 
 static func _shop_relics(roller: RandomNumberGenerator, previous: Array = []) -> Dictionary:
 	var active := Relics.DATA.keys().filter(Relics.is_active)
@@ -133,6 +142,21 @@ static func validate(data: Dictionary) -> bool:
 			return false
 	if not whole(data.get("next_gear_uid"), 1) or not whole(data.get("item_revision")):
 		return false
+	var shop: Variant = data.get("battle_shop", {})
+	if not shop is Dictionary:
+		return false
+	if data.has("battle_shop"):
+		if not data.has("pending_victory") or shop.get("cell") != data.actors.hero.position \
+				or data.status not in ["exploring", "won"] or not data.pending_battle.is_empty() \
+				or not shop.get("stock") is Dictionary or not shop.get("relic_stock") is Dictionary \
+				or not whole(shop.get("refresh_count")) or not shop.get("spell_sold", false) is bool:
+			return false
+		for id in shop.stock:
+			if id != "trail_food" or not whole(shop.stock[id]):
+				return false
+		for id in shop.relic_stock:
+			if not Relics.is_active(id) or not whole(shop.relic_stock[id]):
+				return false
 	for uid in data.gear_instances:
 		var instance = data.gear_instances[uid]
 		if not uid.is_valid_int() or int(uid) < 1 or str(int(uid)) != uid or int(uid) >= data.next_gear_uid \
@@ -146,7 +170,8 @@ static func validate(data: Dictionary) -> bool:
 				if not data.actors.has(owner.get("id")):
 					return false
 			"shop":
-				if data.get("nodes", {}).get(owner.get("id"), {}).get("kind") != "trade":
+				if (shop.is_empty() or owner.get("id") != shop.cell) \
+						and data.get("nodes", {}).get(owner.get("id"), {}).get("kind") != "trade":
 					return false
 			"source":
 				var cell = str(owner.get("id", "")).trim_prefix("field_cache:")

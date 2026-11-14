@@ -19,7 +19,8 @@ func execute() -> void:
 	check_catalog()
 	check_generation()
 	check_migration()
-	check_trade_and_recovery()
+	check_shop_migration()
+	check_supply()
 	print("MAP NODES: %d checks, %d failures" % [checks, failures])
 	quit(1 if failures else 0)
 
@@ -46,10 +47,9 @@ func check_generation() -> void:
 			kinds[node.kind] = true
 			if node.kind == "elite" and cell != run.data.boss:
 				elite_count += 1
-			if node.get("starter_shop", false):
-				expect(node.kind == "trade" and tile.enemies.is_empty(), "Opening recruitment shop is safe")
-			elif node.get("intro_duel", false):
-				expect(node.kind == "battle" and tile.enemies == ["boar"], "Opening route has an ordinary boar duel")
+			expect(node.kind != "trade" and not node.has("stock"), "A map node never carries store inventory")
+			if node.get("intro_duel", false):
+				expect(node.kind == "battle" and tile.enemies == ["boar"], "The opening route is ordinary combat")
 			elif layout[cell].kind in ["haunt", "choice"] and cell != run.data.boss:
 				expect(node.kind in ["battle", "elite"] and not tile.enemies.is_empty()
 					and Nodes.is_elite(tile.enemies) == (node.kind == "elite"), "Retired cell becomes an encounter of the correct tier")
@@ -69,35 +69,18 @@ func check_generation() -> void:
 		expect(coverage and compatible, "Every land tile has a compatible story and lakes have none")
 	expect(kinds.size() == Nodes.LABELS.size(), "Seeds exercise all node kinds")
 
-func check_trade_and_recovery() -> void:
+func check_supply() -> void:
 	var run = Run.new()
 	run.save_path = "user://test-nodes.json"
 	run.new_run(20261104, "wayfarer")
-	var shop = find_node(run, "trade")
 	var supplies: Array = run.data.nodes.keys().filter(func(cell):
 		return run.node_at(cell).kind == "supply" and run.node_at(cell).has("gear_definition"))
 	var rest: String = "" if supplies.is_empty() else supplies[0]
-	if shop.is_empty() or rest.is_empty():
-		expect(false, "Fixture seed has a shop and supplies")
+	if rest.is_empty():
+		expect(false, "Fixture seed has a supply with equipment")
 		return
 	var hero = run.actor("hero")
 	var lorne = run.actor("lorne")
-	hero.position = shop
-	lorne.position = shop
-	run.join_companion("lorne")
-	var stock = run.node_at(shop).stock
-	var original_stock = int(stock.salve)
-	var original_salve = int(hero.inventory.salve)
-	expect(run.trade("hero", "salve", true).ok and run.data.lamp_coins == 2
-		and hero.inventory.salve == original_salve + 1 and stock.salve == original_stock - 1,
-		"Buying updates the shared wallet, stock and buyer's inventory")
-	var before = JSON.stringify(run.data)
-	expect(not run.trade("lorne", "ether", true).ok and not run.trade("hero", "trail_blade", false).ok
-		and JSON.stringify(run.data) == before, "Unfunded purchases and equipped sales have no side effects")
-	expect(run.trade("lorne", "salve", false).ok and run.data.lamp_coins == 4 and stock.salve == original_stock,
-		"A companion sells from its own bag into the same wallet")
-	expect(not run.trade("hero", "Q-T", false).ok, "Story documents cannot be sold")
-
 	hero.position = rest
 	lorne.position = rest
 	hero.hp = 20
@@ -107,7 +90,7 @@ func check_trade_and_recovery() -> void:
 		"Supply stop does not offer recovery")
 	var supply: Dictionary = run.node_at(rest)
 	var result = run.use_node("hero", "collect")
-	expect(result.ok and run.data.lamp_coins == 4 + supply.coins and hero.hp == 20 and hero.mp == 5,
+	expect(result.ok and run.data.lamp_coins == 8 + supply.coins and hero.hp == 20 and hero.mp == 5,
 		"Supply gives its fixed coins without recovering HP or MP")
 	expect(result.items.size() == 2 and result.items[0].kind == "coins" and result.items[1].kind == "gear"
 		and run.data.gear_instances[result.items[1].id].owner == {"kind": "actor", "id": "hero"},
@@ -116,9 +99,9 @@ func check_trade_and_recovery() -> void:
 	expect(run.save_game().ok, "Save resolved nodes and wallet")
 	var continued = Run.new()
 	expect(continued.load_game(run.save_path).ok, "Load the expedition with node state")
-	expect(continued.node_at(shop).stock.salve == stock.salve and continued.node_at(rest).result == "collect"
+	expect(continued.node_at(rest).result == "collect"
 		and continued.data.lamp_coins == run.data.lamp_coins
-		and not continued.use_node("hero", "collect").ok, "Stock and claimed supply survive reload")
+		and not continued.use_node("hero", "collect").ok, "Claimed supply and its wallet change survive reload")
 	var recorded_save = run.data.duplicate(true)
 	recorded_save.version = 5
 	var biome: String = recorded_save.tiles[rest].base_terrain
@@ -157,11 +140,11 @@ func check_trade_and_recovery() -> void:
 
 func check_catalog() -> void:
 	var source = JSON.parse_string(FileAccess.get_file_as_string("res://assets/story/node_events.json"))
-	expect(source is Dictionary and source.size() == 6 and not source.has("haunt") and not source.has("choice"), "Six active kinds retain 72 events")
+	expect(source is Dictionary and source.size() == 5 and not source.has("trade"), "Map event catalog has no trade events")
 	if not source is Dictionary:
 		return
 	var ids = {}
-	for kind in ["trade", "supply", "rest", "cache", "battle", "elite"]:
+	for kind in ["supply", "rest", "cache", "battle", "elite"]:
 		var entries: Array = source.get(kind, [])
 		expect(entries.size() == 12, "Twelve events for " + kind)
 		for event in entries:
@@ -181,7 +164,7 @@ func check_catalog() -> void:
 			for index in [1, 2]:
 				var id = "%s_%s_%d" % [terrain, kind, index]
 				expect(entries.any(func(event): return event.id == id and terrain in event.terrains), "Original compatible event id retained: " + id)
-	expect(ids.size() == 72, "All 72 active event ids remain")
+	expect(ids.size() == 60, "All 60 supported map event ids remain")
 
 func check_migration() -> void:
 	var run := Run.new()
@@ -213,8 +196,30 @@ func check_migration() -> void:
 		and run.data.tiles[unplayed].enemies == restored.data.tiles[unplayed].enemies,
 		"Migrated encounter stays stable on the next reload")
 
-func find_node(run: RefCounted, kind: String) -> String:
-	for cell in run.data.nodes:
-		if run.node_at(cell).kind == kind:
-			return cell
-	return ""
+func check_shop_migration() -> void:
+	var run := Run.new()
+	run.save_path = "user://test-shop-node-migration.json"
+	run.new_run(41, "wayfarer")
+	var cell: String = run.data.nodes.keys().filter(func(id):
+		return id != run.data.start and id != run.data.boss and run.node_at(id).kind == "supply")[0]
+	var tile: Dictionary = run.data.tiles[cell]
+	run.data.version = 9
+	run.data.nodes[cell] = {"kind": "trade", "event": tile.base_terrain + "_trade_1", "result": "",
+		"stock": {"salve": 1}, "relic_stock": {}, "starter_shop": true}
+	var item = preload("res://scripts/domain/expedition_items.gd").add_gear(run.data, "trail_blade", "common", "shop", cell)
+	run.data.lamp_coins = 37
+	run.actor("hero").inventory.merge({"salve": 2, "ether": 1})
+	run.data.pending_story_rewards = {"source": "旧奖励", "items": [
+		{"kind": "item", "id": "salve", "count": 2}, {"kind": "item", "id": "trail_food", "count": 1}]}
+	var neighbors := Hex.neighbors(cell, run.data.tiles)
+	expect(run.save_game().ok, "Write a version nine save with an opening shop")
+	var restored := Run.new()
+	expect(restored.load_game(run.save_path).ok and restored.node_at(cell).kind == "battle"
+		and not restored.data.tiles[cell].enemies.is_empty() and restored.shop_at(cell).is_empty(),
+		"The old shop now hosts an ordinary battle and has no inventory")
+	expect(not restored.data.gear_instances.has(item) and restored.data.lamp_coins == 37
+		and restored.actor("hero").equipment == run.actor("hero").equipment and Hex.neighbors(cell, restored.data.tiles) == neighbors,
+		"Migration removes stock and preserves owned equipment, wallet and map coordinates")
+	expect(not restored.actor("hero").inventory.has("salve") and not restored.actor("hero").inventory.has("ether")
+		and restored.data.pending_story_rewards.items.size() == 1 and restored.data.pending_story_rewards.items[0].id == "trail_food",
+		"Migration removes both retired supplies from inventory and pending rewards")

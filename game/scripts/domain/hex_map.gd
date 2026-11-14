@@ -141,7 +141,9 @@ static func generate(seed_value: int) -> Dictionary:
 			t.enemies = _composition(t.terrain, rng)
 			t.hidden = t.terrain in ["forest", "swamp"]
 		elif not occupied.has(k) and rng.randf() < 0.38:
-			t.resource = "salve" if rng.randf() < 0.55 else "ether"
+			# Keep the RNG draw so later terrain resources stay in their seeded locations.
+			rng.randf()
+			t.resource = "trail_food"
 			t.quantity = rng.randi_range(1, 2)
 	return {"tiles": tiles, "start": start, "boss": boss, "rng_state": rng.state}
 

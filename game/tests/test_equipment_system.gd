@@ -25,11 +25,10 @@ func fixture() -> RefCounted:
 	run.new_run(41, "wayfarer")
 	return run
 
-func position_for(run, kind: String) -> String:
-	for cell in run.data.nodes:
-		if run.node_at(cell).kind == kind and run.data.tiles[cell].enemies.is_empty():
-			return cell
-	return ""
+func open_shop(run: RefCounted) -> String:
+	run.data.pending_victory = {"enemies": 1, "members": ["hero"], "revived": [], "relic": ""}
+	run.open_battle_shop()
+	return run.actor("hero").position
 
 func add_gear(run, actor: String, id: String, quality: String = "common") -> String:
 	return Items.add_gear(run.data, id, quality, "actor", actor)
@@ -64,7 +63,7 @@ func check_equipment() -> void:
 	var run = fixture()
 	var duplicate = fixture()
 	expect(run.data.gear_instances == duplicate.data.gear_instances, "Stock quality and instances are seed-stable")
-	var shop = position_for(run, "trade")
+	var shop = open_shop(run)
 	var hero: Dictionary = run.actor("hero")
 	hero.position = shop
 	run.actor("lorne").position = shop
@@ -72,7 +71,7 @@ func check_equipment() -> void:
 	var stocked: Array = run.gear_owned("shop", shop)
 	expect(stocked.size() == 2 and Gear.DATA[run.data.gear_instances[stocked[0]].definition_id].slot != Gear.DATA[run.data.gear_instances[stocked[1]].definition_id].slot,
 		"Every shop starts with distinct equipment slots")
-	expect(run.node_at(shop).relic_stock.size() == 2, "Relic stock is independently generated")
+	expect(run.shop_at(shop).relic_stock.size() == 2, "Relic stock is independently generated")
 	var spare = add_gear(run, "hero", "trail_blade", "rare")
 	var primary: String = hero.equipment.weapon
 	run.data.lamp_coins = 1000
@@ -101,56 +100,47 @@ func check_equipment() -> void:
 
 func check_shop_refresh() -> void:
 	var run = fixture()
-	var shops: Array = run.data.nodes.keys().filter(func(cell):
-		return run.node_at(cell).kind == "trade" and run.data.tiles[cell].enemies.is_empty())
-	expect(shops.size() >= 2, "Refresh fixture includes independent shops")
-	if shops.size() < 2:
-		return
-	var first: String = shops[0]
-	var second: String = shops[1]
-	run.actor("hero").position = first
+	var first := open_shop(run)
 	var purchased: String = run.gear_owned("shop", first)[0]
 	run.data.lamp_coins = 1000
 	expect(run.gear_trade("hero", purchased, true).ok, "Buy gear before refreshing")
 	var wallet: int = run.data.lamp_coins
 	var old_gear: Array = run.gear_owned("shop", first)
-	var old_relics: Dictionary = run.node_at(first).relic_stock.duplicate()
-	var other_stock: Dictionary = run.node_at(second).duplicate(true)
-	run.node_at(first).stock.salve = 0
+	var old_relics: Dictionary = run.shop_at(first).relic_stock.duplicate()
+	run.shop_at(first).stock.trail_food = 0
 	var revision: int = run.data.item_revision
 	var refresh: Callable = run.refresh_shop.bind("hero")
 	expect(run.shop_refresh_cost(first) == 1 and run.commit_item_operation("first-refresh", revision, refresh).ok,
 		"The first refresh costs one lamp coin")
 	expect(run.commit_item_operation("first-refresh", revision, refresh).ok and run.data.lamp_coins == wallet - 1
 		and run.shop_refresh_cost(first) == 2, "A duplicate confirmation cannot refresh or charge twice")
-	expect(run.node_at(first).stock.salve > 0 and run.gear_owned("shop", first).size() == 2
+	expect(run.shop_at(first).stock.trail_food > 0 and run.gear_owned("shop", first).size() == 2
 		and old_gear.all(func(uid): return not run.data.gear_instances.has(uid))
-		and old_relics.keys().all(func(id): return not run.node_at(first).relic_stock.has(id)),
+		and old_relics.keys().all(func(id): return not run.shop_at(first).relic_stock.has(id)),
 		"Refresh replenishes supplies and replaces shop-owned equipment and relics")
-	expect(purchased in run.gear_owned("actor", "hero") and run.node_at(second) == other_stock
-		and run.shop_refresh_cost(second) == 1, "Refresh preserves purchases and other merchants")
+	expect(purchased in run.gear_owned("actor", "hero"), "Refresh preserves purchases")
 	expect(run.refresh_shop("hero").ok and run.data.lamp_coins == wallet - 3 and run.shop_refresh_cost(first) == 3,
 		"The second refresh costs two lamp coins")
 	run.data.lamp_coins = 2
 	var before: Dictionary = run.data.duplicate(true)
 	expect(not run.refresh_shop("hero").ok and run.data == before, "A failed refresh leaves currency, goods and cost intact")
 	var saved: bool = run.save_game().ok and run.load_game().ok
-	var stock: Dictionary = run.node_at(first).relic_stock
-	var previous_stock: Dictionary = before.nodes[first].relic_stock
-	expect(saved and run.shop_refresh_cost(first) == 3 and run.shop_refresh_cost(second) == 1
+	var stock: Dictionary = run.shop_at(first).relic_stock
+	var previous_stock: Dictionary = before.battle_shop.relic_stock
+	expect(saved and run.shop_refresh_cost(first) == 3
 		and stock.size() == previous_stock.size()
 		and stock.keys().all(func(id): return int(stock[id]) == int(previous_stock.get(id, 0))),
-		"Save and load preserve the refreshed stock and each shop's price")
+		"Save and load preserve the refreshed stock and price")
 
 func check_bulk_trade() -> void:
 	var run = fixture()
-	var cell := position_for(run, "trade")
+	var cell := open_shop(run)
 	run.actor("hero").position = cell
 	run.grant_relic("survey_bonus_stamp", "hero", cell)
 	run.grant_relic("modest_trade_coupon", "hero", cell)
 	for visited in run.data.tiles.keys().slice(0, 61):
 		run.data.visited[visited] = true
-	run.node_at(cell).relic_stock.lamp_badge = 2
+	run.shop_at(cell).relic_stock.lamp_badge = 2
 	run.data.lamp_coins = 199
 	var quote: Dictionary = run.shop_quote(100, true, 2)
 	var before: Dictionary = run.data.duplicate(true)
@@ -160,10 +150,10 @@ func check_bulk_trade() -> void:
 		"An unaffordable bulk order never partially changes the inventory")
 	run.data.lamp_coins += 1
 	expect(run.trade("hero", "lamp_badge", true, "", 2).ok and run.data.lamp_coins == 0
-		and run.data.relic_inventory.lamp_badge == 2 and run.node_at(cell).relic_stock.lamp_badge == 0
+		and run.data.relic_inventory.lamp_badge == 2 and run.shop_at(cell).relic_stock.lamp_badge == 0
 		and run.data.relic_inventory.modest_trade_coupon == 1, "Bulk purchase charges the quote and preserves battle preparations")
 	expect(run.trade("hero", "lamp_badge", false, "", 2).ok and run.data.lamp_coins == 80
-		and not run.has_relic("lamp_badge") and run.node_at(cell).relic_stock.lamp_badge == 2,
+		and not run.has_relic("lamp_badge") and run.shop_at(cell).relic_stock.lamp_badge == 2,
 		"Bulk sale restores stock and removes attunement only after selling the last copy")
 
 func check_relics() -> void:
@@ -178,7 +168,7 @@ func check_relics() -> void:
 		"Only six distinct passives auto-attune")
 	expect(not run.attune_relic("hero", "opening_flint").ok and run.attune_relic("hero", "rainstone").ok
 		and run.attune_relic("hero", "opening_flint").ok, "Full slots require deliberate replacement")
-	var shop = position_for(run, "trade")
+	var shop = open_shop(run)
 	hero.position = shop
 	expect(run.trade("hero", "telescope", false).ok and run.has_relic("telescope") and run.trade("hero", "telescope", false).ok
 		and not run.has_relic("telescope") and run.data.relic_seen.has("telescope"),
@@ -219,10 +209,7 @@ func check_migration() -> void:
 	hero.equipment = {"weapon": "trail_blade", "armor": "padded_coat", "accessory": "lamp_charm"}
 	for node in legacy.nodes.values():
 		node.erase("gear_uid")
-		if node.kind == "trade":
-			node.erase("relic_stock")
-			node.stock["trail_blade"] = 1
-		elif node.kind == "cache":
+		if node.kind == "cache":
 			node.item = "ether"
 	run.save_game()
 	legacy.rng_state = run.data.rng_state

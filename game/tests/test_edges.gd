@@ -49,7 +49,7 @@ func checkpoint_edges() -> void:
 			"speed": broken.actors.hero.speed = 0
 			"energy": broken.actors.hero.energy = 101
 			"maximum": broken.actors.hero.hp_max = "wrong"
-			"fractional": broken.actors.hero.inventory.salve = 0.5
+			"fractional": broken.actors.hero.inventory.trail_food = 0.5
 			"equipment": broken.actors.hero.equipment.weapon = "999999"
 			"choices": broken.choices = {}
 			"explored": broken.explored["99,99"] = true
@@ -77,10 +77,10 @@ func checkpoint_edges() -> void:
 	expect(continued.remaining_steps() == original_steps, "Resume leaves movement unchanged")
 	resumed.commanders[Chess.ENEMY].hp = 0
 	resumed._check_outcome()
-	var loot: int = continued.actor("hero").inventory.salve
+	var inventory: Dictionary = continued.actor("hero").inventory.duplicate()
 	var coins: int = continued.data.lamp_coins
 	resumed._check_outcome()
-	expect(resumed.outcome == "victory" and continued.actor("hero").inventory.salve == loot
+	expect(resumed.outcome == "victory" and continued.actor("hero").inventory == inventory
 		and continued.data.lamp_coins == coins, "Repeated finish cannot duplicate victory rewards")
 
 func day_edges() -> void:
@@ -111,7 +111,6 @@ func day_edges() -> void:
 	r.data.tiles[neighbor].enemies.clear()
 	hero.hp = 0
 	expect(not r.move(pos).ok and r.actor("eve").position == neighbor, "A healthy companion cannot move independently")
-	expect(r.use_item("eve", "hero", "salve").ok and hero.hp > 0, "A companion can spend a salve to rescue the traveler")
 	expect(r.actor("eve").energy == 0, "Map support never charges ultimate")
 
 func story_modifiers() -> void:

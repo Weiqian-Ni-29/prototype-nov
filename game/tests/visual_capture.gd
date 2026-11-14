@@ -341,9 +341,8 @@ func capture_node_examples() -> void:
 		run.new_run(seed_value, "wayfarer")
 		forest_rest = run.data.nodes.keys().filter(func(cell):
 			return run.node_at(cell).kind == "supply" and run.data.tiles[cell].terrain == "forest")
-	var shops = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).kind == "trade")
-	expect(not forest_rest.is_empty() and not shops.is_empty(), "Node fixture seed has a forest supply stop and a shop")
-	if forest_rest.is_empty() or shops.is_empty():
+	expect(not forest_rest.is_empty(), "Node fixture seed has a forest supply stop")
+	if forest_rest.is_empty():
 		return
 	game.chosen_seed = str(seed_value)
 	game._start_new()
@@ -360,20 +359,6 @@ func capture_node_examples() -> void:
 		await process_frame
 	expect(game.modal_layer.has_node("StoryRewards"), "Walking to the forest supply stop opens the receipt")
 	await capture("node-supply-reward")
-	await click_story_button("返回地图")
-	var shop: String = shops[0]
-	approach = Hex.neighbors(shop, run.data.tiles).filter(func(cell): return Hex.is_land(run.data.tiles, cell))[0]
-	run.data.tiles[approach].enemies.clear()
-	run.actor("hero").position = approach
-	run.reveal(approach)
-	game._select_actor("hero")
-	game._select_cell(shop)
-	game._select_cell(shop)
-	deadline = Time.get_ticks_msec() + 5000
-	while game.map_traveling and Time.get_ticks_msec() < deadline:
-		await process_frame
-	expect(game.modal_layer.find_child("ShopView", true, false) != null, "Walking to the shop opens the stock")
-	await capture("node-trader-stock")
 	await click_story_button("返回地图")
 	game.chosen_seed = original_seed
 
@@ -433,16 +418,15 @@ func story_contains(text: String) -> bool:
 
 func open_recruitment_shop(id: String) -> bool:
 	var run = game.run
-	for cell in run.data.nodes:
-		if id not in run.recruit_shop_offers(cell):
-			continue
-		run.retreat_party(cell)
-		run.data.tiles[cell].enemies.clear()
-		game._select_actor("hero")
-		game._shop_dialog("", {"category": "companion", "id": id})
-		return true
-	expect(false, "A merchant offers " + id)
-	return false
+	var cell: String = run.actor(id).position
+	run.retreat_party(cell)
+	run.data.tiles[cell].enemies.clear()
+	run.data.tiles[cell].npc = id
+	run.data.pending_victory = {"enemies": 1, "members": ["hero"], "revived": [], "relic": ""}
+	run.open_battle_shop()
+	game._select_actor("hero")
+	game._shop_dialog("", {"category": "companion", "id": id})
+	return true
 
 func capture_branch_examples() -> void:
 	game._start_new()
@@ -457,7 +441,8 @@ func capture_branch_examples() -> void:
 	await capture("companion-recruitment")
 	game.modal_layer.find_child("ConfirmTrade", true, false).pressed.emit()
 	if game.modal_layer.has_node("StoryRewards"):
-		await click_story_button("返回地图")
+		await click_story_button("返回商店")
+	await click_story_button("返回地图")
 	game._talk("longroad")
 	if not await await_story_choices():
 		return
@@ -696,11 +681,11 @@ func execute() -> void:
 	# Seven-person inventory and portrait dialogue layout use explicit presentation fixtures.
 	game.run.data.status = "exploring"
 	game.run.data.pending_battle = {}
-	game._inventory_dialog("hero", 0, "salve")
+	game._inventory_dialog("hero", 0, "trail_food")
 	await capture("inventory-seven-members")
 	game._inventory_dialog("hero", 1, str(game.run.actor("hero").equipment.weapon))
 	await capture("inventory-gear")
-	game._transfer_dialog("hero", "salve")
+	game._transfer_dialog("hero", "trail_food")
 	await capture("transfer-seven-members")
 	game._close_modal()
 	game._show_character_codex()
@@ -728,6 +713,9 @@ func execute() -> void:
 		return
 	await capture("courier-recruitment")
 	game.modal_layer.find_child("ConfirmTrade", true, false).pressed.emit()
+	if game.modal_layer.has_node("StoryRewards"):
+		await click_story_button("返回商店")
+	await click_story_button("返回地图")
 	game._talk("lorne")
 	await await_story_choices()
 	await capture("story-courier-joined-choices")
