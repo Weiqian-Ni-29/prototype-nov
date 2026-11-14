@@ -706,7 +706,7 @@ func _show_pending_story_rewards() -> void:
 func _starter_deck_entries() -> Array[Dictionary]:
 	var entries: Array[Dictionary] = []
 	var counts := {}
-	for id in run.card_deck():
+	for id in run.starter_card_deck():
 		counts[id] = counts.get(id, 0) + 1
 	for id in counts:
 		var card := Cards.owned_definition(id, run.data.actors, run.data)
@@ -1339,10 +1339,7 @@ func _deck_dialog(encounter: bool = false, back_to_rewards: Callable = Callable(
 		if pending.ambush:
 			opponent += " · 伏击先手"
 	editor.setup(run.data.actors, run.card_deck(), encounter, (box.get_parent() as Control).size.x,
-		opponent, run, back_to_rewards.is_valid())
-	if back_to_rewards.is_valid():
-		editor.cancelled.connect(back_to_rewards)
-		return
+		opponent, run, "返回奖励" if back_to_rewards.is_valid() else "")
 	editor.completed.connect(func(deck: Array):
 		var saved: Dictionary = run.save_card_deck(deck)
 		if not saved.ok:
@@ -1359,12 +1356,16 @@ func _deck_dialog(encounter: bool = false, back_to_rewards: Callable = Callable(
 			battle_timer = 0.65
 			toast_text = ""
 			_refresh()
+		elif back_to_rewards.is_valid():
+			back_to_rewards.call()
 		else:
 			_close_modal()
 			_refresh())
 	editor.cancelled.connect(func():
 		if encounter:
 			_cell_actions()
+		elif back_to_rewards.is_valid():
+			back_to_rewards.call()
 		else:
 			_close_modal())
 

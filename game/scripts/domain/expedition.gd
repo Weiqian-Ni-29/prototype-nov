@@ -850,7 +850,10 @@ func _map_action(id: String) -> Dictionary:
 	return success()
 
 func card_deck() -> Array:
-	return data.card_deck.duplicate() if data.has("card_deck") else _convert_gear_cards(Cards.DEFAULT_DECK)
+	return data.card_deck.duplicate() if data.has("card_deck") else starter_card_deck()
+
+func starter_card_deck() -> Array:
+	return _convert_gear_cards(Cards.DEFAULT_DECK)
 
 func _convert_gear_cards(legacy_deck: Array) -> Array:
 	var result: Array = []

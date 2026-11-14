@@ -613,7 +613,7 @@ func execute() -> void:
 	expect(game.modal_layer.has_node("StoryRewards"), "The village departure shows the starter deck reward")
 	await capture("story-starter-deck-reward")
 	await click_story_button("查看卡组")
-	await capture("story-starter-deck-preview")
+	await capture("story-starter-deck-editor")
 	await click_story_button("返回奖励")
 	await click_story_button("返回地图")
 	for terrain in ["forest", "swamp"]:

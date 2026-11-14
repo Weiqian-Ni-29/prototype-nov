@@ -24,27 +24,20 @@ var done: Button
 var guidance: Label
 var error: Label
 var in_encounter := false
-var read_only := false
 var run_model: RefCounted
 
 func setup(actors: Dictionary, current: Array, encounter: bool, width: float, opponent: String = "",
-		expedition: RefCounted = null, preview: bool = false) -> void:
+		expedition: RefCounted = null, back_label: String = "") -> void:
 	name = "CardDeckEditor"
 	deck = current.duplicate()
 	roster = actors
 	run_model = expedition
-	read_only = preview
-	if read_only:
-		for id in deck:
-			if id not in available:
-				available.append(id)
-	else:
-		available = Cards.collection(actors, _card_state())
+	available = Cards.collection(actors, _card_state())
 	in_encounter = encounter
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var heading := HBoxContainer.new()
 	add_child(heading)
-	UI.label(heading, "初始卡组" if read_only else "卡组编辑", 29, UI.GOLD).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	UI.label(heading, "卡组编辑", 29, UI.GOLD).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	UI.label(heading, "洗牌后抽 3 张 · 之后每回合抽 1 张", 16, UI.MUTED)
 	var body := HBoxContainer.new()
 	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -115,16 +108,15 @@ func setup(actors: Dictionary, current: Array, encounter: bool, width: float, op
 	slots = VBoxContainer.new()
 	slots.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	listing.add_child(slots)
-	if not read_only:
-		guidance = UI.label(right, "", 14, UI.MUTED, true)
-		error = UI.label(right, "", 14, UI.ORANGE, true)
-		error.hide()
-		done = UI.button(right, "开始战斗" if encounter else "保存卡组", func(): completed.emit(deck.duplicate()))
-		done.name = "ConfirmCardDeck"
-		UI.accent(done)
-	var back := UI.button(right, "返回奖励" if read_only else "返回遭遇" if encounter else "返回地图", func(): cancelled.emit())
-	if read_only:
-		back.grab_focus()
+	guidance = UI.label(right, "", 14, UI.MUTED, true)
+	error = UI.label(right, "", 14, UI.ORANGE, true)
+	error.hide()
+	done = UI.button(right, "开始战斗" if encounter else "保存卡组", func(): completed.emit(deck.duplicate()))
+	done.name = "ConfirmCardDeck"
+	UI.accent(done)
+	if back_label.is_empty():
+		back_label = "返回遭遇" if encounter else "返回地图"
+	UI.button(right, back_label, func(): cancelled.emit())
 	_filter()
 	_render_deck()
 
@@ -196,10 +188,7 @@ func _filter() -> void:
 			results.append(id)
 	if selected not in results:
 		selected = results[0] if not results.is_empty() else ""
-	if read_only:
-		count_label.text = "卡牌  %d 种" % results.size()
-	else:
-		count_label.text = ("法术  %d 张 · 从商店牌谱和遗器解锁" if kind == "spell" else "卡片收藏  %d 张") % results.size()
+	count_label.text = ("法术  %d 张 · 从商店牌谱和遗器解锁" if kind == "spell" else "卡片收藏  %d 张") % results.size()
 	UI.clear(grid)
 	for id in results:
 		_add_tile(id)
@@ -221,8 +210,7 @@ func _add_tile(id: String) -> void:
 	content.add_theme_constant_override("separation", 3)
 	UI.art(content, card, Vector2(0, 62))
 	UI.label(content, card.name, 16).text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	var quantity := "×%d" % deck.count(id) if read_only else "%d/%d" % [deck.count(id), Cards.limit(id)]
-	UI.label(content, "%s · %s" % [Cards.KINDS[card.kind], quantity], 14, UI.MUTED)
+	UI.label(content, "%s · %d/%d" % [Cards.KINDS[card.kind], deck.count(id), Cards.limit(id)], 14, UI.MUTED)
 
 func _choose(id: String) -> void:
 	selected = id
@@ -247,8 +235,6 @@ func _render_selection() -> void:
 	if card.kind == "partner":
 		UI.label(text, Cards.stats(card), 14, UI.MUTED, true)
 	UI.label(text, card.trait, 14, UI.INK, true)
-	if read_only:
-		return
 	if card.kind == "equipment" and run_model != null:
 		var uid := selected.trim_prefix("gear:")
 		var owner: String = run_model.data.gear_instances[uid].owner.id
@@ -293,10 +279,9 @@ func _remove_card(id: String) -> void:
 func _render_deck() -> void:
 	total.text = "%d / %d 张" % [deck.size(), Cards.DECK_SIZE]
 	meter.value = deck.size()
-	if not read_only:
-		var missing := Cards.DECK_SIZE - deck.size()
-		guidance.text = "再加入 %d 张即可出战。" % missing if missing > 0 else "牌组就绪。"
-		done.disabled = in_encounter and missing > 0
+	var missing := Cards.DECK_SIZE - deck.size()
+	guidance.text = "再加入 %d 张即可出战。" % missing if missing > 0 else "牌组就绪。"
+	done.disabled = in_encounter and missing > 0
 	UI.clear(slots)
 	for id in available:
 		var count := deck.count(id)
@@ -308,7 +293,6 @@ func _render_deck() -> void:
 		UI.art(row, card, Vector2(32, 34))
 		UI.label(row, card.name, 15).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		UI.label(row, "×%d" % count, 15, UI.GOLD)
-		if not read_only:
-			var remove := UI.button(row, "−", _remove_card.bind(id))
-			remove.name = "Remove_" + id.replace(":", "_")
-			remove.accessibility_name = "从牌组移除一张" + card.name
+		var remove := UI.button(row, "−", _remove_card.bind(id))
+		remove.name = "Remove_" + id.replace(":", "_")
+		remove.accessibility_name = "从牌组移除一张" + card.name
