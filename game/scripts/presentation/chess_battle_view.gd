@@ -66,6 +66,7 @@ func setup(model: RefCounted, scene: Texture2D) -> void:
 	layout.add_theme_constant_override("separation", 9)
 	frame.add_child(layout)
 	var actions := HBoxContainer.new()
+	actions.alignment = BoxContainer.ALIGNMENT_END
 	actions.add_theme_constant_override("separation", 4)
 	layout.add_child(actions)
 	retreat = UI.button(actions, "撤退", func(): retreat_requested.emit())

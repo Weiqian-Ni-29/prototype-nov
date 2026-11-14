@@ -308,10 +308,15 @@ func check_ui() -> void:
 			"The chess grid contains only the twelve squares")
 		var menu := button_named(view, "主菜单")
 		var retreat_rect: Rect2 = view.retreat.get_global_rect()
-		expect(menu != null and retreat_rect.position.distance_to(view.global_position) <= 22
-			and retreat_rect.size.y <= 32 and menu.size.y <= 32
-			and is_equal_approx(menu.global_position.y, retreat_rect.position.y),
-			"Retreat and Main Menu sit side by side in a compact top-left row")
+		var menu_rect := menu.get_global_rect() if menu != null else Rect2()
+		var view_rect: Rect2 = view.get_global_rect()
+		var menu_top_right := Vector2(menu_rect.end.x, menu_rect.position.y)
+		var view_top_right := Vector2(view_rect.end.x, view_rect.position.y)
+		expect(menu != null and menu_top_right.distance_to(view_top_right) <= 22
+			and retreat_rect.size.y <= 32 and menu_rect.size.y <= 32
+			and is_equal_approx(menu_rect.position.y, retreat_rect.position.y)
+			and is_equal_approx(menu_rect.position.x - retreat_rect.end.x, 4.0),
+			"Retreat and Main Menu sit side by side in a compact top-right row")
 		for square in [1, 10]:
 			var tile: Button = view.cells[square]
 			var labels := tile.find_children("*", "Label", true, false)
