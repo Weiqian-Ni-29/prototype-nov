@@ -352,13 +352,7 @@ func _start_new() -> void:
 	view.focus_cell(selected_cell)
 	toast_text = ""
 	if from_story:
-		var hero = run.actor("hero")
-		var supplies: Array[Dictionary] = []
-		for id in hero.inventory:
-			supplies.append({"kind": "item", "id": id, "count": hero.inventory[id]})
-		for uid in run.gear_owned("actor", "hero"):
-			supplies.append({"kind": "gear", "id": uid, "count": 1})
-		_queue_story_rewards(_node_title(selected_cell), supplies)
+		run.data.pending_story_rewards = {"source": _node_title(selected_cell), "kind": "starter_deck", "items": []}
 	run.save_game()
 	_refresh()
 	if from_story:
@@ -669,17 +663,22 @@ func _queue_story_rewards(source: String, items: Array) -> bool:
 
 func _show_pending_story_rewards() -> void:
 	var receipt: Dictionary = run.data.pending_story_rewards
+	# Earlier opening receipts used the village name and listed its supplies.
+	var starter_deck: bool = receipt.get("kind") == "starter_deck" or receipt.source == run.location_name(run.data.start)
 	var box = _modal("", 780, 590)
 	box.get_parent().name = "StoryRewards"
-	_text(box, "获得物品", 29, gold).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_text(box, "获得初始卡组" if starter_deck else "获得物品", 29, gold).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_text(box, "来自「%s」" % receipt.source, 16, muted).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(HSeparator.new())
 	var rewards := RewardItems.new()
 	box.add_child(rewards)
-	rewards.setup(_reward_entries(receipt.items))
+	rewards.setup(_starter_deck_entries() if starter_deck else _reward_entries(receipt.items),
+		"卡牌详情" if starter_deck else "物品详情")
 	var footer := HBoxContainer.new()
 	footer.alignment = BoxContainer.ALIGNMENT_END
 	box.add_child(footer)
+	if starter_deck:
+		_button(footer, "查看卡组", _deck_dialog.bind(false, _show_pending_story_rewards)).custom_minimum_size = Vector2(144, 44)
 	var save_error := _text(box, "", 15, gold)
 	save_error.hide()
 	var confirm := _button(footer, "返回地图  →", func():
@@ -703,6 +702,18 @@ func _show_pending_story_rewards() -> void:
 	confirm.add_theme_color_override("font_hover_color", Color("1a302a"))
 	confirm.add_theme_color_override("font_focus_color", Color("1a302a"))
 	confirm.grab_focus()
+
+func _starter_deck_entries() -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	var counts := {}
+	for id in run.card_deck():
+		counts[id] = counts.get(id, 0) + 1
+	for id in counts:
+		var card := Cards.owned_definition(id, run.data.actors, run.data)
+		entries.append({"title": card.name, "category": Cards.KINDS[card.kind] + "牌",
+			"count": counts[id], "effect": card.trait, "story": card.get("story", ""),
+			"icon": card.get("icon", ""), "portrait": card.get("portrait", ""), "level": card.get("level", 0)})
+	return entries
 
 func _remove_reward_intros(items: Array) -> void:
 	var relic_ids := items.filter(func(item): return item.kind == "relic").map(func(item): return item.id)
@@ -1306,7 +1317,7 @@ func _show_encounter_intro() -> void:
 	_show_story(_node_title(cell) + " · 战鼓", "旁白", body, _story_scene_at(cell), portraits,
 		[_node_option("deck", "编辑卡组与开战")], func(_option: String): _deck_dialog(true), {}, _node_tint())
 
-func _deck_dialog(encounter: bool = false) -> void:
+func _deck_dialog(encounter: bool = false, back_to_rewards: Callable = Callable()) -> void:
 	var pending: Dictionary = run.data.pending_battle
 	if encounter and pending.is_empty():
 		return
@@ -1327,7 +1338,11 @@ func _deck_dialog(encounter: bool = false) -> void:
 		opponent += " · %s（探索度 %d%%）" % [Chess.difficulty_name(tier), exploration]
 		if pending.ambush:
 			opponent += " · 伏击先手"
-	editor.setup(run.data.actors, run.card_deck(), encounter, (box.get_parent() as Control).size.x, opponent, run)
+	editor.setup(run.data.actors, run.card_deck(), encounter, (box.get_parent() as Control).size.x,
+		opponent, run, back_to_rewards.is_valid())
+	if back_to_rewards.is_valid():
+		editor.cancelled.connect(back_to_rewards)
+		return
 	editor.completed.connect(func(deck: Array):
 		var saved: Dictionary = run.save_card_deck(deck)
 		if not saved.ok:
