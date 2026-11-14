@@ -5,7 +5,6 @@ signal retreat_requested
 signal menu_requested
 
 const Battle = preload("res://scripts/domain/chess_battle.gd")
-const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const UI = preload("res://scripts/presentation/card_ui.gd")
 const CROWN = preload("res://assets/ui/crown-badge.svg")
@@ -20,18 +19,14 @@ var battle: RefCounted
 var cells: Array[Button] = []
 var selected_square := -1
 var selected_card := -1
-var inspected_square := 10
-var phase: Label
 var turn_banner: PanelContainer
 var turn_banner_text: Label
 var turn_banner_tween: Tween
 var displayed_turn := -1
-var weather: Label
-var inspection: VBoxContainer
-var log_text: Label
 var hint: Label
 var retreat: Button
 var wait_button: Button
+var cast_button: Button
 var hand: Control
 var pile: Label
 var hand_label: Label
@@ -76,9 +71,17 @@ func setup(model: RefCounted, scene: Texture2D) -> void:
 	actions.alignment = BoxContainer.ALIGNMENT_END
 	actions.add_theme_constant_override("separation", 4)
 	layout.add_child(actions)
+	wait_button = UI.button(actions, "让过", func():
+		if battle.pass_turn():
+			_notify_action())
+	cast_button = UI.button(actions, "", func():
+		if battle.play(selected_card, -1):
+			_notify_action())
+	cast_button.name = "CastChessSpell"
+	UI.accent(cast_button)
 	retreat = UI.button(actions, "撤退", func(): retreat_requested.emit())
 	var menu := UI.button(actions, "主菜单", func(): menu_requested.emit())
-	for button in [retreat, menu]:
+	for button in [wait_button, cast_button, retreat, menu]:
 		button.custom_minimum_size.y = 30
 		button.add_theme_font_size_override("font_size", 15)
 		for state in ["normal", "hover", "pressed", "disabled"]:
@@ -89,48 +92,16 @@ func setup(model: RefCounted, scene: Texture2D) -> void:
 			style.content_margin_bottom = 3
 			button.add_theme_stylebox_override(state, style)
 
-	var body := HBoxContainer.new()
-	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	body.add_theme_constant_override("separation", 10)
-	layout.add_child(body)
-	var board_panel := UI.panel(body, Color("203b32"))
+	var board_panel := UI.panel(layout, Color("203b32"))
 	var board_frame := board_panel.get_parent() as Control
-	board_frame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	board_frame.size_flags_stretch_ratio = 2.7
-	var board := HBoxContainer.new()
-	board.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	board.add_theme_constant_override("separation", 10)
-	board_panel.add_child(board)
-	var ranks := VBoxContainer.new()
-	ranks.add_theme_constant_override("separation", 0)
-	board.add_child(ranks)
-	var rank_spacer := Control.new()
-	rank_spacer.custom_minimum_size.y = 25
-	ranks.add_child(rank_spacer)
-	for row in Battle.ROWS:
-		var rank := UI.label(ranks, ["敌方\n后排", "敌方\n前排", "己方\n前排", "己方\n后排"][row],
-			15, UI.ORANGE if row < 2 else UI.GREEN)
-		rank.size_flags_vertical = Control.SIZE_EXPAND_FILL
-		rank.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	var columns := VBoxContainer.new()
-	columns.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	columns.add_theme_constant_override("separation", 0)
-	board.add_child(columns)
-	var lanes := HBoxContainer.new()
-	lanes.custom_minimum_size.y = 25
-	lanes.add_theme_constant_override("separation", 0)
-	columns.add_child(lanes)
-	for title in ["左路", "中路", "右路"]:
-		var lane := UI.label(lanes, title, 15, UI.MUTED)
-		lane.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		lane.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	board_frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var grid := GridContainer.new()
 	grid.name = "ChessGrid"
 	grid.columns = Battle.COLS
 	grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	grid.add_theme_constant_override("h_separation", 0)
 	grid.add_theme_constant_override("v_separation", 0)
-	columns.add_child(grid)
+	board_panel.add_child(grid)
 	for square in Battle.ROWS * Battle.COLS:
 		var tile := UI.button(grid, "", _select_tile.bind(square))
 		tile.name = "ChessSquare%d" % square
@@ -141,41 +112,6 @@ func setup(model: RefCounted, scene: Texture2D) -> void:
 		tile.mouse_exited.connect(_unhover_tile.bind(square))
 		cells.append(tile)
 	hint = UI.label(board_panel, "", 15, UI.GOLD, true)
-	var side := VBoxContainer.new()
-	side.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	side.custom_minimum_size.x = 245
-	body.add_child(side)
-	var env := UI.panel(side)
-	phase = UI.label(env, "", 18, UI.GREEN, true)
-	phase.name = "ChessTurn"
-	weather = UI.label(env, "", 16, UI.MUTED, true)
-	weather.name = "ChessWeather"
-	var relic := UI.panel(side)
-	UI.label(relic, "共鸣遗器", 16, UI.GOLD)
-	var relic_row := HFlowContainer.new()
-	relic.add_child(relic_row)
-	var listed: Array = battle.relic_ids.duplicate()
-	if battle.life_seed_active:
-		listed.append("life_seed")
-	if not battle.prep.is_empty():
-		listed.append(battle.prep)
-	for id in listed:
-		var icon := UI.panel(relic_row)
-		icon.get_parent().tooltip_text = battle.relic_name(id) + " · " + Relics.current_effect(id)
-		UI.art(icon, {"icon": id}, Vector2(30, 32))
-	if listed.is_empty():
-		UI.label(relic, "本场没有共鸣遗器", 13, UI.MUTED)
-	inspection = UI.panel(side)
-	var record := UI.panel(side)
-	(record.get_parent() as Control).size_flags_vertical = Control.SIZE_EXPAND_FILL
-	UI.label(record, "战斗记录", 17, UI.GOLD)
-	var log_scroll := UI.scroll(record)
-	log_text = UI.label(log_scroll, "", 15, UI.MUTED, true)
-	log_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	log_text.name = "ChessLog"
-	wait_button = UI.button(side, "让过", func():
-		if battle.pass_turn(): _notify_action())
-	wait_button.hide()
 
 	var footer := UI.panel(layout)
 	var hand_header := HBoxContainer.new()
@@ -249,30 +185,22 @@ func _show_turn_banner() -> void:
 
 func render() -> void:
 	var usable: bool = battle.can_act()
-	var turn_text := "我方回合 · 可走 1 手" if usable else "敌方回合"
-	if not battle.outcome.is_empty():
-		turn_text = {"victory": "敌方主战者倒下", "defeat": "己方主战者倒下", "retreat": "已撤退"}[battle.outcome]
-	phase.text = "第 %d 轮 · %s" % [battle.round_number, turn_text]
-	phase.add_theme_color_override("font_color", UI.GREEN if usable else UI.ORANGE)
 	retreat.disabled = not usable or battle.river
 	wait_button.visible = usable and battle.must_pass()
-	var climate: Dictionary = Cards.WEATHER.get(battle.weather, {})
-	weather.text = "☀  晴朗 · 属性伤害无修正" if climate.is_empty() else "%s%s\n%s" % [
-		climate.name, " · 剩余 %d 轮" % battle.weather_rounds if battle.weather_rounds > 0 else "", climate.hint]
+	cast_button.visible = usable and -1 in battle.card_targets(Battle.PLAYER, selected_card)
+	if cast_button.visible:
+		cast_button.text = "打出" + battle.definition(battle.hands[Battle.PLAYER][selected_card]).name
 	var legal := _legal()
 	for square in cells.size():
 		_render_tile(cells[square], square, legal.get(square, ""))
-	hint.text = "绿格可移动或部署 · 橙格可攻击" if selected_square >= 0 else \
-		"选择高亮目标完成这一手" if selected_card >= 0 else "选择一张手牌或一枚己方棋子。"
-	_render_inspection()
-	var record: Array[String] = []
-	if not battle.revealed_enemy.is_empty():
-		var names: Array[String] = []
-		for id in battle.revealed_enemy:
-			names.append(battle.definition(id).name)
-		record.append("已知敌方手牌：" + "、".join(names))
-	record.append_array(battle.log_lines.slice(-6))
-	log_text.text = "\n".join(record)
+	if cast_button.visible:
+		hint.text = "点击右上角「%s」完成这一手。" % cast_button.text
+	elif selected_square >= 0:
+		hint.text = "绿格可移动或部署 · 橙格可攻击"
+	elif selected_card >= 0:
+		hint.text = "选择高亮目标完成这一手"
+	else:
+		hint.text = "选择一张手牌或一枚己方棋子。"
 	hand_label.text = "手牌  %d 张" % battle.hands[Battle.PLAYER].size()
 	pile.text = "牌库 %d 张" % battle.piles[Battle.PLAYER].size()
 	if battle.piles[Battle.PLAYER].is_empty():
@@ -304,11 +232,9 @@ func _select_tile(square: int) -> void:
 	if _legal().has(square):
 		var accepted: bool = battle.play(selected_card, square) if selected_card >= 0 else battle.move(selected_square, square)
 		if accepted:
-			inspected_square = selected_square if selected_square >= 0 and not battle.board[selected_square].is_empty() else square
 			_notify_action()
 		return
 	if not battle.board[square].is_empty():
-		inspected_square = square
 		selected_card = -1
 		selected_square = square if selected_square != square and battle.board[square].side == Battle.PLAYER else -1
 		render()
@@ -438,42 +364,6 @@ func _mark_commander(tile: Button) -> void:
 	crown.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	plate.add_child(crown)
 	plate.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT, Control.PRESET_MODE_MINSIZE, STAT_INSET)
-
-func _render_inspection() -> void:
-	UI.clear(inspection)
-	if selected_card >= 0:
-		var card: Dictionary = battle.definition(battle.hands[Battle.PLAYER][selected_card])
-		_inspect(card, ("临时 · " if card.get("temporary", false) else "") + Cards.KINDS[card.kind] + "牌")
-		if card.kind == "partner":
-			UI.label(inspection, Cards.stats(card), 14, UI.MUTED, true)
-			UI.label(inspection, "部署到己方高亮空格。", 14, UI.GREEN, true)
-		if -1 in battle.card_targets(Battle.PLAYER, selected_card):
-			var cast := UI.button(inspection, "打出" + card.name, func():
-				if battle.play(selected_card, -1): _notify_action())
-			cast.name = "CastChessSpell"
-			UI.accent(cast)
-		return
-	var unit: Dictionary = battle.board[inspected_square]
-	if unit.is_empty():
-		unit = battle.commanders[Battle.PLAYER]
-	_inspect(unit, "主战者" if unit.leader else "场上棋子")
-	var equipped: Array[String] = []
-	for slot in unit.get("gear", {}):
-		equipped.append(unit.gear[slot].name)
-	if not equipped.is_empty():
-		UI.label(inspection, "装备：" + "、".join(equipped), 14, UI.MUTED, true)
-	if selected_square >= 0:
-		UI.label(inspection, "攻击先扣护甲，击倒才占格。", 14, UI.MUTED, true)
-
-func _inspect(entry: Dictionary, kind: String) -> void:
-	var row := HBoxContainer.new()
-	inspection.add_child(row)
-	UI.art(row, entry, Vector2(40, 42))
-	var title := VBoxContainer.new()
-	row.add_child(title)
-	UI.label(title, kind, 13, UI.MUTED)
-	UI.label(title, entry.name, 18, UI.GOLD)
-	UI.label(inspection, entry.trait, 15, UI.INK, true)
 
 func _render_hand() -> void:
 	var current: Array = battle.hands[Battle.PLAYER]
@@ -660,6 +550,12 @@ func _fill_unit_detail(unit: Dictionary) -> void:
 	if not talent.talent.is_empty():
 		_section("角色天赋")
 		UI.label(hover_detail_body, talent.talent, 13, UI.GREEN, true)
+	if unit.leader and unit.side == Battle.ENEMY and not battle.revealed_enemy.is_empty():
+		_section("已知敌方手牌")
+		var names: Array[String] = []
+		for id in battle.revealed_enemy:
+			names.append(battle.definition(id).name)
+		UI.label(hover_detail_body, "、".join(names), 13, UI.INK, true)
 
 func _fill_card_detail(card: Dictionary) -> void:
 	_detail_header(card, ("临时 · " if card.get("temporary", false) else "") + Cards.KINDS[card.kind] + "牌", UI.MUTED)
