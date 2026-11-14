@@ -90,7 +90,8 @@ func rebuild(layout: Dictionary, previous: Dictionary) -> Dictionary:
 	for id in layout:
 		var terrain: String = layout[id][0]
 		profiles[id] = LAKE if terrain == "lake" else [terrain,
-			LAND_LEVELS[terrain] + clampf(float(layout[id][1]), 0.0, 0.10), Color(Catalog.TERRAIN[terrain].color)]
+			LAND_LEVELS[terrain] + clampf(float(layout[id][1]), 0.0, 0.10), Color(Catalog.TERRAIN[terrain].color),
+			layout[id][2] if layout[id].size() > 2 else false]
 	var dirty = {}
 	var changed_centers: Array[Vector3] = []
 	for id in layout:
@@ -183,6 +184,7 @@ func sample(point: Vector3) -> Array:
 	var lake = 0.0
 	var sea = 0.0
 	var unknown = 0.0
+	var clearing := 0.0
 	var cell = Hex.cell_at(point)
 	for id in _around(cell):
 		var distance_sq = _origin(id).distance_squared_to(point)
@@ -192,6 +194,8 @@ func sample(point: Vector3) -> Array:
 		weight *= weight
 		var profile = profiles.get(id, UNKNOWN if tiles.has(id) else SEA)
 		var terrain: String = profile[0]
+		if profile.size() > 3 and profile[3]:
+			clearing = maxf(clearing, 1.0 - smoothstep(0.42, 0.85, sqrt(distance_sq)))
 		var color: Color = profile[2]
 		total += weight
 		height += float(profile[1]) * weight
@@ -217,10 +221,11 @@ func sample(point: Vector3) -> Array:
 	var ridge = 1.0 - smoothstep(0.0, 0.70, ridge_signal)
 	var dune = sin(p.dot(Vector2(1.35, 2.7)) + rolling * 3.3)
 	height += (rolling * 0.10 + chips * 0.035) * (1.0 - (sea + lake + unknown) / total)
-	height += mountain * mountain * (0.30 + ridge * 0.74 + chips * 0.11)
+	# Leave a gentler patch inside each landmark hex while keeping continuous ridges along the edges.
+	height += mountain * mountain * (0.30 + ridge * 0.74 + chips * 0.11) * (1.0 - 0.78 * clearing)
 	height += sand * (0.065 + dune * 0.14)
 	var channels = 1.0 - absf(noise.get_noise_2dv(Vector2(p.x * 0.43 + p.y * 0.30, p.y * 0.71)))
-	height -= marsh * marsh * smoothstep(0.51, 0.97, channels) * 0.27
+	height -= marsh * marsh * smoothstep(0.51, 0.97, channels) * 0.27 * (1.0 - 0.76 * clearing)
 	var stone = clampf(mountain + ruins * 0.65, 0.0, 1.0)
 	var tint = Color(pigment.x, pigment.y, pigment.z, lake / maxf(lake + sea, 0.0001))
 	var result = [Vector3(point.x, maxf(WATER_LEVEL, height), point.z),
@@ -379,10 +384,10 @@ func _build_chunk(ids: Array, layer: SurfaceLayer, fringe_masks: Dictionary = {}
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {}, flags)
 	return mesh
 
-func pick(origin: Vector3, direction: Vector3) -> String:
+func pick_hit(origin: Vector3, direction: Vector3) -> Array:
 	var fog_hit = Plane(Vector3.UP, 0.16).intersects_ray(origin, direction)
 	if fog_hit == null:
-		return ""
+		return ["", INF]
 	var fog_id = Hex.closest(fog_hit, tiles)
 	var closest_id = fog_id if not profiles.has(fog_id) else ""
 	var nearest = origin.distance_squared_to(fog_hit) if not closest_id.is_empty() else INF
@@ -402,7 +407,7 @@ func pick(origin: Vector3, direction: Vector3) -> String:
 			if hit != null and origin.distance_squared_to(hit) < nearest:
 				nearest = origin.distance_squared_to(hit)
 				closest_id = id
-	return closest_id
+	return [closest_id, nearest]
 
 func outline(id: String, known: bool) -> ArrayMesh:
 	var tool = SurfaceTool.new()

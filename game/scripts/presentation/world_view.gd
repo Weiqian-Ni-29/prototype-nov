@@ -6,6 +6,8 @@ const Doll = preload("res://scripts/presentation/doll.gd")
 const FontAsset = preload("res://assets/fonts/NotoSansSC.ttf")
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Board = preload("res://scripts/presentation/board_surface.gd")
+const Landmarks = preload("res://scripts/presentation/map_landmarks.gd")
+const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const OCCLUSION = preload("res://scripts/presentation/board_occlusion.gdshader")
 const GROUND_FADE = preload("res://scripts/presentation/board_ground_fade.gdshader")
 const NATURE_PALETTE = preload("res://scripts/presentation/nature_palette.gdshader")
@@ -24,6 +26,9 @@ var camera: Camera3D
 var light: DirectionalLight3D
 var map_root: Node3D
 var actor_root: Node3D
+var landmark_root: Node3D
+var landmarks: Dictionary = {}
+var revealing_cells: Dictionary = {}
 var tile_nodes: Dictionary = {}
 var dolls: Dictionary = {}
 var tile_signatures: Dictionary = {}
@@ -33,7 +38,7 @@ var map_follow_actor: Node3D
 var map_follow_offset = Vector3.ZERO
 var map_min = Vector3.ZERO
 var map_max = Vector3.ZERO
-var zoom_size = DEFAULT_MAP_ZOOM
+var zoom_size: float = DEFAULT_MAP_ZOOM
 var map_pointer_down = false
 var map_dragging = false
 var map_pointer_position = Vector2.ZERO
@@ -81,8 +86,11 @@ func _ready() -> void:
 	add_child(camera)
 	map_root = Node3D.new()
 	actor_root = Node3D.new()
+	landmark_root = Node3D.new()
+	landmark_root.name = "MapLandmarks"
 	add_child(map_root)
 	add_child(actor_root)
+	add_child(landmark_root)
 	var marker_canvas = CanvasLayer.new()
 	marker_canvas.layer = 1
 	add_child(marker_canvas)
@@ -120,10 +128,12 @@ func reset() -> void:
 	hero_marker.hide()
 	map_follow_actor = null
 	zoom_size = DEFAULT_MAP_ZOOM
-	for root in [map_root, actor_root]:
+	for root in [map_root, actor_root, landmark_root]:
 		for child in root.get_children():
 			child.free()
 	tile_nodes.clear()
+	landmarks.clear()
+	revealing_cells.clear()
 	map_batch = null
 	canopy_batch = null
 	board_mesh = null
@@ -153,7 +163,10 @@ func refresh(run: RefCounted, _selected_id: String, selected_cell: String) -> vo
 	var pending_sight: Array = run.relic_intro().get("new_sight", [])
 	for id in run.data.explored:
 		if id not in pending_sight:
-			visible_layout[id] = [current_tiles[id].terrain, current_tiles[id].height]
+			var tile: Dictionary = current_tiles[id]
+			var node: Dictionary = run.node_at(id)
+			var clearing: bool = tile.site == "start" or node.get("kind") in ["cache", "supply", "battle", "elite"]
+			visible_layout[id] = [tile.terrain, tile.height, clearing]
 	var relief_changed = visible_layout != board_stamp
 	if relief_changed:
 		if not is_instance_valid(board_mesh):
@@ -180,17 +193,21 @@ func refresh(run: RefCounted, _selected_id: String, selected_cell: String) -> vo
 		if not board_stamp.is_empty():
 			var reveal = board_surface.reveal_meshes(visible_layout, board_stamp)
 			if reveal[0] != null:
-				_animate_fog_reveal(reveal[0], reveal[1])
+				var new_cells := visible_layout.keys().filter(func(id): return not board_stamp.has(id))
+				_animate_fog_reveal(reveal[0], reveal[1], new_cells)
 		board_stamp = visible_layout
 	var dirty_details = {}
 	for id in visible_layout:
 		var t: Dictionary = current_tiles[id]
+		var landmark := _landmark_state(run, id, t)
+		_refresh_landmark(id, landmark, relief_changed)
 		var visited: bool = run.has_visited(id)
 		var borders: Array = []
 		for next in Hex.neighbors(id, current_tiles):
 			borders.append(visible_layout.get(next, []))
 		var name_on_map = run.location_name(id) if visited or (id == run.data.boss and run.boss_known()) else ""
-		var signature = JSON.stringify([visible_layout[id], borders, name_on_map])
+		var has_landmark := not landmark.is_empty()
+		var signature = JSON.stringify([visible_layout[id], borders, name_on_map, has_landmark])
 		if tile_signatures.get(id, "") != signature:
 			dirty_details[Board.chunk_for(id)] = true
 			if tile_nodes.has(id):
@@ -199,12 +216,15 @@ func refresh(run: RefCounted, _selected_id: String, selected_cell: String) -> vo
 			var node = Node3D.new()
 			map_root.add_child(node)
 			node.position = Hex.world(id)
-			Terrain.board_details(node, t, id, visual_seed, board_surface)
+			Terrain.board_details(node, t, id, visual_seed, board_surface, has_landmark)
 			if not name_on_map.is_empty():
 				var height = board_surface.height_at(node.position)
 				_label_location(node, name_on_map, height)
 			tile_nodes[id] = node
 			tile_signatures[id] = signature
+	for id in landmarks.keys():
+		if not visible_layout.has(id):
+			_refresh_landmark(id, [])
 	if not dirty_details.is_empty():
 		_batch_map_geometry(dirty_details)
 	var hero = run.actor("hero")
@@ -235,7 +255,91 @@ func refresh(run: RefCounted, _selected_id: String, selected_cell: String) -> vo
 func _chunk_name(chunk: Vector2i) -> String:
 	return "Chunk_%d_%d" % [chunk.x, chunk.y]
 
-func _animate_fog_reveal(mesh: ArrayMesh, old_edge_mesh: ArrayMesh) -> void:
+func _landmark_state(run: RefCounted, id: String, tile: Dictionary) -> Array:
+	if tile.terrain == "lake":
+		return []
+	if not tile.enemies.is_empty():
+		if (tile.hidden or id == run.data.boss) and not run.knows_encounter(id):
+			return []
+		var elite: bool = run.node_at(id).get("kind") == "elite" or Nodes.is_elite(tile.enemies) or "war_god" in tile.enemies
+		var leader: String = "war_god" if "war_god" in tile.enemies else tile.enemies[0]
+		return ["enemy", leader, elite]
+	if tile.site == "start":
+		return ["village", tile.base_terrain, false]
+	var node: Dictionary = run.node_at(id)
+	if node.get("kind") in ["supply", "cache"]:
+		return [node.kind, tile.base_terrain, not node.result.is_empty()]
+	if tile.quantity > 0:
+		return ["supply", tile.base_terrain, false]
+	if run.relic_sites.has(id) and node.get("kind") not in ["battle", "elite"]:
+		return ["cache", tile.base_terrain, run.data.relic_claims.has("site:" + id)]
+	return []
+
+func _refresh_landmark(id: String, state: Array, relief_changed: bool = false) -> void:
+	var model: Node3D = landmarks.get(id)
+	if model != null and model.get_meta("state") != state:
+		model.free()
+		landmarks.erase(id)
+		model = null
+	if state.is_empty():
+		return
+	if model != null and not relief_changed:
+		return
+	if model == null:
+		model = Node3D.new()
+		model.set_meta("state", state)
+		landmark_root.add_child(model)
+		if state[0] == "enemy":
+			var enemy := Landmarks.enemy(state[1], state[2])
+			model.add_child(enemy)
+			var bounds := Landmarks.bounds(enemy)
+			enemy.position.y = -bounds.position.y * enemy.scale.y + 0.02
+			if state[2]:
+				model.add_child(Landmarks.decoration("elite", "mountain", false))
+		else:
+			model.add_child(Landmarks.decoration(state[0], state[1], state[2]))
+		model.set_meta("bounds", Landmarks.bounds(model))
+		landmarks[id] = model
+	var point := Hex.world(id) + Landmarks.offset(state[0])
+	point.y = board_surface.height_at(point)
+	if state[0] == "enemy" and model.has_node("EliteBanner"):
+		var banner := model.get_node("EliteBanner") as MeshInstance3D
+		banner.position.y = board_surface.height_at(point + Vector3(0.35, 0.0, -0.025)) - point.y
+		model.set_meta("bounds", Landmarks.bounds(model))
+	if state[0] != "enemy":
+		var footprint: AABB = model.get_child(0).get_aabb()
+		var top := point.y
+		var bottom := point.y
+		for x in [footprint.position.x * 0.8, footprint.end.x * 0.8]:
+			for z in [footprint.position.z * 0.8, footprint.end.z * 0.8]:
+				var height := board_surface.height_at(point + Vector3(x, 0.0, z))
+				top = maxf(top, height)
+				bottom = minf(bottom, height)
+		point.y = top
+		if top - bottom > 0.07 and current_tiles[id].base_terrain != "swamp":
+			_seat_landmark(model, footprint, top - bottom, current_tiles[id].base_terrain)
+		elif model.has_node("Foundation"):
+			model.get_node("Foundation").free()
+	model.position = point
+	model.visible = not revealing_cells.has(id)
+
+func _seat_landmark(model: Node3D, footprint: AABB, depth: float, terrain: String) -> void:
+	var base := model.get_node_or_null("Foundation") as MeshInstance3D
+	if base == null:
+		base = MeshInstance3D.new()
+		base.name = "Foundation"
+		base.material_override = Doll.material(Landmarks.STONE[terrain].darkened(0.13))
+		base.mesh = CylinderMesh.new()
+		model.add_child(base)
+	var mesh := base.mesh as CylinderMesh
+	mesh.radial_segments = 8
+	mesh.height = depth + 0.06
+	mesh.top_radius = 0.47
+	mesh.bottom_radius = 0.44
+	base.position = Vector3(footprint.get_center().x, 0.005 - mesh.height / 2.0, footprint.get_center().z)
+	base.scale = Vector3(footprint.size.x, 1.0, footprint.size.z)
+
+func _animate_fog_reveal(mesh: ArrayMesh, old_edge_mesh: ArrayMesh, cells: Array) -> void:
 	var material := ShaderMaterial.new()
 	material.shader = Board.REVEAL
 	material.set_shader_parameter("progress", 0.0)
@@ -245,6 +349,8 @@ func _animate_fog_reveal(mesh: ArrayMesh, old_edge_mesh: ArrayMesh) -> void:
 	veil.material_override = material
 	veil.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	fog_reveals.add_child(veil)
+	for id in cells:
+		revealing_cells[id] = veil
 	var old_edge_material: ShaderMaterial
 	if old_edge_mesh != null:
 		old_edge_material = board_fringe_material.duplicate()
@@ -258,6 +364,12 @@ func _animate_fog_reveal(mesh: ArrayMesh, old_edge_mesh: ArrayMesh) -> void:
 		material.set_shader_parameter("progress", progress)
 		if old_edge_material != null:
 			old_edge_material.set_shader_parameter("progress", progress), 0.0, 1.0, FOG_REVEAL_SECONDS)
+	dissolve.tween_callback(func():
+		for id in cells:
+			if revealing_cells.get(id) == veil:
+				revealing_cells.erase(id)
+				if landmarks.has(id):
+					landmarks[id].show())
 	dissolve.tween_callback(veil.queue_free)
 
 func _update_surface_chunk(parent: Node3D, chunk: Vector2i, mesh: ArrayMesh, material: ShaderMaterial) -> void:
@@ -471,9 +583,30 @@ func _input(event: InputEvent) -> void:
 			map_follow_offset = focus_point - _map_actor_ground(map_follow_actor)
 		get_viewport().set_input_as_handled()
 		if click:
-			var id = board_surface.pick(camera.project_ray_origin(map_pointer_position), camera.project_ray_normal(map_pointer_position))
+			var origin := camera.project_ray_origin(map_pointer_position)
+			var direction := camera.project_ray_normal(map_pointer_position)
+			var ground := board_surface.pick_hit(origin, direction)
+			var id := _pick_landmark(origin, direction, ground[1])
+			if id.is_empty():
+				id = ground[0]
 			if id != "":
 				cell_clicked.emit(id)
+
+func _pick_landmark(origin: Vector3, direction: Vector3, nearest: float) -> String:
+	var cell := ""
+	for id in landmarks:
+		var model: Node3D = landmarks[id]
+		if not model.is_visible_in_tree():
+			continue
+		var bounds: AABB = model.get_meta("bounds")
+		var hit = (model.global_transform * bounds).intersects_ray(origin, direction)
+		if hit == null:
+			continue
+		var distance := origin.distance_squared_to(hit)
+		if distance < nearest:
+			nearest = distance
+			cell = id
+	return cell
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton and event.pressed):
@@ -514,19 +647,35 @@ func _update_occlusion(delta: float) -> void:
 	var blocked: Dictionary = {}
 	var sight = -camera.global_basis.z
 	var mountain_targets := PackedVector3Array()
+	var tree_targets := PackedVector3Array()
 	var model = dolls.get("hero")
 	if zoom_size <= OCCLUSION_ZOOM and is_instance_valid(model) and model.visible:
 		var feet: Vector3 = model.global_position
 		mountain_targets.append(feet)
-		var target = feet + Vector3.UP * 0.20
-		var head = feet + Vector3.UP * 0.38
+		tree_targets.append(feet + Vector3.UP * 0.20)
+		var landmark_range := zoom_size * 0.8
+		for landmark in landmarks.values():
+			if not landmark.visible or landmark.position.distance_squared_to(focus_point) > landmark_range * landmark_range:
+				continue
+			var bounds: AABB = landmark.get_meta("bounds")
+			var center: Vector3 = landmark.global_position + bounds.get_center()
+			tree_targets.append(center)
+			if mountain_targets.size() < 32 and board_surface.profiles.get(Hex.cell_at(center), [""])[0] == "mountain":
+				mountain_targets.append(Vector3(center.x, landmark.position.y + maxf(0.0, bounds.size.y * 0.35 - 0.18), center.z))
+		var canopy_range := zoom_size + 2.0
 		for instance in map_occluders:
-			if instance.global_position.distance_squared_to(feet) > 9.0:
+			if instance.global_position.distance_squared_to(focus_point) > canopy_range * canopy_range:
 				continue
 			var bounds: AABB = (instance.global_transform * instance.get_aabb()).grow(0.025)
-			if bounds.intersects_segment(target - sight * 3.0, target) != null or bounds.intersects_segment(head - sight * 3.0, head) != null:
-				var targets: PackedVector3Array = blocked.get(instance, PackedVector3Array())
-				targets.append(target)
+			var targets := PackedVector3Array()
+			for target in tree_targets:
+				var upper := target + Vector3.UP * 0.18
+				if bounds.intersects_segment(target - sight * 3.0, target) != null \
+						or bounds.intersects_segment(upper - sight * 3.0, upper) != null:
+					targets.append(target)
+					if targets.size() == 7:
+						break
+			if not targets.is_empty():
 				blocked[instance] = targets
 	if board_ground_material != null:
 		var fade = 1.0 - smoothstep(7.75, OCCLUSION_ZOOM, zoom_size)

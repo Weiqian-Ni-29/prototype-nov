@@ -7,7 +7,8 @@ static var nature_scenes: Dictionary = {}
 static var nature_bounds: Dictionary = {}
 static var nature_materials: Dictionary = {}
 
-static func board_details(root: Node3D, tile: Dictionary, id: String, visual_seed: int, surface: RefCounted) -> void:
+static func board_details(root: Node3D, tile: Dictionary, id: String, visual_seed: int,
+		surface: RefCounted, has_landmark: bool = false) -> void:
 	var rng = RandomNumberGenerator.new()
 	rng.seed = visual_seed
 	var terrain: String = tile.terrain
@@ -26,20 +27,29 @@ static func board_details(root: Node3D, tile: Dictionary, id: String, visual_see
 			for next in neighbors:
 				if surface.profiles.get(next, [""])[0] == "forest":
 					var offset = (Hex.world(next) - center) * 0.36
-					_board_prop(root, surface, center, "Tree_1_C", offset, rng.randf_range(0.37, 0.58), rng.randf() * TAU)
+					if not has_landmark:
+						_board_prop(root, surface, center, "Tree_1_C", offset, rng.randf_range(0.37, 0.58), rng.randf() * TAU)
 		"forest":
 			var count = 5 + mini(3, same.size())
 			for i in range(count):
 				var point = _board_position(rng, i, count, 0.38, 0.75)
 				var name = ["Tree_1_A", "Tree_2_B", "Tree_3_A", "Tree_1_C"][rng.randi_range(0, 3)]
 				var size = rng.randf_range(0.55, 0.98)
-				_board_prop(root, surface, center, name, point, size, rng.randf() * TAU)
+				var turn = rng.randf() * TAU
+				if not has_landmark or point.z < -0.65 or absf(point.x) > 0.68:
+					_board_prop(root, surface, center, name, point, size, turn)
 			for i in range(4):
-				_board_prop(root, surface, center, "Bush_2_C", _board_position(rng, i, 4, 0.38, 0.71), rng.randf_range(0.18, 0.32), rng.randf() * TAU)
+				var point := _board_position(rng, i, 4, 0.38, 0.71)
+				var size := rng.randf_range(0.18, 0.32)
+				var turn := rng.randf() * TAU
+				if not has_landmark or absf(point.x) > 0.47 or point.z > 0.43:
+					_board_prop(root, surface, center, "Bush_2_C", point, size, turn)
 		"mountain":
 			var placed: Array[Vector3] = []
 			for i in range(16):
 				var point = _board_position(rng, i, 16, 0.28, 0.71)
+				if has_landmark and absf(point.x) < 0.53:
+					continue
 				if placed.any(func(other: Vector3): return point.distance_squared_to(other) < 0.09):
 					continue
 				var name = "Rock_1_A" if i % 3 != 0 else "Rock_2_C"
@@ -53,6 +63,8 @@ static func board_details(root: Node3D, tile: Dictionary, id: String, visual_see
 				var edge_id = id + "/" + next if id < next else next + "/" + id
 				if absf(edge.z) < 0.01 or hash(edge_id) % 4 == 0:
 					_board_paving(root, surface, center, edge)
+			if has_landmark:
+				return
 			var foundation = Node3D.new()
 			root.add_child(foundation)
 			var point = Vector3(rng.randf_range(-0.23, 0.23), 0.0, rng.randf_range(-0.38, -0.19))
@@ -78,7 +90,7 @@ static func board_details(root: Node3D, tile: Dictionary, id: String, visual_see
 				reeds.rotation.y = rng.randf() * TAU
 				reeds.scale = Vector3.ONE * rng.randf_range(0.48, 0.75)
 				_reeds(reeds, rng)
-			if terrain == "swamp" and rng.randf() < 0.58:
+			if terrain == "swamp" and not has_landmark and rng.randf() < 0.58:
 				_board_prop(root, surface, center, "Tree_Bare_1_A", _board_position(rng, 0, 1, 0.4, 0.7), rng.randf_range(0.53, 0.83), rng.randf() * TAU)
 
 static func _board_position(rng: RandomNumberGenerator, index: int, count: int, low: float, high: float) -> Vector3:
