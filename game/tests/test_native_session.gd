@@ -126,6 +126,42 @@ func execute() -> void:
 	await create_timer(0.35).timeout
 	expect(b.turn == Chess.PLAYER and b.round_number == 3, "The next round resumes when the enemy attack completes")
 
+	# The enemy has a clear two-square line for Ice Needle, and no board action.
+	b.board[1].range = 0
+	b.hands[Chess.ENEMY] = []
+	b.piles[Chess.ENEMY] = ["ice_spell"]
+	b.commanders[Chess.PLAYER].armor = 1
+	b.commanders[Chess.PLAYER].hp = 8
+	chess.render()
+	chess.end_turn_button.pressed.emit()
+	game.battle_timer = 0.0
+	await process_frame
+	await process_frame
+	expect(chess.reveal_card != null and chess.attack_effect == null and b.turn == Chess.ENEMY
+		and b.played_cards[-1].card.name == "冰针" and chess.cells[7].get_node("Armor").get_child(0).text == "1",
+		"The enemy reveals Ice Needle before launch, with the target still showing its pre-hit armor")
+	var spell_deadline := Time.get_ticks_msec() + 2400
+	while chess.attack_effect == null and Time.get_ticks_msec() < spell_deadline:
+		await process_frame
+	var spell = chess.attack_effect
+	expect(spell != null and spell.ice and spell.attack.from == 1 and spell.attack.target == 7,
+		"The enemy casts Ice Needle from the ally with an open line")
+	if spell != null:
+		if not spell.contacted:
+			await spell.impact
+		await RenderingServer.frame_post_draw
+		root.get_texture().get_image().save_png("user://chess-ice-needle-impact.png")
+		game.battle_timer = 0.0
+		game._process(0.0)
+		expect(b.turn == Chess.ENEMY and spell.attack.slowed and spell.attack.armor_loss == 1,
+			"The enemy turn waits through the Ice Needle impact and slow")
+		await spell.finished
+	spell_deadline = Time.get_ticks_msec() + 3200
+	while b.turn != Chess.PLAYER and Time.get_ticks_msec() < spell_deadline:
+		await process_frame
+	expect(b.turn == Chess.PLAYER and b.round_number == 4 and chess.reveal_card == null,
+		"The next player turn follows the enemy spell and its card history update")
+
 	# Stage the last attack after exercising the normal opening and turn loop.
 	enemy_square = b.board.find(b.commanders[Chess.ENEMY])
 	b.board[enemy_square] = {}
