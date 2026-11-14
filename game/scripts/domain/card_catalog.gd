@@ -4,6 +4,7 @@ const Catalog = preload("res://scripts/domain/catalog.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const OPENING_HAND = 3
 const MIN_DECK_SIZE = OPENING_HAND
+const SLOW_DESCRIPTION = "目标在自己的下一个回合最多移动 1 格。\n原本只能走 1 格的棋子仍可走 1 格，攻击距离和出牌照常。\n即使伤害全被护甲吸收，减速也会生效。"
 const STARTING_PARTNER_HP_BONUS = 2
 const RECRUIT_PRICE = 8
 const BREAKTHROUGH_PRICES = [8, 14, 22]
@@ -35,7 +36,7 @@ const ACTIONS = {
 	"brace": {"cost": 1, "name": "护身", "kind": "defense", "icon": "shield", "armor": 3, "trait": "选一枚友方棋子，增加 3 点护甲。"},
 	"ward": {"cost": 2, "name": "列阵", "kind": "defense", "icon": "shield", "armor": 2, "column": true, "trait": "选一枚友方棋子，同列所有己方棋子各获得 2 点护甲。"},
 	"ember_spell": {"cost": 1, "name": "余烬", "kind": "spell", "icon": "banked_ember_box", "element": "fire", "damage": 2, "trait": "对射程内的敌棋造成 2 点火伤害。射程为任一友方棋子横竖 2 格，路径须畅通。"},
-	"ice_spell": {"cost": 1, "name": "冰针", "kind": "spell", "icon": "rime_thimble", "element": "ice", "damage": 1, "slow": true, "trait": "对射程内的敌棋造成 1 点冰伤害，并使其下回合最多移动 1 格。横竖射程 2，路径须畅通。"},
+	"ice_spell": {"cost": 1, "name": "冰针", "kind": "spell", "icon": "rime_thimble", "element": "ice", "damage": 1, "slow": true, "trait": "对射程内的敌棋造成 1 点冰伤害，并使其减速，下回合最多移动 1 格。横竖射程 2，路径须畅通。"},
 	"mend_spell": {"cost": 1, "name": "回春", "kind": "spell", "icon": "herbal_case", "element": "water", "heal": 2, "trait": "选一枚受伤的友方棋子，回复 2 点生命。"},
 	"bandage_card": {"cost": 1, "name": "包扎", "kind": "spell", "icon": "clean_bandage_roll", "heal": 3, "trait": "选一枚受伤的友方棋子，回复 3 点生命。"},
 	"broth_card": {"cost": 2, "name": "热汤", "kind": "defense", "icon": "balanced_broth_jar", "armor": 1, "heal": 2, "trait": "选一枚友方棋子，回复 2 点生命并获得 1 点护甲。"},
