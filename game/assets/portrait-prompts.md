@@ -1,5 +1,15 @@
 # Portrait generation record
 
+## Expedition support cards, 2026-11-14
+
+Generated with the built-in ImageGen tool, using `highdrake.png` and `eve.png` as style references. The shared prompt asked for one original head-and-shoulders character per card, centered for readability at 100 px, with textured anime-inspired painting, muted frontier clothing, warm rim light and a transparent background.
+
+- `support_vanguard.png`: Short black hair, an olive travel coat and ochre scarf, light lamellar armor, and a field halberd behind the shoulder.
+- `support_archer.png`: Tied-back chestnut hair, a forest teal cape, tawny bracers, and a fletched quiver.
+- `support_medic.png`: Curly black hair, an ivory field jacket, a sage scarf, a first-aid satchel, and a water-blue vial.
+- `support_guard.png`: An adult dwarf with braided cinnamon hair, slate-blue brigandine, rust cloth, and a worn shield.
+- `support_caster.png`: Dark wavy hair, rust-red and charcoal robes, a brass lamp clasp, and a small amber ember.
+
 ## Title and profession selection additions, 2026-11-05
 
 - `waystation-ensemble.png` shows the wayfarer, all six traveling companions, and three supporting characters together at the White Oak waystation. The single blue-hour landscape leaves quiet space on the left for the menu.
