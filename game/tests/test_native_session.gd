@@ -56,8 +56,47 @@ func execute() -> void:
 	await create_timer(0.4).timeout
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("user://chess-round-two.png")
-	# Stage the last attack after exercising the normal opening and turn loop.
+
+	# Make the enemy's only legal action a ranged attack and verify the native turn timer.
 	var enemy_square: int = b.board.find(b.commanders[Chess.ENEMY])
+	b.board[enemy_square] = {}
+	b.board[0] = b.commanders[Chess.ENEMY]
+	b.board[0].move = 0
+	b.board[0].range = 0
+	b.board[0].diagonal = false
+	b.board[1] = b._piece(b.definition("foe:archer"), Chess.ENEMY)
+	b.board[1].move = 0
+	b.board[4] = {}
+	b.board[7].hp = 8
+	b.board[7].armor = 1
+	b.hands[Chess.ENEMY] = []
+	b.enemy_drew = true
+	b.turn = Chess.ENEMY
+	game.battle_timer = 0.0
+	await process_frame
+	await process_frame
+	var shot = chess.attack_effect
+	expect(shot != null and shot.ranged and shot.attack.distance == 2 and b.enemy_action_resolved,
+		"The normal turn loop presents the real enemy archer's two-square attack")
+	if shot != null:
+		while not shot.contacted and shot.elapsed < 0.19:
+			await process_frame
+		await RenderingServer.frame_post_draw
+		root.get_texture().get_image().save_png("user://chess-enemy-projectile.png")
+		if not shot.contacted:
+			await shot.impact
+		await RenderingServer.frame_post_draw
+		root.get_texture().get_image().save_png("user://chess-enemy-impact.png")
+		game.battle_timer = 0.0
+		game._process(0.0)
+		expect(b.turn == Chess.ENEMY and b.round_number == 2 and shot.losses.get_child_count() > 0,
+			"The enemy hit and loss numbers play before the next round")
+		await shot.finished
+	await create_timer(0.25).timeout
+	expect(b.turn == Chess.PLAYER and b.round_number == 3, "The next round resumes when the enemy attack completes")
+
+	# Stage the last attack after exercising the normal opening and turn loop.
+	enemy_square = b.board.find(b.commanders[Chess.ENEMY])
 	b.board[enemy_square] = {}
 	b.board[1] = b.commanders[Chess.ENEMY]
 	b.board[4] = b.board[7]
@@ -67,7 +106,25 @@ func execute() -> void:
 	chess.render()
 	chess.cells[4].pressed.emit()
 	chess.cells[1].pressed.emit()
-	await create_timer(0.65).timeout
+	var strike = chess.attack_effect
+	expect(strike != null and not strike.ranged and b.outcome == "victory",
+		"The lethal player move starts a melee attack as the combat resolves")
+	if strike != null:
+		await strike.impact
+		await RenderingServer.frame_post_draw
+		root.get_texture().get_image().save_png("user://chess-player-impact.png")
+		game.battle_timer = 0.0
+		game._process(0.0)
+		var destination: Vector2 = strike._tile_rect(chess.cells[1]).get_center()
+		expect(game.combat == b and game.modal_layer.get_child_count() == 0
+			and strike.defender.modulate.a > 0.0
+			and not (strike.attacker.position + strike.attacker.size / 2.0).is_equal_approx(destination),
+			"The victory screen waits for the melee hit and the occupation animation")
+		await strike.finished
+		expect(strike.defender.modulate.a == 0.0
+			and (strike.attacker.position + strike.attacker.size / 2.0).is_equal_approx(destination),
+			"The defender fades before the attacker settles into the captured square")
+	await create_timer(0.3).timeout
 	expect(game.combat == null and b.outcome == "victory" and game.modal_layer.find_child("ShopView", true, false) != null,
 		"The last chess attack opens the post-battle shop")
 	expect(r.data.tiles[p].enemies.is_empty() and not r.data.rewards.is_empty(),"Victory settles once with actual rewards")
