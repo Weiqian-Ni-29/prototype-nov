@@ -52,6 +52,7 @@ static func add_element_icon(parent: Node, element: String) -> void:
 	badge.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	badge.accessibility_name = Cards.ELEMENTS[element] + "属性"
+	badge.tooltip_text = badge.accessibility_name
 	parent.add_child(badge)
 
 static func element_summary(parent: Node, element: String, text: String, size: int = 14, color: Color = MUTED) -> void:
@@ -65,6 +66,18 @@ static func element_summary(parent: Node, element: String, text: String, size: i
 	var summary := label(row, text, size, color, true)
 	summary.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	summary.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+
+static func cost_badge(parent: Node, cost: int) -> PanelContainer:
+	var badge := PanelContainer.new()
+	badge.name = "CardCost"
+	badge.custom_minimum_size = Vector2(28, 26)
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	badge.add_theme_stylebox_override("panel", box(Color("244f51"), Color("6b9a94"), 2, 5))
+	parent.add_child(badge)
+	var caption := label(badge, str(cost), 16, Color("d6efea"))
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	return badge
 
 static func button(parent: Node, text: String, action: Callable) -> Button:
 	var value := Button.new()

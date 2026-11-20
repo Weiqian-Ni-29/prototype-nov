@@ -10,6 +10,37 @@ func expect(value: bool,text: String) -> void:
 	checks += 1
 	if not value: failures+=1; printerr("FAIL: ",text)
 
+func check_deck_layout(editor: Control) -> void:
+	var original_size := root.content_scale_size
+	var original_aspect := root.content_scale_aspect
+	var draft: Array = editor.deck.duplicate()
+	var selected: String = editor.selected
+	root.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
+	for dimensions in [Vector2i(1440, 900), Vector2i(1280, 800), Vector2i(1120, 760)]:
+		root.content_scale_size = dimensions
+		await process_frame
+		await process_frame
+		var viewport := root.get_visible_rect()
+		var collection: Rect2 = editor.collection_scroll.get_global_rect()
+		var listing: Rect2 = editor.deck_scroll.get_global_rect()
+		var footer: Rect2 = editor.done.get_global_rect()
+		var cost_filter: Rect2 = editor.cost_buttons.back().get_global_rect()
+		var horizontal: HScrollBar = editor.collection_scroll.get_h_scroll_bar()
+		var columns := 3 if dimensions.x == 1120 else 4
+		expect(editor.grid.columns == columns and viewport.encloses(editor.get_global_rect())
+			and viewport.encloses(footer) and viewport.encloses(cost_filter)
+			and not collection.intersects(listing) and not collection.intersects(cost_filter)
+			and not listing.intersects(footer) and horizontal.max_value <= horizontal.page,
+			"The deck layout keeps %d columns, filters, list, and actions on screen at %s" % [columns, dimensions])
+		expect(editor.deck == draft and editor.selected == selected,
+			"Resizing keeps the active draft and selection at %s" % dimensions)
+		if columns == 3:
+			await RenderingServer.frame_post_draw
+			root.get_texture().get_image().save_png("user://chess-deck-editor-compact.png")
+	root.content_scale_size = original_size
+	root.content_scale_aspect = original_aspect
+	await process_frame
+
 func execute() -> void:
 	game = Main.instantiate()
 	root.add_child(game)
@@ -33,6 +64,7 @@ func execute() -> void:
 	await process_frame
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("user://chess-deck-editor.png")
+	await check_deck_layout(editor)
 	editor.find_child("ConfirmCardDeck", true, false).pressed.emit()
 	var b = game.combat
 	var chess = game.chess_view
