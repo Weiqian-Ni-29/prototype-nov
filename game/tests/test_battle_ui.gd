@@ -7,6 +7,7 @@ const Cards = preload("res://scripts/domain/card_catalog.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Items = preload("res://scripts/domain/expedition_items.gd")
 const ChessView = preload("res://scripts/presentation/chess_battle_view.gd")
+const DeckEditor = preload("res://scripts/presentation/card_deck_editor.gd")
 
 var checks := 0
 var failures := 0
@@ -671,6 +672,118 @@ func button_named(parent: Node, title: String) -> Button:
 			return node as Button
 	return null
 
+func drag_card(card: Button, target: Control) -> void:
+	var from := card.get_global_rect().get_center()
+	var to := target.get_global_rect().get_center()
+	var press := InputEventMouseButton.new()
+	press.position = from
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.button_mask = MOUSE_BUTTON_MASK_LEFT
+	press.pressed = true
+	root.push_input(press, true)
+	var previous := from
+	for point in [from + Vector2(24, 0), to]:
+		var motion := InputEventMouseMotion.new()
+		motion.position = point
+		motion.relative = point - previous
+		motion.button_mask = MOUSE_BUTTON_MASK_LEFT
+		root.push_input(motion, true)
+		previous = point
+	expect(root.gui_is_dragging(), "A collection card starts a native drag")
+	var release := InputEventMouseButton.new()
+	release.position = to
+	release.button_index = MOUSE_BUTTON_LEFT
+	root.push_input(release, true)
+	await process_frame
+
+func check_editor_draft() -> void:
+	var game := Main.instantiate()
+	root.add_child(game)
+	await process_frame
+	game.sound.set_volume(0, false)
+	game.run.save_path = "user://test-card-editor-draft.json"
+	game._start_new()
+	var gear_id: String = game.run.card_deck()[0]
+	var uid := gear_id.trim_prefix("gear:")
+	var suffix := gear_id.replace(":", "_")
+	expect(game.run.save_card_deck([gear_id]).ok, "An expedition accepts a one-card draft")
+	game.run.data.lamp_coins = 0
+	var cell: String = game.run.actor("hero").position
+	game.run.data.tiles[cell].enemies = []
+	game._deck_dialog()
+	var editor = game.modal_layer.find_child("CardDeckEditor", true, false)
+	editor.search.text = "巡路短刃"
+	editor.search.text_changed.emit(editor.search.text)
+	await process_frame
+	var upgrade := editor.find_child("EnhanceDeckCard", true, false) as Button
+	expect(upgrade != null and upgrade.disabled and upgrade.tooltip_text == "灯铢不足",
+		"The upgrade shows the price and explains why it is disabled")
+	game.run.data.lamp_coins = 100
+	await click(editor.find_child("Collection_" + suffix, true, false))
+	upgrade = editor.find_child("EnhanceDeckCard", true, false) as Button
+	var save_path: String = game.run.save_path
+	game.run.save_path = "user://test-card-editor-missing-directory/draft.json"
+	await click(upgrade)
+	expect(int(game.run.data.gear_instances[uid].enhance_level) == 0 and editor.error.visible
+		and editor.deck == [gear_id], "A failed upgrade reports the error and keeps the gear and draft intact")
+	game.run.save_path = save_path
+	await click(upgrade)
+	var tile := editor.find_child("Collection_" + suffix, true, false) as Button
+	expect(int(game.run.data.gear_instances[uid].enhance_level) == 1 and editor.deck == [gear_id]
+		and editor.cost_bars[0].value == 1 and editor.selected == gear_id and "+1" in tile.accessibility_name,
+		"Enhancing refreshes the same gear card in place without changing the draft or cost distribution")
+	await click(editor.find_child("Remove_" + suffix, true, false))
+	expect(editor.deck.is_empty() and editor.cost_bars[0].value == 0 and not editor.done.disabled
+		and editor.deck_title.has_focus() and "草稿" in editor.guidance.text,
+		"An empty draft can be saved and focus goes to the list heading after removing its last row")
+	await click(editor.done)
+	expect(game.run.card_deck().is_empty(), "Saving through the ordinary editor persists the empty draft")
+
+	game.run.grant_relic("mint_distillate", "hero", cell)
+	game.run.data.tiles[cell].enemies = ["boar"]
+	game._open_current_encounter(false)
+	editor = game.modal_layer.find_child("CardDeckEditor", true, false)
+	await process_frame
+	var preparation := editor.find_child("DeckPreparation", true, false) as OptionButton
+	expect(preparation != null and editor.done.disabled and "3 张" in editor.guidance.text,
+		"An encounter with an empty draft offers preparation and disables starting")
+	if preparation != null:
+		preparation.select(1)
+		preparation.item_selected.emit(1)
+		await click(editor.find_child("Collection_mend_spell", true, false))
+		await click(editor.add_button)
+		expect(game.run.prepared_relic == "mint_distillate" and preparation.selected == 1
+			and editor.done.disabled and "2 张" in editor.guidance.text and editor.cost_bars[0].value == 1,
+			"Deck changes preserve the chosen preparation and count only cards toward the minimum and curve")
+	game.queue_free()
+	await process_frame
+
+func check_editor_scroll() -> void:
+	var run := Run.new()
+	run.new_run(41, "wayfarer")
+	for actor in run.data.actors.values():
+		actor.joined = true
+	var deck := Cards.collection(run.data.actors, run.data)
+	deck.erase("mend_spell")
+	var editor := DeckEditor.new()
+	editor.size = Vector2(1020, 650)
+	root.add_child(editor)
+	editor.setup(run.data.actors, deck, false, "", run)
+	editor._choose("mend_spell")
+	await process_frame
+	await process_frame
+	editor.collection_scroll.scroll_vertical = 168
+	editor.deck_scroll.scroll_vertical = 116
+	await process_frame
+	await click(editor.add_button)
+	expect(editor.deck.size() > 30 and editor.deck.count("mend_spell") == 1
+		and editor.selected == "mend_spell" and editor.add_button.has_focus(),
+		"A large deck can still receive cards and keeps focus on Add below the copy limit")
+	expect(editor.collection_scroll.scroll_vertical == 168 and editor.deck_scroll.scroll_vertical == 116,
+		"Adding to long lists preserves both independent scroll positions")
+	editor.queue_free()
+	await process_frame
+
 func check_ui() -> void:
 	var game := Main.instantiate()
 	root.add_child(game)
@@ -686,6 +799,15 @@ func check_ui() -> void:
 	if editor == null:
 		game.queue_free()
 		return
+	var initial_deck: Array = editor.deck.duplicate()
+	expect(editor.cost_bars[0].value == 7 and editor.cost_bars[0].max_value == 7
+		and editor.cost_bars[1].value == 3 and editor.cost_bars[1].max_value == 7
+		and editor.cost_bars[2].value == 1,
+		"The default eleven cards are counted at their real costs, including the three-cost charm")
+	var sorted_costs: Array = []
+	for row in editor.slots.get_children():
+		sorted_costs.append(int(row.find_child("CardCost", true, false).get_child(0).text))
+	expect(sorted_costs == [1, 1, 1, 1, 1, 2, 2, 3], "Deck rows group copies and sort by cost")
 	editor.search.text = "回复 2 点生命"
 	editor.search.text_changed.emit(editor.search.text)
 	expect(editor.grid.get_child_count() == 1 and editor.selected == "mend_spell", "Search finds the starter healing card by effect")
@@ -700,18 +822,45 @@ func check_ui() -> void:
 	expect(editor.grid.get_child_count() > 0 and editor.grid.get_children().all(
 		func(button): return button.name in ["Collection_mend_spell"]),
 		"The water icon filters the collection to water cards")
-	editor.attribute.select(0)
-	editor.attribute.item_selected.emit(0)
+	await click(editor.type_buttons["spell"])
+	await click(editor.cost_buttons[1])
+	editor.search.text = "生命"
+	editor.search.text_changed.emit(editor.search.text)
+	expect(editor.selected == "mend_spell" and editor.grid.get_child_count() == 1,
+		"Type, element, cost, and text filters intersect")
+	await click(editor.cost_buttons[2])
+	expect(editor.empty_collection.visible and editor.selected.is_empty()
+		and editor.deck == initial_deck and editor.cost_bars[0].value == 7,
+		"No matching cards clears the selection without touching the deck")
+	await click(editor.find_child("ClearCardFilters", true, false))
+	expect(editor.search.text.is_empty() and editor.attribute.selected == 0 and editor.kind == "all"
+		and editor.cost_buttons[0].button_pressed and editor.grid.get_child_count() == editor.available.size(),
+		"Clear restores all four filter defaults")
 	editor.search.text = "冰针"
 	editor.search.text_changed.emit(editor.search.text)
 	await process_frame
-	await click(editor.find_child("Collection_ice_spell", true, false))
-	await click(editor.find_child("AddDeckCard", true, false))
+	var ice := editor.find_child("Collection_ice_spell", true, false) as Button
+	await click(ice)
+	expect(editor.deck == initial_deck and "1 费，已入组 0 张，上限 2 张" in ice.accessibility_name,
+		"Selecting a card leaves the draft intact and announces its cost and copy limit")
+	await drag_card(ice, editor.search)
+	expect(editor.deck == initial_deck and editor.error.visible and editor.search.text == "冰针",
+		"Dropping outside the list leaves the deck and search intact")
+	await drag_card(ice, editor.find_child("Remove_brace", true, false))
+	expect(editor.deck.count("ice_spell") == 1 and editor.cost_bars[0].value == 8
+		and not editor.error.visible and "已入组 1 张" in ice.accessibility_name,
+		"Dropping onto a deck row updates the card, deck, and distribution together")
 	await click(editor.find_child("AddDeckCard", true, false))
 	var capped := editor.find_child("AddDeckCard", true, false) as Button
-	expect(editor.total.text == "13 张" and capped != null and capped.disabled,
+	expect(editor.total.text == "13 张" and capped != null and capped.disabled and ice.has_focus(),
 		"The editor adds cards and still enforces the per-card limit")
+	await drag_card(ice, editor.deck_scroll)
+	expect(editor.deck.count("ice_spell") == 2 and "同名上限" in editor.error.text,
+		"Dragging onto the list also enforces the per-card limit and explains the rejection")
 	await click(editor.find_child("Remove_ice_spell", true, false))
+	expect(editor.deck.count("ice_spell") == 1 and editor.cost_bars[0].value == 8
+		and not capped.disabled and editor.selected == "ice_spell" and editor.search.text == "冰针",
+		"Removing a copy updates the detail and distribution without disturbing the current filters")
 	await click(editor.find_child("ConfirmCardDeck", true, false))
 	var saved := Run.new()
 	expect(saved.load_game(game.run.save_path).ok and saved.card_deck().size() == 12 and saved.card_deck().count("ice_spell") == 1,
@@ -1175,6 +1324,8 @@ func execute() -> void:
 	await check_attack_feedback()
 	await check_spell_feedback()
 	await check_mobility_spells()
+	await check_editor_draft()
+	await check_editor_scroll()
 	await check_ui()
 	await check_hand_layout()
 	await check_mana_display()

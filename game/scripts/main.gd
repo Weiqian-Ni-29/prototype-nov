@@ -1207,7 +1207,14 @@ func _deck_dialog(encounter: bool = false, back_to_rewards: Callable = Callable(
 	var pending: Dictionary = run.data.pending_battle
 	if encounter and pending.is_empty():
 		return
-	var box := _modal("", 1110, 740)
+	var limit := Vector2(1320, 820)
+	var box := _modal("", limit.x, limit.y)
+	var frame := box.get_parent() as Control
+	var fit_frame := func():
+		frame.size = limit.min(modal_layer.size - Vector2(70, 70))
+		frame.position = (modal_layer.size - frame.size) * 0.5
+	modal_layer.resized.connect(fit_frame)
+	frame.tree_exiting.connect(func(): modal_layer.resized.disconnect(fit_frame), CONNECT_ONE_SHOT)
 	var editor := DeckEditor.new()
 	box.add_child(editor)
 	var opponent := ""
@@ -1224,8 +1231,8 @@ func _deck_dialog(encounter: bool = false, back_to_rewards: Callable = Callable(
 		opponent += " · %s（探索度 %d%%）" % [Chess.difficulty_name(tier), exploration]
 		if pending.ambush:
 			opponent += " · 伏击先手"
-	editor.setup(run.data.actors, run.card_deck(), encounter, (box.get_parent() as Control).size.x,
-		opponent, run, "返回奖励" if back_to_rewards.is_valid() else "")
+	editor.setup(run.data.actors, run.card_deck(), encounter, opponent, run,
+		"返回奖励" if back_to_rewards.is_valid() else "")
 	editor.completed.connect(func(deck: Array):
 		var saved: Dictionary = run.save_card_deck(deck)
 		if not saved.ok:
