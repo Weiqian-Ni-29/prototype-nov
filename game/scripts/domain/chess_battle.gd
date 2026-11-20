@@ -304,12 +304,12 @@ func _open_line(from: int, target: int, reach: int) -> bool:
 			return false
 	return true
 
-func _spell_source(side: int, target: int) -> int:
+func _spell_source(side: int, target: int, reach: int) -> int:
 	var source := -1
-	var closest := 3
+	var closest := reach + 1
 	for from in board.size():
 		var distance := _distance(from, target)
-		if distance < closest and board[from].get("side", -1) == side and _open_line(from, target, 2):
+		if distance < closest and board[from].get("side", -1) == side and _open_line(from, target, reach):
 			source = from
 			closest = distance
 	return source
@@ -384,7 +384,7 @@ func card_targets(side: int, index: int, from: int = -1) -> Array[int]:
 			if piece.is_empty() and ((_row(square) >= 2) == (side == PLAYER)):
 				targets.append(square)
 		elif card.has("damage"):
-			if not piece.is_empty() and piece.side != side and _spell_source(side, square) >= 0:
+			if not piece.is_empty() and piece.side != side and _spell_source(side, square, card.get("cast_range", 2)) >= 0:
 				targets.append(square)
 		elif piece.get("side", -1) == side:
 			match card.kind:
@@ -862,7 +862,7 @@ func _apply_card(side: int, id: String, card: Dictionary, target: int, from: int
 		"spell":
 			if card.has("damage"):
 				if not public_preview:
-					var source := _spell_source(side, target)
+					var source := _spell_source(side, target, card.get("cast_range", 2))
 					last_attack = _attack_presentation(source, target, _distance(source, target))
 					last_attack.spell = card.name
 					last_attack.element = card.element

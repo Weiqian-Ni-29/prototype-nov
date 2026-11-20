@@ -6,7 +6,7 @@ signal cancelled
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const UI = preload("res://scripts/presentation/card_ui.gd")
-const COST_LABELS = ["1", "2", "3", "4", "5+"]
+const COST_LABELS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10+"]
 const CARD_SIZE := Vector2(160, 224)
 const CARD_GAP := 8
 const WIDE_LAYOUT := 1100.0
@@ -138,7 +138,7 @@ func _build_collection(left: VBoxContainer) -> void:
 		var text: String = "全部" if bucket == 0 else COST_LABELS[bucket - 1]
 		var button := UI.button(costs, text, _select_cost.bind(bucket))
 		button.name = "CostFilter%d" % bucket
-		button.accessibility_name = "全部费用" if bucket == 0 else "%s 费" % text
+		button.accessibility_name = "全部费用" if bucket == 0 else _cost_bucket_name(bucket - 1)
 		button.toggle_mode = true
 		button.custom_minimum_size.x = 42
 		cost_buttons.append(button)
@@ -187,27 +187,28 @@ func _build_deck_panel(right: VBoxContainer, opponent: String, back_label: Strin
 
 func _build_cost_distribution(parent: VBoxContainer) -> void:
 	UI.label(parent, "费用分布", 16, UI.GOLD)
+	var chart := HBoxContainer.new()
+	chart.add_theme_constant_override("separation", 3)
+	parent.add_child(chart)
 	for index in COST_LABELS.size():
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 8)
-		parent.add_child(row)
-		var bucket := UI.label(row, "%s 费" % COST_LABELS[index], 13, UI.MUTED)
-		bucket.custom_minimum_size.x = 34
+		var column := VBoxContainer.new()
+		column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		column.add_theme_constant_override("separation", 2)
+		chart.add_child(column)
+		var count := UI.label(column, "", 12)
+		count.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		cost_counts.append(count)
 		var bar := ProgressBar.new()
 		bar.name = "DeckCostBar%d" % (index + 1)
 		bar.show_percentage = false
+		bar.fill_mode = ProgressBar.FILL_BOTTOM_TO_TOP
 		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		bar.custom_minimum_size.y = 7
-		bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		bar.add_theme_stylebox_override("background", UI.box(Color("162c27"), Color("4d6a5f"), 0, 4))
-		bar.add_theme_stylebox_override("fill", UI.box(Color("5f9b8e"), Color("88bdb0"), 0, 4))
-		row.add_child(bar)
+		bar.custom_minimum_size = Vector2(14, 34)
+		bar.add_theme_stylebox_override("background", UI.box(Color("162c27"), Color("4d6a5f"), 0, 3))
+		bar.add_theme_stylebox_override("fill", UI.box(Color("5f9b8e"), Color("88bdb0"), 0, 3))
+		column.add_child(bar)
 		cost_bars.append(bar)
-		var count := UI.label(row, "", 13)
-		count.custom_minimum_size.x = 20
-		count.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		cost_counts.append(count)
+		UI.label(column, COST_LABELS[index], 13, UI.MUTED).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 
 func _fit_columns(right_frame: Control) -> void:
 	var wide := size.x >= WIDE_LAYOUT
@@ -284,6 +285,9 @@ func _clear_filters() -> void:
 
 func _cost_bucket(cost: int) -> int:
 	return mini(cost, COST_LABELS.size())
+
+func _cost_bucket_name(index: int) -> String:
+	return "10 费及以上" if index == COST_LABELS.size() - 1 else "%s 费" % COST_LABELS[index]
 
 func _filter() -> void:
 	for id in type_buttons:
@@ -526,7 +530,9 @@ func _render_deck() -> void:
 			entries.append({"id": id, "card": card, "order": index})
 	entries.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return a.order < b.order if a.card.cost == b.card.cost else a.card.cost < b.card.cost)
-	var distribution: Array[int] = [0, 0, 0, 0, 0]
+	var distribution: Array[int] = []
+	distribution.resize(COST_LABELS.size())
+	distribution.fill(0)
 	for entry in entries:
 		var count: int = counts[entry.id]
 		distribution[_cost_bucket(entry.card.cost) - 1] += count
@@ -537,7 +543,7 @@ func _render_deck() -> void:
 	for index in distribution.size():
 		cost_bars[index].max_value = largest
 		cost_bars[index].value = distribution[index]
-		cost_bars[index].accessibility_name = "%s 费，%d 张" % [COST_LABELS[index], distribution[index]]
+		cost_bars[index].accessibility_name = "%s，%d 张" % [_cost_bucket_name(index), distribution[index]]
 		cost_counts[index].text = str(distribution[index])
 	deck_scroll.set_deferred("scroll_vertical", scroll)
 
