@@ -485,8 +485,6 @@ func _overview(id: String) -> void:
 	elif race == "神":
 		title += "的化身"
 	game._text(details, title + " · " + race, 19, game.gold)
-	var piece := Chess.commander_definition(game.run) if id == "hero" else Cards.owned_definition(id, game.run.data.actors)
-	UI.add_element_icon(details, piece.get("element", ""))
 	var introduction = "在村庄醒来的旅人，会用重力魔法。" if id == "hero" else "在这次远征中遇见的伙伴。"
 	if id == "hero" and game.narrative.hero_identity_known():
 		introduction = "想起自己姓名和来历的死神，能用重力引渡亡魂。"
@@ -515,12 +513,10 @@ func _equipment(id: String) -> void:
 func _piece(id: String) -> void:
 	var piece := Chess.commander_definition(game.run) if id == "hero" else Cards.owned_definition(id, game.run.data.actors)
 	game._text(details, "主战者 · 开局登场" if id == "hero" else "伙伴 · 部署至己方半场", 18, game.gold)
-	UI.element_summary(details, piece.element, Cards.stats(piece), 16)
+	UI.label(details, Cards.stats(piece), 16, UI.MUTED, true)
 	game._text(details, piece.trait, 16)
 	if id == "cen":
 		game._text(details, "森林采集时多拿一份。", 16)
-	elif id == "grit":
-		game._text(details, "可辨识已发现敌方主战者的属性。", 16)
 	if id != "hero":
 		_breakthroughs(id)
 

@@ -1,5 +1,5 @@
 extends RefCounted
-## Node placement uses a separate seed stream from terrain, combat and weather.
+## Node placement uses a separate seed stream from terrain and combat.
 const Hex = preload("res://scripts/domain/hex_map.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const STARTING_COINS = 8

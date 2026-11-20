@@ -31,7 +31,7 @@ func execute() -> void:
 	checkpoint_edges()
 	day_edges()
 	story_modifiers()
-	print("EDGE TESTS: %d checks, %d failures (invalid saves, encounter checkpoints, weather and epilogue modifiers)" % [checks, failures])
+	print("EDGE TESTS: %d checks, %d failures (invalid saves, encounter checkpoints, day rollover and epilogue modifiers)" % [checks, failures])
 	quit(0 if failures == 0 else 1)
 
 func checkpoint_edges() -> void:
@@ -85,9 +85,6 @@ func checkpoint_edges() -> void:
 
 func day_edges() -> void:
 	var r = fresh()
-	var state = r.rng.state
-	var predicted = r.next_weather()
-	expect(r.next_weather() == predicted and r.rng.state == state, "Forecast reads without consuming RNG")
 	var pos = r.actor("hero").position
 	var neighbor = Hex.neighbors(pos, r.data.tiles).filter(func(cell): return Hex.is_land(r.data.tiles, cell))[0]
 	r.data.tiles[neighbor].enemies.clear()
@@ -102,8 +99,9 @@ func day_edges() -> void:
 		expect(r.move(destination).ok and r.remaining_steps() == 5 - step and r.data.day == 1,
 			"Each land move, including mountains and return trips, takes one step")
 	r.data.tiles[neighbor].enemies = ["boar"]
-	expect(r.move(neighbor).battle and r.data.day == 2 and r.remaining_steps() == 5 and r.data.weather == predicted,
-		"Fifth step advances weather before the encounter")
+	expect(r.move(neighbor).battle and r.data.day == 2 and r.remaining_steps() == 5
+		and "第 2 天。" in r.data.log and not r.data.has("weather"),
+		"Fifth step starts a new day before the encounter without rolling the weather")
 	expect(hero.hp == 21 and hero.mp == 0 and hero.energy == 71 and r.actor("eve").position == neighbor,
 		"Day rollover preserves resources and companions follow the traveler")
 	expect(not r.move(pos).ok and r.remaining_steps() == 5, "An unresolved battle blocks travel without spending a step")

@@ -26,7 +26,6 @@ var type_buttons := {}
 var cost_filter := 0
 var cost_buttons: Array[Button] = []
 var search: LineEdit
-var attribute: OptionButton
 var count_label: Label
 var collection_scroll: ScrollContainer
 var grid: GridContainer
@@ -91,21 +90,6 @@ func _build_collection(left: VBoxContainer) -> void:
 	search.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	search.text_changed.connect(func(_value): _filter())
 	controls.add_child(search)
-	attribute = OptionButton.new()
-	attribute.add_item("全部属性")
-	attribute.set_item_metadata(0, "")
-	for element in Cards.ELEMENTS:
-		var index := attribute.item_count
-		attribute.add_icon_item(UI.ELEMENT_ICONS[element], "")
-		attribute.set_item_metadata(index, element)
-		attribute.get_popup().set_item_tooltip(index, Cards.ELEMENTS[element] + "属性")
-	attribute.add_theme_constant_override("icon_max_width", UI.ELEMENT_SIZE)
-	attribute.get_popup().add_theme_constant_override("icon_max_width", UI.ELEMENT_SIZE)
-	attribute.item_selected.connect(func(index):
-		_describe_element_filter(index)
-		_filter())
-	controls.add_child(attribute)
-	_describe_element_filter(0)
 	var filters := HBoxContainer.new()
 	left.add_child(filters)
 	for id in Cards.KINDS:
@@ -269,18 +253,10 @@ func _select_cost(value: int) -> void:
 	cost_filter = value
 	_filter()
 
-func _describe_element_filter(index: int) -> void:
-	var element: String = attribute.get_item_metadata(index)
-	var description: String = "全部属性" if element.is_empty() else Cards.ELEMENTS[element] + "属性"
-	attribute.tooltip_text = description
-	attribute.accessibility_name = description
-
 func _clear_filters() -> void:
 	kind = "all"
 	cost_filter = 0
 	search.clear()
-	attribute.select(0)
-	_describe_element_filter(0)
 	_filter()
 
 func _cost_bucket(cost: int) -> int:
@@ -294,12 +270,11 @@ func _filter() -> void:
 		type_buttons[id].set_pressed_no_signal(id == kind)
 	for bucket in cost_buttons.size():
 		cost_buttons[bucket].set_pressed_no_signal(bucket == cost_filter)
-	var element: String = attribute.get_item_metadata(attribute.selected)
 	var query := search.text.strip_edges().to_lower()
 	var results: Array[String] = []
 	for id in available:
 		var card := Cards.owned_definition(id, roster, _card_state())
-		if (kind == "all" or card.kind == kind) and (element.is_empty() or Cards.chess_element(card) == element) \
+		if (kind == "all" or card.kind == kind) \
 				and (cost_filter == 0 or cost_filter == _cost_bucket(card.cost)) \
 				and (query.is_empty() or query in ("%s %s %s" % [card.name, card.trait, Cards.card_attack_type(card)]).to_lower()):
 			results.append(id)
@@ -347,11 +322,7 @@ func _render_tile_face(button: Button, id: String, card: Dictionary) -> void:
 	footer.name = "Status"
 	footer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content.add_child(footer)
-	var element := Cards.chess_element(card)
-	UI.add_element_icon(footer, element)
 	var category: String = Cards.KINDS[card.kind]
-	if not element.is_empty():
-		category += " · " + Cards.ELEMENTS[element]
 	UI.label(footer, category, 14, UI.MUTED).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	UI.label(footer, "", 14, UI.GOLD).name = "DeckCopies"
 	button.tooltip_text = card.name + " · " + category
@@ -362,9 +333,6 @@ func _update_tile_quantity(button: Button, id: String, card: Dictionary) -> void
 	var limit := Cards.limit(id)
 	button.get_node("Face/Status/DeckCopies").text = "%d/%d" % [count, limit]
 	button.accessibility_name = "%s，%d 费，已入组 %d 张，上限 %d 张" % [card.name, card.cost, count, limit]
-	var element := Cards.chess_element(card)
-	if not element.is_empty():
-		button.accessibility_name += "，%s属性" % Cards.ELEMENTS[element]
 
 func _node_suffix(id: String) -> String:
 	return id.replace(":", "_")
@@ -397,12 +365,7 @@ func _render_selection() -> void:
 	var meta := HBoxContainer.new()
 	text.add_child(meta)
 	UI.cost_badge(meta, card.cost)
-	var element := Cards.chess_element(card)
-	UI.add_element_icon(meta, element)
-	var category: String = Cards.KINDS[card.kind]
-	if not element.is_empty():
-		category += " · " + Cards.ELEMENTS[element]
-	UI.label(meta, category, 14, UI.MUTED)
+	UI.label(meta, Cards.KINDS[card.kind], 14, UI.MUTED)
 	if not Cards.card_attack_type(card).is_empty():
 		UI.attack_tag(meta, card)
 	if card.kind == "partner":

@@ -185,7 +185,8 @@ func execute() -> void:
 	while chess.attack_effect == null and Time.get_ticks_msec() < spell_deadline:
 		await process_frame
 	var spell = chess.attack_effect
-	expect(spell != null and spell.ice and spell.attack.from == 1 and spell.attack.target == 7,
+	expect(spell != null and spell.spell and not spell.attack.has("element")
+		and spell.attack.from == 1 and spell.attack.target == 7,
 		"The enemy casts Ice Needle from the ally with an open line")
 	if spell != null:
 		if not spell.contacted:

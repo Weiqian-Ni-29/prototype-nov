@@ -426,7 +426,7 @@ func execute() -> void:
 	expect(Opening.world_pages().all(func(page): return "死亡之神" not in page.text and "伊文洛" not in page.text),
 		"Opening preserves the identity reveal")
 	expect(r.data.tiles.size() == 37 and Catalog.COMPANIONS.size() == 25, "Map and roster sizes")
-	expect(r.actor("hero").name == "旅人" and r.actor("hero").skill == "gravity" and r.actor("hero").element == "none", "Fixed gravity protagonist")
+	expect(r.actor("hero").name == "旅人" and r.actor("hero").skill == "gravity", "Fixed gravity protagonist")
 	expect(r.actor("hero").inventory.trail_food == 2, "Village supplies")
 	expect(r.data.tiles[r.data.boss].enemies.is_empty(), "Boss stays hidden until the fourth story scene")
 	var positions = {}
