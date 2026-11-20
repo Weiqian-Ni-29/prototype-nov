@@ -17,8 +17,8 @@ const ENEMY_DECK_SPECIALTIES = {
 	"guard": ["ward", "brace"],
 	"charge": ["pike", "ember_spell"],
 	"slow": ["ice_spell", "ward"],
-	"wet": ["ice_spell", "mend_spell"],
-	"ignite": ["ember_spell", "ember_spell"],
+	"support": ["ice_spell", "mend_spell"],
+	"assault": ["ember_spell", "ember_spell"],
 	"heal": ["mend_spell", "bandage_card"],
 	"madness": ["ember_spell", "pike"],
 }
@@ -196,8 +196,7 @@ func _enemy_deck(types: Array, lead: String, roller: RandomNumberGenerator) -> A
 	deck.append_array(["staff" if ranged_leader else "blade", "brace", "ward", "mend_spell"])
 	var specialty: String = leader.get("skill", "")
 	if lead.begins_with("npc:"):
-		specialty = {"fire": "ignite", "water": "wet", "ice": "slow", "earth": "guard"}.get(
-			Cards.chess_element(leader), "charge" if ranged_leader else "guard")
+		specialty = "charge" if ranged_leader else "guard"
 	for id in ENEMY_DECK_SPECIALTIES.get(specialty, ["blade", "brace"]):
 		deck.append("staff" if ranged_leader and id in ["blade", "pike"] else id)
 	var filler := ["pike", "ward", "ember_spell", "brace", "ice_spell", "mend_spell",
@@ -215,7 +214,7 @@ static func commander_definition(expedition: RefCounted) -> Dictionary:
 	var hero: Dictionary = expedition.actor("hero")
 	var attack := 4
 	var armor := 1
-	return {"name": hero.name, "portrait": "hero", "element": "ice", "attack": attack, "hp": 13,
+	return {"name": hero.name, "portrait": "hero", "attack": attack, "hp": 13,
 		"armor": armor, "move": 1, "range": 1, "attack_delivery": "melee", "diagonal": true, "trait": "横竖斜走一格。"}
 
 static func enemy_definition(expedition: RefCounted, id: String, leader: bool = false, tier: int = -1) -> Dictionary:
@@ -249,7 +248,7 @@ static func enemy_definition(expedition: RefCounted, id: String, leader: bool = 
 	if healer:
 		movement += "落位时治疗相邻友方。"
 	var piece := {"name": source.name, "kind": "partner", "cost": 2, "portrait": actor_id if npc or id == "war_god" else "",
-		"enemy_art": "" if npc or id == "war_god" else id, "element": "fire" if id == "war_god" else Cards.chess_element(source),
+		"enemy_art": "" if npc or id == "war_god" else id,
 		"attack_delivery": source.get("attack_delivery", "melee"),
 		"attack_projectile": "arrow" if id == "archer" or Cards.is_archer(source) else "energy",
 		"attack": attack, "hp": hp, "armor": armor, "move": 1, "range": reach, "heal": 2 if healer else 0,
@@ -761,7 +760,7 @@ func _attack_context(from: int, target: int) -> Dictionary:
 	var victim: Dictionary = board[target]
 	return {"unit": unit, "victim": victim, "from": from, "square": target, "kind": "attack",
 		"distance": maxi(absi(from % COLS - target % COLS), absi(_row(from) - _row(target))),
-		"element": unit.element, "armor_before": victim.get("armor", 0), "bonus": 0, "pierce": 0, "block": 0}
+		"armor_before": victim.get("armor", 0), "bonus": 0, "pierce": 0, "block": 0}
 
 func _exchange_hits(from: int, target: int, strike: Dictionary) -> void:
 	var attacker: Dictionary = strike.unit
@@ -805,8 +804,8 @@ func _apply_hit(damage: int, context: Dictionary) -> void:
 	context.armor_loss = absorbed
 	context.hp_after = victim.hp
 	context.armor_after = victim.armor
-	_log("%s受到%d 点%s伤害%s。" % [victim.name, damage,
-		Cards.ELEMENTS.get(context.element, ""), "（护甲吸收 %d）" % absorbed if absorbed > 0 else ""])
+	_log("%s受到%d 点伤害%s。" % [victim.name, damage,
+		"（护甲吸收 %d）" % absorbed if absorbed > 0 else ""])
 
 func _finish_hit(context: Dictionary) -> void:
 	var victim: Dictionary = context.victim
@@ -865,10 +864,8 @@ func _apply_card(side: int, id: String, card: Dictionary, target: int, from: int
 					var source := _spell_source(side, target, card.get("cast_range", 2))
 					last_attack = _attack_presentation(source, target, _distance(source, target))
 					last_attack.spell = card.name
-					last_attack.element = card.element
-				var element: String = card.element
 				var context := {"unit": {}, "victim": piece, "square": target, "kind": "spell",
-					"element": element, "id": id, "bonus": 0, "pierce": 0, "block": 0,
+					"id": id, "bonus": 0, "pierce": 0, "block": 0,
 					"armor_before": piece.armor}
 				if side == PLAYER:
 					_relic("spell", context)
@@ -909,8 +906,7 @@ func _equip_card(side: int, id: String, card: Dictionary, target: int) -> void:
 	var previous := equipment_at(piece, slot)
 	var item := card.duplicate()
 	item.card_id = id
-	var affinity_guard := int(card.get("affinity_guard", 0)) if card.get("element", "") == piece.element else 0
-	item.armor_remaining = int(card.get("armor", 0)) + int(card.get("equip_guard", 0)) + affinity_guard
+	item.armor_remaining = int(card.get("armor", 0)) + int(card.get("equip_guard", 0))
 	piece.armor = maxi(0, int(piece.armor) - int(previous.get("armor_remaining", 0))) + item.armor_remaining
 	var hp_change := int(card.get("hp_bonus", 0)) - int(previous.get("hp_bonus", 0))
 	piece.hp_max += hp_change

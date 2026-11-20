@@ -613,10 +613,9 @@ func check_character_codex() -> void:
 	expect(traveler_background != null and background.get_global_rect().is_equal_approx(background.get_parent().get_global_rect()),
 		"The known character backdrop covers the portrait frame")
 	await click("棋子")
-	var traveler_element := codex.find_child("ElementIcon", true, false) as TextureRect
-	expect(traveler_element != null and traveler_element.texture.resource_path.ends_with("/ice.svg")
-		and not contains_text(codex, "冰属性") and contains_text(codex, "横竖斜走一格"),
-		"The traveler profile shows the ice icon and the commander rules")
+	expect(codex.find_child("ElementIcon", true, false) == null
+		and contains_text(codex, "攻 4") and contains_text(codex, "横竖斜走一格"),
+		"The traveler profile shows combat stats and commander rules without element icons")
 	await click("战斗")
 	expect(game.character_codex_state.pose == "battle", "Battle pose changes the displayed art")
 	var portrait = codex.find_child("CodexPortrait", true, false) as TextureButton

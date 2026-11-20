@@ -40,13 +40,12 @@ func check_effects(run: RefCounted) -> void:
 	run.grant_relic("lamp_badge", "hero", start)
 	expect(not run.use_relic("hero", "clean_bandage_roll").ok, "Consumables are prepared for battle")
 	run.prepared_relic = "clean_bandage_roll"
-	run.data.weather = "rain"
 	run.data.tiles[start].enemies = ["boar"]
 	var combat = Battle.new()
 	var encounter = {"position": start, "origin": start, "ambush": false, "npc": ""}
 	expect(combat.begin(run, encounter, run.card_deck()).ok and "temp:bandage_card" in combat.hands[0]
-		and not run.data.relic_inventory.has("clean_bandage_roll") and run.data.weather == "rain",
-		"The prepared bandage grants its temporary card and leaves the expedition rain in place")
+		and not run.data.relic_inventory.has("clean_bandage_roll"),
+		"The prepared bandage is consumed and grants its temporary card")
 	expect(combat.board[10].hp_max == 14 and combat.board[10].armor == 3, "Life seed and lamp badge modify the actual commander")
 	combat.hands[0] = ["support_vanguard"]
 	combat.mana_capacity[Battle.PLAYER] = 2

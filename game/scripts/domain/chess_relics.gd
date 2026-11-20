@@ -122,8 +122,6 @@ static func _condition(b, tag: String, c: Dictionary) -> bool:
 	var square := int(c.get("square", -1))
 	var leader: Dictionary = b.commanders[0]
 	match tag:
-		"earth", "ice", "fire":
-			return c.get("element", unit.get("element", "")) == tag
 		"spell", "attack":
 			return c.get("kind", "") == tag
 		"weapon":

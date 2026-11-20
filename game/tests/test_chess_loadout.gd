@@ -92,7 +92,6 @@ func execute() -> void:
 	run.grant_relic("dry_ink_seal", "hero", start)
 	run.grant_relic("banked_ember_box", "hero", start)
 	run.grant_relic("rime_thimble", "hero", start)
-	run.data.weather = "rain"
 	run.data.tiles[start].enemies = ["boar"]
 	battle = Chess.new()
 	expect(battle.begin(run, encounter, run.card_deck()).ok
@@ -107,7 +106,7 @@ func execute() -> void:
 	expect(4 not in battle.card_targets(0, spell_index), "A blocker stops a two-square spell")
 	battle.board[7] = {}
 	expect(battle.play(spell_index, 4) and enemy.armor == 0 and enemy.hp == old_hp - 1
-		and battle.board[10].leader and battle.can_move_piece(), "Fire ignores map rain and resolves relic damage and armor without moving a piece")
+		and battle.board[10].leader and battle.can_move_piece(), "A spell resolves relic damage and armor without moving a piece")
 	var loaded := Run.new()
 	expect(loaded.load_game(run.save_path).ok and "ice_spell" in Cards.collection(loaded.data.actors, loaded.data),
 		"A relic spell unlock survives reloading")
@@ -115,6 +114,7 @@ func execute() -> void:
 	check_mobility_spell_shop()
 	check_legacy_loadout()
 	check_weather_migration()
+	check_expedition_save_migration()
 	print("CHESS LOADOUT: %d checks, %d failures" % [checks, failures])
 	quit(1 if failures > 0 else 0)
 
@@ -231,8 +231,8 @@ func check_weather_migration() -> void:
 	run.data.pending_story_rewards = {"source": "旧奖励", "items": [{"kind": "relic", "id": "rainstone", "count": 1}]}
 	expect(run.save_game().ok and run.load_game().ok, "A version-ten save with weather cards and relics opens successfully")
 	expect(run.card_deck() == original_deck and Cards.valid_deck(run.card_deck(), run.data.actors, true, run.data)
-		and not run.data.spell_collection.has("fog_spell") and run.data.weather == "rain",
-		"Migration removes retired cards without padding the deck and retains exploration rain")
+		and not run.data.spell_collection.has("fog_spell") and not run.data.has("weather"),
+		"Migration removes retired cards and map weather without padding the deck")
 	expect(run.data.relic_inventory.keys() == ["telescope"] and run.data.relic_seen.keys() == ["telescope"]
 		and run.passive_relic_ids() == ["telescope"] and run.data.relic_intros.size() == 1
 		and run.data.relic_claims["field_cache:" + start].relic_id == ""
@@ -246,3 +246,24 @@ func check_weather_migration() -> void:
 	var encounter := {"position": start, "origin": start, "npc": ""}
 	expect(battle.begin(run, encounter, short_deck).ok and battle.hands[0].size() == 3 and battle.piles[0].is_empty(),
 		"An opening-hand-sized deck starts battle")
+
+func check_expedition_save_migration() -> void:
+	var run := Run.new()
+	run.save_path = "user://test-expedition-v12-fields.json"
+	run.new_run(41, "wayfarer")
+	var deck := run.card_deck() + ["sunforge_flare", "lantern_vigil"]
+	expect(run.save_card_deck(deck).ok, "The save fixture includes cards added after the starter deck")
+	run.data.version = 12
+	run.data.day = 3
+	run.data.steps_today = 2
+	run.data.weather = "rain"
+	run.data.actors.hero.element = "none"
+	run.data.actors.eve.element = "water"
+	run.data.log.append_array(["第 2 天，晴。", "第 3 天，雨。", "抵达山地。"])
+	expect(run.save_game().ok and run.load_game().ok, "Version twelve remains compatible")
+	expect(run.data.version == Run.SAVE_VERSION and not run.data.has("weather")
+		and run.data.actors.values().all(func(actor): return not actor.has("element"))
+		and run.data.log.slice(-3) == ["第 2 天。", "第 3 天。", "抵达山地。"],
+		"Migration clears obsolete map and actor fields and converts old date announcements")
+	expect(run.data.day == 3 and run.remaining_steps() == 3 and run.card_deck() == deck
+		and run.save_game().ok and run.load_game().ok, "Progress and card choices survive migration and resaving")

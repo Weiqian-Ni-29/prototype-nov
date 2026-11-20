@@ -19,7 +19,7 @@ func configure(character: Dictionary) -> void:
 	var skill = str(definition.get("skill", ""))
 	var type = str(definition.get("type",""))
 	if type.begins_with("npc:"): id = type.trim_prefix("npc:")
-	role = "beast" if type in ["boar","lurker"] else "spider" if type in ["spider","hunter_elite"] else "swarm" if type=="swarm" else "crossbow" if type=="archer" else "bow" if id in ["cen", "lorne"] or skill in ["trail_shot", "frost_arrow"] else "magic" if skill in ["ember", "torrent", "heal", "ignite", "wet", "thunderbolt", "windblade", "gravity"] else "melee"
+	role = "beast" if type in ["boar","lurker"] else "spider" if type in ["spider","hunter_elite"] else "swarm" if type=="swarm" else "crossbow" if type=="archer" else "bow" if id in ["cen", "lorne"] or skill in ["trail_shot", "frost_arrow"] else "magic" if skill in ["ember", "torrent", "heal", "thunderbolt", "windblade", "gravity"] else "melee"
 	asset_name = {"melee":"knight", "bow":"ranger", "crossbow":"rogue_hooded","magic":"mage", "wolf":"wolf","beast":type,"spider":"spider","swarm":"swarm"}[role]
 	if id=="lorne": asset_name = "rogue"
 	if skill == "windblade": asset_name = "rogue_hooded"

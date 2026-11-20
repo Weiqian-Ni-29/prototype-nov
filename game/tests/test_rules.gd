@@ -143,7 +143,6 @@ func test_combat() -> void:
 	var position: String = run.data.start
 	run.data.tiles[position].terrain = "forest"
 	run.data.tiles[position].enemies = ["boar"]
-	run.data.weather = "rain"
 	var encounter = {"position": position, "origin": position, "npc": "", "ambush": true}
 	var battle := Chess.new()
 	expect(battle.begin(run, encounter, run.card_deck()).ok, "Ambush starts a real chess encounter")
@@ -151,8 +150,8 @@ func test_combat() -> void:
 		"An ambush starts on the enemy turn, without a movement cost")
 	var tiles_before: Dictionary = run.data.tiles.duplicate(true)
 	battle.enemy_turn()
-	expect(battle.retreat() and run.data.tiles == tiles_before and run.data.weather == "rain",
-		"Retreat leaves the terrain, enemies and weather intact")
+	expect(battle.retreat() and run.data.tiles == tiles_before,
+		"Retreat leaves the terrain and enemies intact")
 	battle = Chess.new()
 	encounter.ambush = false
 	expect(battle.begin(run, encounter, run.card_deck()).ok and battle.can_act(), "A normal rematch begins on the player's turn")

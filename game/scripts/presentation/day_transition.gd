@@ -3,7 +3,7 @@ extends Control
 const TITLE_COLOR = Color("fff0c5")
 const SHADE_COLOR = Color(0.07, 0.14, 0.12, 0.91)
 
-func show_day(day: int, rainy: bool) -> void:
+func show_day(day: int) -> void:
 	dismiss()
 	var notice := Control.new()
 	notice.name = "MapNotice"
@@ -11,8 +11,7 @@ func show_day(day: int, rainy: bool) -> void:
 	notice.modulate.a = 0.0
 	add_child(notice)
 	notice.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	var glow := Color(0.65, 0.78, 1.0, 0.15) if rainy else Color(1.0, 0.80, 0.39, 0.17)
-	_gradient(notice, Rect2(0.16, 0.117, 0.84, 0.34), glow, Vector2(0.52, 0), Vector2(0.52, 0.86))
+	_gradient(notice, Rect2(0.16, 0.117, 0.84, 0.34), Color(1.0, 0.80, 0.39, 0.17), Vector2(0.52, 0), Vector2(0.52, 0.86))
 	_gradient(notice, Rect2(0.28, 0.163, 0.62, 0.16), SHADE_COLOR, Vector2(0.5, 0.5), Vector2(1, 0.5))
 	var caption := VBoxContainer.new()
 	caption.mouse_filter = Control.MOUSE_FILTER_IGNORE

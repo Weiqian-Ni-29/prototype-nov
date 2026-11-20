@@ -663,7 +663,6 @@ func execute() -> void:
 		var position = run.actor("hero").position
 		run.data.tiles[position].terrain = biome
 		run.data.tiles[position].site = ""
-		run.data.weather = "rain" if biome == "swamp" else "sun"
 		for id in ["lorne", "cen", "eve", "grit", "ember", "tide"]:
 			run.actor(id).position = position
 			run.join_companion(id)
