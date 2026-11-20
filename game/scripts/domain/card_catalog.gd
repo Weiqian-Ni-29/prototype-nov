@@ -47,6 +47,50 @@ const ACTIONS = {
 		"trait": "立即将一枚友方棋子斜移 1 格到空格。可在普通走棋后施放。"},
 }
 const UNLOCKABLE_SPELLS = ["ember_spell", "ice_spell", "mend_spell", "tailwind_spell", "sidestep_spell"]
+const COLLECTION_CARDS = {
+	"spark_needle": {"cost": 1, "name": "跳火针", "kind": "spell", "icon": "conductive_needle", "element": "lightning",
+		"damage": 1, "cast_range": 3, "trait": "对任一友方棋子横竖 3 格内的敌棋造成 1 点雷伤害，路径须畅通。"},
+	"field_dressing": {"cost": 1, "name": "裹伤", "kind": "defense", "icon": "tender_gauze",
+		"heal": 1, "armor": 1, "trait": "选一枚友方棋子，回复 1 点生命并获得 1 点护甲。"},
+	"thin_frost": {"cost": 2, "name": "薄霜", "kind": "spell", "icon": "rime_thimble", "element": "ice",
+		"damage": 2, "slow": true, "trait": "对任一友方棋子横竖 2 格内的敌棋造成 2 点冰伤害，并使其下回合最多移动 1 格。路径须畅通。"},
+	"windbreak": {"cost": 2, "name": "挡风列", "kind": "defense", "icon": "gale_runner_armor", "element": "wind",
+		"row": true, "armor": 2, "trait": "选一枚友方棋子，同排友方各获得 2 点护甲。"},
+	"stone_shard": {"cost": 3, "name": "岩刺", "kind": "spell", "icon": "stone_vow_weapon", "element": "earth",
+		"damage": 4, "trait": "对任一友方棋子横竖 2 格内的敌棋造成 4 点地伤害，路径须畅通。"},
+	"camp_respite": {"cost": 3, "name": "营火歇息", "kind": "defense", "icon": "shared_kettle_lid",
+		"row": true, "heal": 3, "armor": 1, "trait": "选一枚友方棋子，同排友方各回复 3 点生命并获得 1 点护甲。"},
+	"furnace_surge": {"cost": 4, "name": "炉涌", "kind": "spell", "icon": "banked_ember_box", "element": "fire",
+		"damage": 5, "trait": "对任一友方棋子横竖 2 格内的敌棋造成 5 点火伤害，路径须畅通。"},
+	"ironbark_guard": {"cost": 4, "name": "铁木甲", "kind": "defense", "icon": "stone_vow_armor", "element": "earth",
+		"armor": 8, "trait": "选一枚友方棋子，使其获得 8 点护甲。"},
+	"cliffwind": {"cost": 5, "name": "断崖长风", "kind": "spell", "icon": "crossed_wind_chimes", "element": "wind",
+		"damage": 5, "cast_range": 3, "trait": "对任一友方棋子横竖 3 格内的敌棋造成 5 点风伤害，路径须畅通。"},
+	"firebreak": {"cost": 5, "name": "封火线", "kind": "defense", "icon": "ember_warden_armor", "element": "fire",
+		"column": true, "heal": 1, "armor": 4, "trait": "选一枚友方棋子，同列友方各回复 1 点生命并获得 4 点护甲。"},
+	"frost_tide": {"cost": 6, "name": "冻潮冰锋", "kind": "spell", "icon": "rime_path_weapon", "element": "ice",
+		"damage": 5, "cast_range": 3, "slow": true,
+		"trait": "对任一友方棋子横竖 3 格内的敌棋造成 5 点冰伤害，并使其下回合最多移动 1 格。路径须畅通。"},
+	"dune_shelter": {"cost": 6, "name": "沙脊掩护", "kind": "defense", "icon": "dune_keeper_armor", "element": "earth",
+		"row": true, "heal": 2, "armor": 4, "trait": "选一枚友方棋子，同排友方各回复 2 点生命并获得 4 点护甲。"},
+	"ashfall": {"cost": 7, "name": "赤灰陨火", "kind": "spell", "icon": "ember_warden_weapon", "element": "fire",
+		"damage": 9, "trait": "对任一友方棋子横竖 2 格内的敌棋造成 9 点火伤害，路径须畅通。"},
+	"camp_spring": {"cost": 7, "name": "归营泉", "kind": "defense", "icon": "stillwater_stone", "element": "water",
+		"column": true, "heal": 4, "armor": 3, "trait": "选一枚友方棋子，同列友方各回复 4 点生命并获得 3 点护甲。"},
+	"thunderstrike": {"cost": 8, "name": "霆击", "kind": "spell", "icon": "storm_conductor_weapon", "element": "lightning",
+		"damage": 10, "trait": "对任一友方棋子横竖 2 格内的敌棋造成 10 点雷伤害，路径须畅通。"},
+	"root_wall": {"cost": 8, "name": "森垒", "kind": "defense", "icon": "rootbound_bracelet", "element": "earth",
+		"row": true, "armor": 7, "trait": "选一枚友方棋子，同排友方各获得 7 点护甲。"},
+	"winter_lock": {"cost": 9, "name": "深冬封锁", "kind": "spell", "icon": "rime_path_accessory", "element": "ice",
+		"damage": 9, "cast_range": 3, "slow": true,
+		"trait": "对任一友方棋子横竖 3 格内的敌棋造成 9 点冰伤害，并使其下回合最多移动 1 格。路径须畅通。"},
+	"deepwater_refuge": {"cost": 9, "name": "深泉庇护", "kind": "defense", "icon": "tide_weaver_accessory", "element": "water",
+		"row": true, "heal": 6, "armor": 4, "trait": "选一枚友方棋子，同排友方各回复 6 点生命并获得 4 点护甲。"},
+	"sunforge_flare": {"cost": 10, "name": "日铸焰火", "kind": "spell", "icon": "ember_warden_accessory", "element": "fire",
+		"damage": 12, "cast_range": 3, "trait": "对任一友方棋子横竖 3 格内的敌棋造成 12 点火伤害，路径须畅通。"},
+	"lantern_vigil": {"cost": 10, "name": "长灯守夜", "kind": "defense", "icon": "guard_candle_cap", "element": "water",
+		"column": true, "heal": 5, "armor": 7, "trait": "选一枚友方棋子，同列友方各回复 5 点生命并获得 7 点护甲。"},
+}
 const PREP_CARDS = ["bandage_card", "broth_card", "cup_card", "loaf_card"]
 const KINDS = {"all": "全部", "partner": "伙伴", "weapon": "武器", "equipment": "装备", "defense": "防御", "spell": "法术"}
 const ELEMENTS = {"earth": "地", "fire": "火", "water": "水", "ice": "冰", "wind": "风", "lightning": "雷"}
@@ -61,6 +105,8 @@ const TALENTS = {
 static func definition(id: String, rank: int = 0) -> Dictionary:
 	if ACTIONS.has(id):
 		return ACTIONS[id]
+	if COLLECTION_CARDS.has(id):
+		return COLLECTION_CARDS[id]
 	if SUPPORT.has(id):
 		var support: Dictionary = SUPPORT[id].duplicate()
 		support.kind = "partner"
@@ -159,6 +205,7 @@ static func collection(actors: Dictionary, state: Dictionary = {}, legacy_suppor
 		var owner: Dictionary = state.gear_instances[uid].owner
 		if owner.kind == "actor" and actors.get(owner.id, {}).get("joined", false):
 			result.append("gear:" + str(uid))
+	result.append_array(COLLECTION_CARDS.keys())
 	return result
 
 static func migrate_deck(deck: Array, actors: Dictionary) -> Array:
@@ -172,7 +219,7 @@ static func migrate_deck(deck: Array, actors: Dictionary) -> Array:
 	return result
 
 static func limit(id: String) -> int:
-	return 2 if ACTIONS.has(id) else 1
+	return 2 if ACTIONS.has(id) or COLLECTION_CARDS.has(id) else 1
 
 static func valid_deck(deck: Variant, actors: Dictionary, require_minimum: bool = false, state: Dictionary = {}, legacy_support: bool = false) -> bool:
 	if not deck is Array or (require_minimum and deck.size() < MIN_DECK_SIZE):

@@ -72,6 +72,43 @@ func check_mana() -> void:
 	expect(ambushed.turn == Chess.PLAYER and ambushed.round_number == 1 and ambushed.mana[Chess.PLAYER] == 1,
 		"The player's first turn starts at one even when the enemy goes first")
 
+func check_expanded_cards() -> void:
+	var battle = fixture()
+	var hero: int = battle.board.find(battle.commanders[Chess.PLAYER])
+	var enemy: int = battle.board.find(battle.commanders[Chess.ENEMY])
+	var nearby_enemy := hero - Chess.COLS * 2
+	for id in Cards.COLLECTION_CARDS:
+		var card := Cards.definition(id)
+		var victim: Dictionary = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
+		victim.merge({"armor": 0, "hp": 30, "hp_max": 30, "element": ""}, true)
+		battle.board[nearby_enemy] = victim
+		var commander: Dictionary = battle.board[hero]
+		commander.armor = 0
+		commander.hp = 1
+		battle.hands[Chess.PLAYER] = [id]
+		battle.mana[Chess.PLAYER] = int(card.cost) - 1
+		expect(battle.card_targets(Chess.PLAYER, 0).is_empty(), "%s checks its mana cost" % id)
+		battle.mana[Chess.PLAYER] = card.cost
+		var target := nearby_enemy if card.kind == "spell" else hero
+		expect(battle.play(0, target) and battle.mana[Chess.PLAYER] == 0, "%s can be played at its listed cost" % id)
+		if card.kind == "spell":
+			expect(victim.hp == 30 - int(card.damage) and victim.has("slow_until") == card.get("slow", false),
+				"%s deals the listed damage and applies its status" % id)
+		else:
+			expect(commander.armor == card.armor and commander.hp == mini(commander.hp_max, 1 + int(card.get("heal", 0))),
+				"%s grants the listed armor and healing" % id)
+
+	battle.board[nearby_enemy] = {}
+	battle.hands[Chess.PLAYER] = ["ember_spell", "sunforge_flare"]
+	battle.mana[Chess.PLAYER] = Chess.MANA_LIMIT
+	expect(enemy not in battle.card_targets(Chess.PLAYER, 0) and enemy in battle.card_targets(Chess.PLAYER, 1),
+		"The three-square spell reaches a target beyond the usual spell range")
+	battle.board[nearby_enemy] = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
+	expect(enemy not in battle.card_targets(Chess.PLAYER, 1), "A blocker still stops the three-square spell")
+	battle.board[nearby_enemy] = {}
+	expect(battle.play(1, enemy) and battle.last_attack.from == hero and battle.mana[Chess.PLAYER] == 0,
+		"The ten-cost spell uses the actual three-square attack source")
+
 func check_enemy_turn_budget() -> void:
 	var battle = fixture()
 	battle.hands[Chess.ENEMY] = ["brace", "brace"]
@@ -808,7 +845,21 @@ func check_ui() -> void:
 	for row in editor.slots.get_children():
 		sorted_costs.append(int(row.find_child("CardCost", true, false).get_child(0).text))
 	expect(sorted_costs == [1, 1, 1, 1, 1, 2, 2, 3], "Deck rows group copies and sort by cost")
-	editor.search.text = "回复 2 点生命"
+	expect(editor.cost_buttons.size() == 11 and editor.cost_buttons.back().text == "10+"
+		and editor.cost_bars.size() == 10 and editor._cost_bucket(11) == 10,
+		"All and ten cost slots match the ten chart buckets, with 10+ grouping higher costs")
+	for cost in range(1, 11):
+		await click(editor.cost_buttons[cost])
+		var cards: Array[Node] = editor.grid.get_children()
+		expect(cards.size() >= 2 and cards.all(func(button): return ("%d 费" % cost) in button.accessibility_name),
+			"Clicking cost %d shows the owned cards at that cost" % cost)
+	await click(editor.add_button)
+	expect(editor.deck.count("sunforge_flare") == 1 and editor.cost_bars[9].value == 1,
+		"Adding the displayed ten-cost card updates the last chart bar")
+	await click(editor.find_child("Remove_sunforge_flare", true, false))
+	expect(editor.deck == initial_deck and editor.cost_bars[9].value == 0, "Removing the ten-cost card empties the last chart bar")
+	await click(editor.find_child("ClearCardFilters", true, false))
+	editor.search.text = "选一枚受伤的友方棋子，回复 2 点生命"
 	editor.search.text_changed.emit(editor.search.text)
 	expect(editor.grid.get_child_count() == 1 and editor.selected == "mend_spell", "Search finds the starter healing card by effect")
 	editor.search.clear()
@@ -819,8 +870,8 @@ func check_ui() -> void:
 		"The collection filters offer exactly the six element icons")
 	editor.attribute.select(water_index)
 	editor.attribute.item_selected.emit(water_index)
-	expect(editor.grid.get_child_count() > 0 and editor.grid.get_children().all(
-		func(button): return button.name in ["Collection_mend_spell"]),
+	expect(editor.grid.get_child_count() == 4 and editor.grid.get_children().all(
+		func(button): return "水属性" in button.accessibility_name),
 		"The water icon filters the collection to water cards")
 	await click(editor.type_buttons["spell"])
 	await click(editor.cost_buttons[1])
@@ -1311,6 +1362,7 @@ func check_hover_details() -> void:
 
 func execute() -> void:
 	check_mana()
+	check_expanded_cards()
 	check_enemy_turn_budget()
 	check_rules()
 	check_equipment_replacement()

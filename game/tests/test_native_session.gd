@@ -25,10 +25,13 @@ func check_deck_layout(editor: Control) -> void:
 		var listing: Rect2 = editor.deck_scroll.get_global_rect()
 		var footer: Rect2 = editor.done.get_global_rect()
 		var cost_filter: Rect2 = editor.cost_buttons.back().get_global_rect()
+		var clear_filters: Rect2 = editor.find_child("ClearCardFilters", true, false).get_global_rect()
+		var last_bar: Rect2 = editor.cost_bars.back().get_global_rect()
 		var horizontal: HScrollBar = editor.collection_scroll.get_h_scroll_bar()
 		var columns := 3 if dimensions.x == 1120 else 4
 		expect(editor.grid.columns == columns and viewport.encloses(editor.get_global_rect())
-			and viewport.encloses(footer) and viewport.encloses(cost_filter)
+			and viewport.encloses(footer) and viewport.encloses(clear_filters)
+			and cost_filter.end.x <= clear_filters.position.x and last_bar.end.x <= footer.end.x
 			and not collection.intersects(listing) and not collection.intersects(cost_filter)
 			and not listing.intersects(footer) and horizontal.max_value <= horizontal.page,
 			"The deck layout keeps %d columns, filters, list, and actions on screen at %s" % [columns, dimensions])
@@ -65,6 +68,12 @@ func execute() -> void:
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("user://chess-deck-editor.png")
 	await check_deck_layout(editor)
+	editor.cost_buttons.back().pressed.emit()
+	await process_frame
+	await RenderingServer.frame_post_draw
+	expect(editor.grid.get_child_count() == 2 and editor.cost_buttons.back().button_pressed,
+		"The native 10+ filter shows both new ten-cost cards")
+	root.get_texture().get_image().save_png("user://chess-deck-editor-10plus.png")
 	editor.find_child("ConfirmCardDeck", true, false).pressed.emit()
 	var b = game.combat
 	var chess = game.chess_view

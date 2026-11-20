@@ -17,7 +17,34 @@ func expect(ok: bool, message: String) -> void:
 		failures += 1
 		printerr("FAIL: ", message)
 
+func check_expanded_collection() -> void:
+	var run := Run.new()
+	run.save_path = "user://test-expanded-card-collection.json"
+	run.new_run(81, "wayfarer")
+	var starter_deck := run.card_deck()
+	expect(run.save_card_deck(starter_deck).ok, "The original starter deck saves normally")
+	var loaded := Run.new()
+	loaded.save_path = run.save_path
+	expect(loaded.load_game(run.save_path).ok and loaded.card_deck() == starter_deck,
+		"Opening an existing deck keeps the cards the player saved")
+	var expanded: Array = []
+	var owned := Cards.collection(loaded.data.actors, loaded.data)
+	for cost in range(1, Chess.MANA_LIMIT + 1):
+		var cards := Cards.COLLECTION_CARDS.keys().filter(func(id): return Cards.definition(id).cost == cost)
+		var kinds := cards.map(func(id): return Cards.definition(id).kind)
+		expect(cards.size() == 2 and "spell" in kinds and "defense" in kinds,
+			"Cost %d adds one spell and one defense" % cost)
+		for id in cards:
+			expect(id in owned and Cards.limit(id) == 2
+				and ResourceLoader.exists("res://assets/ui/item-icons/%s.png" % Cards.definition(id).icon, "Texture2D"),
+				"%s is available to old saves, has art, and respects the action-card copy limit" % id)
+		expanded.append_array(cards)
+	var deck := starter_deck + expanded
+	expect(loaded.save_card_deck(deck).ok and run.load_game(run.save_path).ok and run.card_deck() == deck,
+		"The expansion cards can all be saved in a deck and reloaded")
+
 func execute() -> void:
+	check_expanded_collection()
 	var run := Run.new()
 	run.save_path = "user://test-chess-loadout.json"
 	run.new_run(81, "wayfarer")
