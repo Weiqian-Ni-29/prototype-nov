@@ -43,7 +43,6 @@ var map_pointer_down = false
 var map_dragging = false
 var map_pointer_position = Vector2.ZERO
 var selection_ring: MeshInstance3D
-var rain: CPUParticles3D
 var ocean: Node3D
 var map_batch: Node3D
 var canopy_batch: Node3D
@@ -104,21 +103,6 @@ func _ready() -> void:
 	selection_ring.material_override = outline_material
 	selection_ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(selection_ring)
-	rain = CPUParticles3D.new()
-	rain.amount = 120
-	rain.lifetime = 1.4
-	rain.emission_shape = CPUParticles3D.EMISSION_SHAPE_BOX
-	rain.emission_box_extents = Vector3(14, 0.2, 13)
-	rain.direction = Vector3(0.12, -1.0, 0)
-	rain.initial_velocity_min = 8.0
-	rain.initial_velocity_max = 11.0
-	rain.gravity = Vector3(0, -5, 0)
-	var raindrop = BoxMesh.new()
-	raindrop.size = Vector3(0.014, 0.42, 0.014)
-	raindrop.material = Doll.material(Color("aac8c5"))
-	rain.mesh = raindrop
-	rain.emitting = false
-	add_child(rain)
 	visibility_changed.connect(func():
 		hero_marker.visible = is_visible_in_tree())
 	_update_camera()
@@ -248,9 +232,6 @@ func refresh(run: RefCounted, _selected_id: String, selected_cell: String) -> vo
 	if relief_changed or outline_cell != selected_cell:
 		outline_cell = selected_cell
 		selection_ring.mesh = board_surface.outline(selected_cell, visible_layout.has(selected_cell)) if current_tiles.has(selected_cell) else null
-	light.light_color = Color("d0dce0") if run.data.weather == "rain" else Color("ffe5b2")
-	light.light_energy = 0.48 if run.data.weather == "rain" else 0.68
-	rain.emitting = run.data.weather == "rain"
 
 func _chunk_name(chunk: Vector2i) -> String:
 	return "Chunk_%d_%d" % [chunk.x, chunk.y]
@@ -624,7 +605,6 @@ func _unhandled_input(event: InputEvent) -> void:
 	get_viewport().set_input_as_handled()
 
 func _process(delta: float) -> void:
-	rain.position = focus_point + Vector3(0, 10, 0)
 	if is_processing_unhandled_input() and not map_pointer_down:
 		var motion = Vector3.ZERO
 		if Input.is_physical_key_pressed(KEY_A):

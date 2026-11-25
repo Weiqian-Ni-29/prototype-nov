@@ -418,9 +418,8 @@ func _header(screen: Vector2) -> void:
 	balance.autowrap_mode = TextServer.AUTOWRAP_OFF
 	balance.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	balance.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var weather = "细雨" if travel_clock.get("weather", run.data.weather) == "rain" else "晴朗"
 	var exploration: int = run.exploration_percent()
-	var conditions = "第 %d 天 · %s" % [travel_clock.get("day", run.data.day), weather]
+	var conditions = "第 %d 天" % travel_clock.get("day", run.data.day)
 	if combat == null and run.data.status == "exploring":
 		var tile = run.data.tiles[run.actor(selected_id).position]
 		conditions += " · " + Catalog.terrain_name(tile.terrain)
@@ -557,12 +556,7 @@ func _site_impression() -> void:
 	var terrain: String = run.data.tiles[cell].terrain
 	_show_story(_node_title(cell), "村民", "你回来啦。来喝口水吧。路上遇到难事的话，也可以坐下慢慢说。",
 		STORY_TERRAIN[terrain], [], [_node_option("leave", "谢谢，我得继续赶路了。", true)], func(_choice: String): _close_modal(),
-		{"结束交谈": _close_modal}, _node_tint())
-
-func _node_tint() -> Color:
-	if run.data.weather == "rain":
-		return Color(0.78, 0.88, 1.0)
-	return Color.WHITE
+		{"结束交谈": _close_modal})
 
 func _node_option(id: String, label: String, spoken: bool = false) -> Dictionary:
 	return {"id": id, "text": label, "spoken": spoken}
@@ -653,18 +647,16 @@ func _reward_entries(items: Array) -> Array[Dictionary]:
 				var gear: Dictionary = run.data.gear_instances[id]
 				var card := Gear.card(gear)
 				entry.merge({"title": card.name, "category": "装备牌", "effect": card.trait, "level": card.level})
-				entry.element = card.element
 				entry.icon = card.icon
 				entry.story = card.story
 			"spell":
 				var card: Dictionary = Cards.ACTIONS[id]
 				entry.merge({"title": card.name, "category": "法术牌谱", "effect": card.trait + "\n购买后自动加入卡组。"})
-				entry.element = card.get("element", "")
 				entry.icon = card.icon
 			"companion":
 				var card := Cards.owned_definition(id, run.data.actors)
 				var talent := Cards.breakthrough_talent(id)
-				entry.merge({"title": card.name, "category": "招募伙伴", "portrait": card.portrait, "element": card.element,
+				entry.merge({"title": card.name, "category": "招募伙伴", "portrait": card.portrait,
 					"effect": "%s\n%s\n第三次突破 · %s：%s" % [Cards.stats(card), card.trait, talent.name, talent.text]})
 			"coins":
 				entry.merge({"title": "灯铢", "category": "货币", "effect": "可用于招募伙伴、突破和商店交易。"})
@@ -823,7 +815,7 @@ func _move_selected() -> void:
 	if map_traveling:
 		return
 	var destination = move_target
-	var previous_clock := {"day": run.data.day, "weather": run.data.weather, "steps": run.remaining_steps()}
+	var previous_clock := {"day": run.data.day, "steps": run.remaining_steps()}
 	_clear_map_move()
 	var result = run.move(destination)
 	var day_changed: bool = result.ok and run.data.day != previous_clock.day
@@ -864,7 +856,7 @@ func _show_day_transition() -> void:
 			or combat != null or not run.data.pending_battle.is_empty():
 		return
 	day_transition_pending = false
-	day_transition.show_day(run.data.day, run.data.weather == "rain")
+	day_transition.show_day(run.data.day)
 	sound.play("day")
 	for indicator_name in ["DayConditions", "CrewStamina"]:
 		var indicator := ui.find_child(indicator_name, true, false) as Control
@@ -1201,7 +1193,7 @@ func _show_encounter_intro() -> void:
 	var body := "鼓声从营里传来。你在路上听过同样的鼓点，每响一下，那些想逃走的士兵就握紧了手里的武器。现在鼓就在眼前。卡德兰挡在通往鼓台的路上，伸手取下了自己的兵器。"
 	var portraits := [_story_portrait("hero", "serious"), _story_portrait("war_god", "serious")]
 	_show_story(_node_title(cell) + " · 战鼓", "旁白", body, _story_scene_at(cell), portraits,
-		[_node_option("deck", "编辑卡组与开战")], func(_option: String): _deck_dialog(true), {}, _node_tint())
+		[_node_option("deck", "编辑卡组与开战")], func(_option: String): _deck_dialog(true), {})
 
 func _deck_dialog(encounter: bool = false, back_to_rewards: Callable = Callable()) -> void:
 	var pending: Dictionary = run.data.pending_battle

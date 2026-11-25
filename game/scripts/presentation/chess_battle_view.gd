@@ -505,9 +505,6 @@ func _render_tile(tile: Button, square: int, action: String, hide_face: bool = f
 	var accessible_parts: Array[String] = [square_label, unit.name, Cards.attack_type(unit)]
 	if unit.leader:
 		accessible_parts.append("主战者")
-	var element_name: String = Cards.ELEMENTS.get(unit.element, "")
-	if not element_name.is_empty():
-		accessible_parts.append(element_name + "属性")
 	for slot in Gear.SLOTS:
 		var item: Dictionary = battle.equipment_at(unit, slot)
 		accessible_parts.append("%s %s" % [SLOT_LABELS[slot], item.get("name", "空槽")])
@@ -534,7 +531,6 @@ func _build_piece_face(tile: Control, unit: Dictionary, action: String) -> void:
 		crown_space.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		crown_space.custom_minimum_size.x = 23
 		heading.add_child(crown_space)
-	UI.add_element_icon(heading, unit.element)
 	var title := UI.label(heading, unit.name, 17)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
@@ -1106,8 +1102,8 @@ func _detail_header(entry: Dictionary, kind: String, accent: Color) -> void:
 func _fill_unit_detail(unit: Dictionary) -> void:
 	_detail_header(unit, ("敌方" if unit.side == Battle.ENEMY else "己方") + ("主战者" if unit.leader else "棋子"),
 		UI.ORANGE if unit.side == Battle.ENEMY else UI.GREEN)
-	UI.element_summary(hover_detail_body, unit.element, "攻 %d · 血 %d/%d · 甲 %d" % [
-		battle.attack_power(unit), unit.hp, unit.hp_max, unit.armor])
+	UI.label(hover_detail_body, "攻 %d · 血 %d/%d · 甲 %d" % [
+		battle.attack_power(unit), unit.hp, unit.hp_max, unit.armor], 14, UI.MUTED, true)
 	_section("移动与攻击")
 	UI.label(hover_detail_body, _movement_text(unit, true), 13, UI.INK, true)
 	var talent := _split_talent(unit.trait)
@@ -1148,7 +1144,7 @@ func _fill_equipment_detail(unit: Dictionary, square: int, slot: String) -> void
 		status += " · 临时"
 	_detail_header(item, status, UI.GREEN)
 	_section("装备效果")
-	UI.element_summary(hover_detail_body, item.get("element", ""), item.trait, 13, UI.INK)
+	UI.label(hover_detail_body, item.trait, 13, UI.INK, true)
 	if not battle.can_act():
 		return
 	if _selected_equipment_slot() == slot and square in battle.card_targets(Battle.PLAYER, selected_card):
@@ -1165,7 +1161,7 @@ func _fill_card_detail(card: Dictionary) -> void:
 	UI.label(hover_detail_body, cost_text if affordable else cost_text + " · 法力不足", 14, MANA_LIT if affordable else UI.ORANGE)
 	var summary := _card_stats(card)
 	if not summary.is_empty():
-		UI.element_summary(hover_detail_body, card.get("element", ""), summary)
+		UI.label(hover_detail_body, summary, 14, UI.MUTED, true)
 	if card.kind == "partner":
 		_section("移动与攻击")
 		UI.label(hover_detail_body, _movement_text(card, false), 13, UI.INK, true)

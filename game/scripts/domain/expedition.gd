@@ -8,7 +8,7 @@ const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Items = preload("res://scripts/domain/expedition_items.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
-const SAVE_VERSION = 12
+const SAVE_VERSION = 13
 const LEGACY_MAP_RADIUS = 8
 const REMOVED_WEATHER_CARDS = ["rain", "sun", "fog_spell"]
 const REMOVED_SUPPLIES = ["salve", "ether"]
@@ -28,11 +28,10 @@ func new_run(seed_value: int, profession: String) -> void:
 	prepared_relic = ""
 	var generated = Hex.generate(seed_value)
 	rng.seed = seed_value ^ 0x5eed123
-	data = {"version": SAVE_VERSION, "seed": seed_value, "profession": profession, "day": 1, "steps_today": 0, "weather": "sun", "tiles": generated.tiles, "start": generated.start, "boss": generated.boss, "peace": {}, "chapter": 0, "actors": {}, "explored": {}, "visited": {}, "flags": {}, "knowledge": {}, "story": {}, "rewards": {}, "choices": [], "status": "exploring", "log": [], "battles": 0, "transaction": 0, "pending_battle": {}}
+	data = {"version": SAVE_VERSION, "seed": seed_value, "profession": profession, "day": 1, "steps_today": 0, "tiles": generated.tiles, "start": generated.start, "boss": generated.boss, "peace": {}, "chapter": 0, "actors": {}, "explored": {}, "visited": {}, "flags": {}, "knowledge": {}, "story": {}, "rewards": {}, "choices": [], "status": "exploring", "log": [], "battles": 0, "transaction": 0, "pending_battle": {}}
 	var hero_def = Catalog.PROFESSIONS[profession].duplicate(true)
 	hero_def["title"] = "旅人"
 	hero_def["name"] = "旅人"
-	hero_def["element"] = "none"
 	hero_def["portrait"] = "hero"
 	hero_def["skill"] = "gravity"
 	hero_def["attack_delivery"] = "ranged"
@@ -764,25 +763,10 @@ func collect(id: String) -> Dictionary:
 func _advance_day() -> void:
 	data.day += 1
 	data.steps_today = 0
-	data.weather = "rain" if rng.randf() < rain_chance() else "sun"
 	for key in data.item_effect_counts.keys():
 		if str(key).begins_with("uphill_ready:") or ":day:" in str(key) or str(key).begins_with("day:"):
 			data.item_effect_counts.erase(key)
-	note("第 %d 天，%s。" % [data.day, "雨" if data.weather == "rain" else "晴"])
-
-func next_weather() -> String:
-	return weather_forecast(1)[0]
-
-func weather_forecast(days: int) -> Array[String]:
-	var forecast = RandomNumberGenerator.new()
-	forecast.state = rng.state
-	var result: Array[String] = []
-	for day in days:
-		result.append("rain" if forecast.randf() < rain_chance() else "sun")
-	return result
-
-func rain_chance() -> float:
-	return 0.28
+	note("第 %d 天。" % data.day)
 
 func check_global_failure() -> bool:
 	for id in joined_ids():
@@ -966,7 +950,7 @@ func load_game(path: String = "") -> Dictionary:
 	if json.parse(FileAccess.get_file_as_string(path)) != OK or not json.data is Dictionary:
 		return fail("存档损坏了，原来的文件还在。")
 	var loaded: Dictionary = json.data
-	if not _whole_number(loaded.get("version", -1)) or int(loaded.version) not in [3, 4, 5, 6, 7, 8, 9, 10, 11, SAVE_VERSION] or not loaded.has_all(["actors", "tiles", "rng_state", "day", "explored", "status"]):
+	if not _whole_number(loaded.get("version", -1)) or int(loaded.version) not in [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, SAVE_VERSION] or not loaded.has_all(["actors", "tiles", "rng_state", "day", "explored", "status"]):
 		return fail("存档版本不兼容，或者进度记录不完整。")
 	if int(loaded.version) >= 4 and (not loaded.get("relic_seen") is Dictionary or not loaded.get("nodes") is Dictionary):
 		return fail("遗器发现记录无效。")
@@ -1002,6 +986,7 @@ func load_game(path: String = "") -> Dictionary:
 	var old_attunement: Variant = loaded.get("relic_attunement")
 	var restore_relic_sight: bool = old_attunement is Array and not old_attunement.has("telescope")
 	loaded.erase("relic_attunement")
+	loaded.erase("weather")
 	loaded.version = SAVE_VERSION
 	data = loaded
 	data.merge({"spell_collection": []})
@@ -1021,7 +1006,12 @@ func load_game(path: String = "") -> Dictionary:
 		if data.has("card_deck"):
 			_replace_old_support_cards()
 	_remove_legacy_map_effects()
+	for index in data.log.size():
+		var line: Variant = data.log[index]
+		if line is String and line.begins_with("第 ") and (line.ends_with(" 天，雨。") or line.ends_with(" 天，晴。")):
+			data.log[index] = line.trim_suffix("，雨。").trim_suffix("，晴。") + "。"
 	for id in data.actors:
+		actor(id).erase("element")
 		actor(id).attack_delivery = "ranged" if id == "hero" else Catalog.COMPANIONS[id].attack_delivery
 	if not data.has("visited"):
 		_restore_legacy_visits()
@@ -1163,7 +1153,7 @@ func _restore_legacy_visits() -> void:
 		data.explored[position] = true
 
 func _validate_save(loaded: Dictionary) -> String:
-	if not loaded.has_all(["flags", "story", "knowledge", "rewards", "log", "pending_battle", "start", "boss", "peace", "chapter", "profession", "explored", "transaction", "battles", "weather"]):
+	if not loaded.has_all(["flags", "story", "knowledge", "rewards", "log", "pending_battle", "start", "boss", "peace", "chapter", "profession", "explored", "transaction", "battles"]):
 		return "进度记录不完整"
 	for key in ["actors", "tiles", "flags", "story", "knowledge", "rewards", "pending_battle", "explored", "peace"]:
 		if not loaded[key] is Dictionary:
@@ -1171,7 +1161,7 @@ func _validate_save(loaded: Dictionary) -> String:
 	var radius := Catalog.RADIUS if loaded.tiles.size() == Hex.cell_count(Catalog.RADIUS) else LEGACY_MAP_RADIUS
 	if loaded.tiles.size() != Hex.cell_count(radius) or not loaded.tiles.has(loaded.start) or not loaded.tiles.has(loaded.boss):
 		return "地图不完整"
-	if loaded.status not in ["exploring", "won", "failed"] or loaded.weather not in ["sun", "rain"] or not Catalog.PROFESSIONS.has(loaded.profession):
+	if loaded.status not in ["exploring", "won", "failed"] or not Catalog.PROFESSIONS.has(loaded.profession):
 		return "状态或职业无效"
 	if not _whole_number(loaded.chapter) or loaded.chapter < 0 or loaded.chapter > 4:
 		return "剧情进度无效"
@@ -1278,9 +1268,9 @@ func _validate_save(loaded: Dictionary) -> String:
 		if not loaded.actors.has(id) or not loaded.actors[id] is Dictionary:
 			return "角色缺失"
 		var a = loaded.actors[id]
-		if not a.has_all(["id", "name", "color", "element", "attack", "defense", "speed", "shield", "slow", "guard", "position", "joined", "hp", "hp_max", "mp", "mp_max", "energy", "equipment", "inventory", "skill", "ultimate"]):
+		if not a.has_all(["id", "name", "color", "attack", "defense", "speed", "shield", "slow", "guard", "position", "joined", "hp", "hp_max", "mp", "mp_max", "energy", "equipment", "inventory", "skill", "ultimate"]):
 			return "角色记录不完整"
-		if a.id != id or not a.name is String or not a.color is String or not a.element is String or not a.joined is bool:
+		if a.id != id or not a.name is String or not a.color is String or not a.joined is bool:
 			return "角色标识无效"
 		if not Hex.is_land(loaded.tiles, a.position) or not a.inventory is Dictionary or not a.equipment is Dictionary:
 			return "角色位置或背包无效"

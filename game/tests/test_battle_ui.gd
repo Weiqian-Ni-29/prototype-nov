@@ -80,14 +80,15 @@ func check_expanded_cards() -> void:
 	for id in Cards.COLLECTION_CARDS:
 		var card := Cards.definition(id)
 		var victim: Dictionary = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
-		victim.merge({"armor": 0, "hp": 30, "hp_max": 30, "element": ""}, true)
+		victim.merge({"armor": 0, "hp": 30, "hp_max": 30}, true)
 		battle.board[nearby_enemy] = victim
 		var commander: Dictionary = battle.board[hero]
 		commander.armor = 0
 		commander.hp = 1
 		battle.hands[Chess.PLAYER] = [id]
 		battle.mana[Chess.PLAYER] = int(card.cost) - 1
-		expect(battle.card_targets(Chess.PLAYER, 0).is_empty(), "%s checks its mana cost" % id)
+		expect(not card.has("element") and battle.card_targets(Chess.PLAYER, 0).is_empty(),
+			"%s has no element and checks its mana cost" % id)
 		battle.mana[Chess.PLAYER] = card.cost
 		var target := nearby_enemy if card.kind == "spell" else hero
 		expect(battle.play(0, target) and battle.mana[Chess.PLAYER] == 0, "%s can be played at its listed cost" % id)
@@ -155,8 +156,8 @@ func check_rules() -> void:
 		"Three-by-four board begins with just the commanders")
 	expect(battle.board[1].side == Chess.ENEMY and battle.board[10].side == Chess.PLAYER,
 		"Both commanders start in their center rear squares")
-	expect(battle.board[10].element == "ice" and battle.board[1].element == "",
-		"The traveler is an ice unit and the boar is untyped")
+	expect(not battle.board[10].has("element") and not battle.board[1].has("element"),
+		"Both commanders are defined by their combat stats and actions")
 	expect(battle.hands.all(func(hand): return hand.size() == 3)
 		and battle.piles[Chess.PLAYER].size() == 8 and battle.piles[Chess.ENEMY].size() == 9,
 		"Both teams draw exactly three opening cards")
@@ -206,8 +207,8 @@ func check_rules() -> void:
 	var wayfarer_gear := Gear.card({"definition_id": "grave_wayfarer_armor", "enhance_level": 0, "quality": Gear.QUALITIES[0]})
 	var armor_before: int = battle.board[10].armor
 	battle._apply_card(Chess.PLAYER, "gear:wayfarer", wayfarer_gear, 10)
-	expect(wayfarer_gear.element == "ice" and battle.board[10].armor == armor_before + int(wayfarer_gear.armor) + 1,
-		"Wayfarer gear preserves its affinity guard on the ice commander")
+	expect(not wayfarer_gear.has("affinity_guard") and battle.board[10].armor == armor_before + int(wayfarer_gear.armor),
+		"Wayfarer gear adds the armor printed on the card")
 	battle.hands[Chess.PLAYER] = ["brace"]
 	battle.mana[Chess.PLAYER] = 1
 	expect(battle.play(0, 7) and battle.take_attack().is_empty(),
@@ -395,7 +396,7 @@ func check_spell_feedback() -> void:
 	view.hand_buttons[0].pressed.emit()
 	view.cells[1].pressed.emit()
 	var effect := view.attack_effect
-	expect(effect != null and effect.ice and effect.attack.from == 4 and effect.attack.target == 1
+	expect(effect != null and effect.spell and not effect.attack.has("element") and effect.attack.from == 4 and effect.attack.target == 1
 		and effect.attack.defender.armor == 1 and view.end_turn_button.disabled,
 		"Ice Needle starts at the unobstructed ally and keeps the defender's old armor until contact")
 	if effect != null:
@@ -864,29 +865,22 @@ func check_ui() -> void:
 	expect(editor.grid.get_child_count() == 1 and editor.selected == "mend_spell", "Search finds the starter healing card by effect")
 	editor.search.clear()
 	editor.search.text_changed.emit("")
-	var water_index := Cards.ELEMENTS.keys().find("water") + 1
-	expect(editor.attribute.item_count == 7 and editor.attribute.get_item_text(water_index).is_empty()
-		and editor.attribute.get_item_icon(water_index).resource_path.ends_with("/water.svg"),
-		"The collection filters offer exactly the six element icons")
-	editor.attribute.select(water_index)
-	editor.attribute.item_selected.emit(water_index)
-	expect(editor.grid.get_child_count() == 4 and editor.grid.get_children().all(
-		func(button): return "水属性" in button.accessibility_name),
-		"The water icon filters the collection to water cards")
+	expect(editor.search.get_parent().get_child_count() == 2
+		and editor.find_child("ElementIcon", true, false) == null, "Collection cards and search have no element controls")
 	await click(editor.type_buttons["spell"])
 	await click(editor.cost_buttons[1])
 	editor.search.text = "生命"
 	editor.search.text_changed.emit(editor.search.text)
 	expect(editor.selected == "mend_spell" and editor.grid.get_child_count() == 1,
-		"Type, element, cost, and text filters intersect")
+		"Type, cost, and text filters intersect")
 	await click(editor.cost_buttons[2])
 	expect(editor.empty_collection.visible and editor.selected.is_empty()
 		and editor.deck == initial_deck and editor.cost_bars[0].value == 7,
 		"No matching cards clears the selection without touching the deck")
 	await click(editor.find_child("ClearCardFilters", true, false))
-	expect(editor.search.text.is_empty() and editor.attribute.selected == 0 and editor.kind == "all"
+	expect(editor.search.text.is_empty() and editor.kind == "all"
 		and editor.cost_buttons[0].button_pressed and editor.grid.get_child_count() == editor.available.size(),
-		"Clear restores all four filter defaults")
+		"Clear restores the type, cost, and search defaults")
 	editor.search.text = "冰针"
 	editor.search.text_changed.emit(editor.search.text)
 	await process_frame
@@ -1214,26 +1208,9 @@ func check_board_badges() -> void:
 	expect(battle.can_move_piece() and not view.end_turn_button.disabled, "Playing a card leaves the board action and End Turn available")
 	await click(view.end_turn_button)
 	expect(battle.turn == Chess.ENEMY and view.end_turn_button.disabled, "The player can end even with legal moves")
-	var traveler_icon := view.cells[10].find_child("ElementIcon", true, false) as TextureRect
-	expect(traveler_icon != null and traveler_icon.texture.resource_path.ends_with("/ice.svg")
-		and view.cells[1].find_child("ElementIcon", true, false) == null,
-		"The real traveler shows the ice badge and the untyped boar has no badge")
-	var elements := ["earth", "fire", "water", "ice", "wind", "lightning"]
-	expect(Cards.ELEMENTS.keys() == elements, "The chess catalog defines only the six elements")
-	for square in elements.size():
-		var piece: Dictionary = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
-		piece.element = elements[square]
-		battle.board[square] = piece
-	view.render()
-	await process_frame
-	for square in elements.size():
-		var tile := view.cells[square]
-		var icon := tile.find_child("ElementIcon", true, false) as TextureRect
-		var attribute_name: String = Cards.ELEMENTS[elements[square]]
-		expect(icon != null and icon.texture != null and icon.texture.resource_path.ends_with("/%s.svg" % elements[square])
-			and tile.get_global_rect().encloses(icon.get_global_rect()) and attribute_name in tile.accessibility_name
-			and not tile.find_children("*", "Label", true, false).any(func(label): return label.text == attribute_name),
-			"Each attribute has its own visible icon and accessible name: " + attribute_name)
+	expect(view.find_child("ElementIcon", true, false) == null
+		and view.cells.all(func(tile): return "属性" not in tile.accessibility_name),
+		"The board and its accessible labels present both sides without element badges")
 	view.queue_free()
 	await process_frame
 
@@ -1275,9 +1252,8 @@ func check_hover_details() -> void:
 	await process_frame
 	var text := _detail_text(view)
 	expect(view.hover_detail.visible and view.hover_detail.size.y > 90, "Hovering the commander opens a sized detail popup")
-	var icon := view.hover_detail_body.find_child("ElementIcon", true, false) as TextureRect
-	expect(icon != null and icon.texture.resource_path.ends_with("/ice.svg") and not "冰属性" in text,
-		"The traveler detail shows only the ice icon")
+	expect(view.hover_detail_body.find_child("ElementIcon", true, false) == null
+		and "攻 4" in text and "血 13/13" in text, "The commander detail shows combat stats without elements")
 	expect("移动 · " in text and "攻击 · 近战" in text and "会受到反伤" in text,
 		"Commander popup lists movement and the melee retaliation rule")
 	expect(root.get_visible_rect().encloses(view.hover_detail.get_global_rect()), "The popup stays inside the viewport")
