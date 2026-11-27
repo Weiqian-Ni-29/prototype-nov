@@ -1,5 +1,7 @@
 extends SceneTree
 
+const Fixture = preload("res://tests/journey_fixture.gd")
+
 const Main = preload("res://scenes/main.tscn")
 const Run = preload("res://scripts/domain/expedition.gd")
 const Journey = preload("res://scripts/domain/journey.gd")
@@ -26,10 +28,10 @@ func seed_for(kind: String, stake: int, step: int = 0, event_roll: int = -1) -> 
 	assert(false, "No seed matches the requested test encounter.")
 	return 0
 
-func new_run(seed_value: int, journey: bool = true) -> RefCounted:
+func new_run(seed_value: int) -> RefCounted:
 	var run := Run.new()
 	run.save_path = save_path
-	run.new_run(seed_value, "wayfarer", journey)
+	run.new_run(seed_value, "wayfarer")
 	return run
 
 func check_pools() -> void:
@@ -103,8 +105,8 @@ func check_shop_and_companion() -> void:
 		"A roadside companion event joins the party through the existing system.")
 
 func check_migration_and_failure() -> void:
-	var old := new_run(42, false)
-	old.data.version = 13
+	var old := new_run(42)
+	Fixture.old_save(old.data, 13)
 	DirAccess.remove_absolute(save_path + ".legacy-map.bak")
 	old.data.lamp_coins = 17
 	old.data.chapter = 3
@@ -114,13 +116,13 @@ func check_migration_and_failure() -> void:
 	expect(old.save_game().ok, "The old map save is written.")
 	var migrated := Run.new()
 	migrated.save_path = save_path
-	expect(migrated.load_game().ok and migrated.migrate_to_journey().ok and migrated.load_game().ok,
+	expect(migrated.load_game().ok and migrated.load_game().ok,
 		"The old save migrates and remains readable.")
 	var original: Variant = JSON.parse_string(FileAccess.get_file_as_string(save_path + ".legacy-map.bak"))
 	expect(original is Dictionary and original.get("version") == 13 and not original.has("journey"),
 		"Migration keeps a separate copy of the original map save.")
 	expect(migrated.data.journey.step == 0 and Journey.current(migrated.data).is_empty() and migrated.data.pending_battle.is_empty()
-		and migrated.data.lamp_coins == 17 and migrated.actor("hero").hp == 22 and migrated.card_deck() == deck,
+		and not migrated.data.has("tiles") and migrated.data.lamp_coins == 17 and migrated.actor("hero").hp == 22 and migrated.card_deck() == deck,
 		"Migration starts the new route while keeping the party's earned resources and cards.")
 	var fatal := new_run(seed_for("event", 0, 0, 1))
 	fatal.actor("hero").hp = 1
@@ -129,6 +131,34 @@ func check_migration_and_failure() -> void:
 	var abandoned := new_run(seed_for("shop", 0))
 	expect(Journey.choose(abandoned, 0, 0).ok and Journey.abandon(abandoned).ok and abandoned.load_game().ok
 		and abandoned.data.status == "failed" and not abandoned.data.has("battle_shop"), "Abandoning an open shop creates a readable final save.")
+
+func check_v14_journey_upgrade() -> void:
+	var run := new_run(seed_for("elite", 2))
+	expect(Journey.choose(run, 0, 2).ok, "Version-14 battle fixture reveals an elite.")
+	var enemies := Journey.battle_enemies(run.data, run.data.pending_battle).duplicate()
+	run.data.pending_battle.erase("enemies")
+	Fixture.old_save(run.data, 14, true)
+	expect(run.save_game().ok and run.load_game().ok, "An already revealed version-14 battle upgrades.")
+	expect(not run.data.has("tiles") and run.data.journey.step == 0 and Journey.current(run.data).kind == "elite"
+		and run.data.pending_battle.enemies == enemies, "The same pending battle survives removal of the map.")
+
+	run = new_run(seed_for("shop", 0))
+	expect(Journey.choose(run, 0, 0).ok, "Version-14 shop fixture opens.")
+	var old_cell := "-2,1"
+	run.data.tiles = {old_cell: {"base_terrain": "swamp"}}
+	run.data.start = old_cell
+	run.data.peace = {}
+	run.data.version = 14
+	run.data.battle_shop.cell = old_cell
+	for actor in run.data.actors.values():
+		actor.position = old_cell
+	for uid in run.gear_owned("shop", Journey.CAMP):
+		run.data.gear_instances[uid].owner.id = old_cell
+	var stock: Array = run.gear_owned("shop", old_cell)
+	expect(run.save_game().ok and run.load_game().ok, "An open version-14 shop upgrades.")
+	expect(Journey.shop_active(run.data) and run.data.battle_shop.cell == Journey.CAMP
+		and run.data.village == "swamp" and run.gear_owned("shop", Journey.CAMP) == stock,
+		"The open shop keeps stock and the saved opening backdrop.")
 
 func check_battle_exit() -> void:
 	var run := new_run(seed_for("battle", 1))
@@ -172,8 +202,8 @@ func check_playable_route(game: Node) -> void:
 	var boss_count := 0
 	for i in Journey.STOPS:
 		var screen: Node = game.ui.get_node_or_null("JourneyScreen")
-		expect(screen != null and not game.view.visible and not game.view.is_processing_unhandled_input(),
-			"The default exploration surface is the journey, with map input disabled.")
+		expect(screen != null and game.get_children().all(func(child): return not child is Node3D),
+			"The exploration surface is the 2D journey.")
 		if screen == null:
 			return
 		expect(screen.find_children("JourneyChoice*", "Button", true, false).size() == (1 if i == Journey.STOPS - 1 else 3),
@@ -198,7 +228,7 @@ func check_playable_route(game: Node) -> void:
 				battle_count += 1
 			if not press_text(game.modal_layer, "开始战斗") or game.combat == null:
 				return
-			expect(game.combat.final_battle == (kind == "boss") and not game.view.visible, "The selected node enters the real card battle.")
+			expect(game.combat.final_battle == (kind == "boss") and game.ui.has_node("ChessBattle"), "The selected node enters the real card battle.")
 			if kind == "boss":
 				expect(not game.combat.can_retreat(), "The final battle is terminal.")
 				game.combat.commanders[Chess.ENEMY].hp = 1
@@ -227,6 +257,7 @@ func execute() -> void:
 	check_checkpoints()
 	check_shop_and_companion()
 	check_migration_and_failure()
+	check_v14_journey_upgrade()
 	check_battle_exit()
 	var game := Main.instantiate()
 	root.add_child(game)

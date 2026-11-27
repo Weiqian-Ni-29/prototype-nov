@@ -44,8 +44,6 @@ def main() -> None:
     shutil.copytree(GAME / 'assets/licenses', destination / 'licenses', dirs_exist_ok=True)
     shutil.copy2(GAME / 'assets/fonts/OFL.txt', destination / 'licenses/NOTO-OFL.txt')
     shutil.copy2(GAME / 'assets/README.md', destination / 'licenses/ASSET-SOURCES.md')
-    shutil.copy2(GAME / 'assets/characters/sources.json', destination / 'licenses/CHARACTER-SOURCES.json')
-    shutil.copy2(GAME / 'assets/nature/sources.json', destination / 'licenses/NATURE-SOURCES.json')
     commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     dirty = bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip())
     files = {str(path.relative_to(destination)).replace('\\', '/'): sha256(path)

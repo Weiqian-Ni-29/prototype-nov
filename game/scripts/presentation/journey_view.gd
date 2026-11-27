@@ -117,7 +117,7 @@ func setup(game: Node) -> void:
 			game._button(actions, "进入商店", game._shop_dialog).name = "JourneyEnter"
 		else:
 			_line(game, actions, "卡德兰拔刀。" if entry.kind == "boss" else "前路被拦住了。", 19, game.ink)
-			game._button(actions, "准备战斗", game._show_encounter_intro).name = "JourneyEnter"
+			game._button(actions, "准备战斗", game._deck_dialog.bind(true)).name = "JourneyEnter"
 
 static func settlement(entry: Dictionary) -> String:
 	var changes := PackedStringArray()

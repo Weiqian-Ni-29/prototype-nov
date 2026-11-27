@@ -94,28 +94,8 @@ const REMOVED_WEATHER_RELICS = [
 	"field_dial", "waterline_thread", "cloud_almanac",
 ]
 
-const SITES = {
-	"telescope": ["旧观测点", "mountain"],
-	"herbal_case": ["废弃医棚", "forest"],
-	"stillwater_stone": ["封存泉眼", "ruins"],
-}
-
 static func is_active(id: String) -> bool:
 	return DATA.has(id) and DATA[id].hook != "retired"
 
 static func current_effect(id: String) -> String:
 	return ChessRelics.effect(id) if is_active(id) else DATA.get(id, {}).get("effect", "")
-
-static func exploration_sites(tiles: Dictionary, seed_value: int) -> Dictionary:
-	var sites = {}
-	for relic in SITES:
-		var candidates = tiles.keys().filter(func(id):
-			var tile = tiles[id]
-			return tile.site.is_empty() and tile.npc.is_empty() and tile.base_terrain == SITES[relic][1])
-		candidates.sort_custom(func(a, b):
-			var left = hash("%d:%s:%s" % [seed_value, relic, a])
-			var right = hash("%d:%s:%s" % [seed_value, relic, b])
-			return a < b if left == right else left < right)
-		for id in candidates.slice(0, 4):
-			sites[id] = relic
-	return sites

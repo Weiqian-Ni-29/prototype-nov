@@ -3,6 +3,7 @@ extends RefCounted
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
 
+const CAMP = "camp"
 const STOPS = 7
 const FINAL = "war_camp"
 const STAKES = ["低赌注", "中赌注", "高赌注"]
@@ -48,14 +49,6 @@ static func begin(run: RefCounted) -> void:
 			route.append(candidates.pop_at(roller.randi_range(0, candidates.size() - 1)))
 	route.append(FINAL)
 	run.data.journey = {"seed": seed_key, "route": route, "step": 0, "history": []}
-	run.data.pending_battle = {}
-	run.data.erase("pending_arrival")
-	run.close_battle_shop()
-	run.data.erase("pending_victory")
-	if run.data.status == "exploring":
-		run.retreat_party(run.data.start)
-		if run.actor("hero").hp <= 0 and not run.check_global_failure():
-			run.actor("hero").hp = 1
 
 static func encounter(data: Dictionary) -> Dictionary:
 	var journey: Dictionary = data.journey
@@ -74,7 +67,8 @@ static func current(data: Dictionary) -> Dictionary:
 
 static func choose(run: RefCounted, step: int, index: int) -> Dictionary:
 	var data: Dictionary = run.data
-	if data.status != "exploring" or step != int(data.journey.step) or not current(data).is_empty() 			or data.has("pending_story_rewards"):
+	if data.status != "exploring" or step != int(data.journey.step) or not current(data).is_empty() \
+			or data.has("pending_story_rewards"):
 		return run.fail("这一段旅途已经选定。")
 	var choices: Array = encounter(data).choices
 	if index < 0 or index >= choices.size():
@@ -91,6 +85,7 @@ static func choose(run: RefCounted, step: int, index: int) -> Dictionary:
 	match kind:
 		"battle", "elite", "boss":
 			data.pending_battle = {"position": cell, "origin": cell, "ambush": false, "npc": "", "journey_step": step}
+			data.pending_battle.enemies = battle_enemies(data, data.pending_battle)
 		"shop":
 			run.open_battle_shop()
 		_:
@@ -99,7 +94,8 @@ static func choose(run: RefCounted, step: int, index: int) -> Dictionary:
 
 static func advance(run: RefCounted, step: int) -> Dictionary:
 	var data: Dictionary = run.data
-	if data.status != "exploring" or step != int(data.journey.step) or step >= STOPS - 1 			or not current(data).get("settled", false) or data.has("pending_victory") or data.has("pending_story_rewards"):
+	if data.status != "exploring" or step != int(data.journey.step) or step >= STOPS - 1 \
+			or not current(data).get("settled", false) or data.has("pending_victory") or data.has("pending_story_rewards"):
 		return run.fail("请先结算这一段旅途。")
 	var previous := data.duplicate(true)
 	data.journey.step = step + 1
@@ -130,12 +126,14 @@ static func shop_active(data: Dictionary) -> bool:
 	var entry := current(data)
 	return data.status == "exploring" and entry.get("kind") == "shop" and not entry.get("settled", false)
 
-static func shop_key(data: Dictionary, cell: String) -> String:
-	return "journey:%d" % int(data.journey.step) if data.has("journey") else cell
+static func shop_key(data: Dictionary) -> String:
+	return "journey:%d" % int(data.journey.step)
 
 static func battle_enemies(data: Dictionary, pending: Dictionary) -> Array:
+	if pending.has("enemies"):
+		return pending.enemies
 	if not pending.has("journey_step"):
-		return data.tiles[pending.position].enemies
+		return []
 	var kind: String = current(data).get("kind", "")
 	if kind not in BATTLES:
 		return []
@@ -144,6 +142,16 @@ static func battle_enemies(data: Dictionary, pending: Dictionary) -> Array:
 	var groups := [["hunter_elite", "spider", "archer"], ["furnace_elite", "furnace", "apothecary"]] 		if kind == "elite" else [["boar", "swarm", "archer"], ["archer", "canal", "apothecary"], ["furnace", "spider", "lurker"]]
 	var roller := _roller(data.journey.seed, "enemies:%d" % int(pending.journey_step))
 	return groups[roller.randi_range(0, groups.size() - 1)]
+
+static func is_elite(enemies: Array) -> bool:
+	return enemies.any(func(id): return str(id).ends_with("_elite") or id == "lamp_boss")
+
+static func battle_coins(seed_value: int, source: String, elite: bool, finale: bool) -> int:
+	var roller := RandomNumberGenerator.new()
+	roller.seed = hash("battle-coins:%d:%s" % [seed_value, source])
+	if finale:
+		return roller.randi_range(16, 20)
+	return roller.randi_range(8, 12) if elite else roller.randi_range(4, 7)
 
 static func scale(data: Dictionary, amount: int) -> int:
 	return _scaled(amount, encounter(data).choices[int(current(data).choice)].stakes)
@@ -163,7 +171,9 @@ static func settle(run: RefCounted, message: String) -> void:
 
 static func valid(data: Dictionary) -> bool:
 	var journey: Variant = data.get("journey")
-	if not journey is Dictionary or not journey.get("seed") is String or not journey.seed.is_valid_int() 			or not journey.get("route") is Array or journey.route.size() != STOPS or journey.route.back() != FINAL 			or not _integer(journey.get("step"), 0, STOPS - 1) or not journey.get("history") is Array:
+	if not journey is Dictionary or not journey.get("seed") is String or not journey.seed.is_valid_int() \
+			or not journey.get("route") is Array or journey.route.size() != STOPS or journey.route.back() != FINAL \
+			or not _integer(journey.get("step"), 0, STOPS - 1) or not journey.get("history") is Array:
 		return false
 	for i in CHAPTERS.size():
 		var first: Variant = journey.route[i * 2]
@@ -175,9 +185,13 @@ static func valid(data: Dictionary) -> bool:
 		return false
 	for i in journey.history.size():
 		var entry: Variant = journey.history[i]
-		if not entry is Dictionary or not _integer(entry.get("choice"), 0, 0 if i == STOPS - 1 else 2) 				or not LABELS.has(entry.get("kind")) or (entry.kind == "boss") != (i == STOPS - 1) 				or not entry.get("settled") is bool or not entry.get("text") is String 				or not _integer(entry.get("hp_before"), 0, 2147483647) or not _integer(entry.get("coins_before"), 0, 2147483647):
+		if not entry is Dictionary or not _integer(entry.get("choice"), 0, 0 if i == STOPS - 1 else 2) \
+				or not LABELS.has(entry.get("kind")) or (entry.kind == "boss") != (i == STOPS - 1) \
+				or not entry.get("settled") is bool or not entry.get("text") is String \
+				or not _integer(entry.get("hp_before"), 0, 2147483647) or not _integer(entry.get("coins_before"), 0, 2147483647):
 			return false
-		if entry.settled and (not _integer(entry.get("hp_change"), -2147483647, 2147483647) 				or not _integer(entry.get("coins_change"), -2147483647, 2147483647)):
+		if entry.settled and (not _integer(entry.get("hp_change"), -2147483647, 2147483647) \
+				or not _integer(entry.get("coins_change"), -2147483647, 2147483647)):
 			return false
 		if i < STOPS - 1 and not POOLS[int(entry.choice)].has(entry.kind):
 			return false
@@ -187,8 +201,15 @@ static func valid(data: Dictionary) -> bool:
 	var awaiting_battle: bool = not active.get("settled", true) and active.get("kind") in BATTLES
 	if awaiting_battle != (not data.pending_battle.is_empty()):
 		return false
-	if awaiting_battle and (data.pending_battle.get("journey_step") != step 			or data.pending_battle.position != data.actors.hero.position or data.pending_battle.npc != ""):
-		return false
+	if awaiting_battle:
+		var pending: Dictionary = data.pending_battle
+		if pending.get("journey_step") != step or pending.position != CAMP or pending.origin != CAMP \
+				or pending.npc != "":
+			return false
+		var enemies: Variant = pending.get("enemies")
+		if not enemies is Array or enemies.is_empty() or not enemies.all(func(id): return Catalog.ENEMIES.has(id)) \
+				or ("war_god" in enemies) != (active.kind == "boss") or is_elite(enemies) != (active.kind == "elite"):
+			return false
 	if shop_active(data) != data.has("battle_shop"):
 		return false
 	if data.status == "won" and not journey.history.is_empty() and (step != STOPS - 1 or not active.get("settled", false)):

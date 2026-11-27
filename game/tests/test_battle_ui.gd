@@ -1,5 +1,7 @@
 extends SceneTree
 
+const Fixture = preload("res://tests/journey_fixture.gd")
+
 const Main = preload("res://scenes/main.tscn")
 const Run = preload("res://scripts/domain/expedition.gd")
 const Chess = preload("res://scripts/domain/chess_battle.gd")
@@ -26,9 +28,8 @@ func fixture(enemy: String = "boar", ambush: bool = false) -> RefCounted:
 	run.save_path = "user://test-card-chess-domain.json"
 	run.new_run(41, "wayfarer")
 	var cell: String = run.actor("hero").position
-	run.data.tiles[cell].enemies = [enemy]
 	var battle := Chess.new()
-	expect(battle.begin(run, {"position": cell, "origin": cell, "npc": "", "ambush": ambush}, run.card_deck()).ok, "Battle fixture starts")
+	expect(battle.begin(run, Fixture.battle(run, [enemy], ambush), run.card_deck()).ok, "Battle fixture starts")
 	return battle
 
 func check_mana() -> void:
@@ -218,12 +219,10 @@ func check_rules() -> void:
 	battle.commanders[Chess.ENEMY].armor = 0
 	battle.board[battle.board.find(battle.commanders[Chess.ENEMY])] = {}
 	battle.board[1] = battle.commanders[Chess.ENEMY]
-	var spot: String = battle.position
 	var before: Dictionary = battle.run.actor("hero").inventory.duplicate()
-	expect(battle.move(4, 1) and battle.outcome == "victory" and battle.run.data.pending_battle.is_empty()
-		and battle.run.data.tiles[spot].enemies.is_empty(), "Capturing the enemy commander settles the actual encounter")
+	expect(battle.move(4, 1) and battle.outcome == "victory" and battle.run.data.pending_battle.is_empty(), "Capturing the enemy commander settles the actual encounter")
 	expect(battle.run.actor("hero").inventory == before and battle.run.data.has("pending_victory")
-		and battle.run.data.peace.has(spot) and battle.run.data.pending_victory.coins >= 4,
+		and battle.run.data.pending_victory.coins >= 4,
 		"Victory awards loot and creates a saved receipt")
 	battle._finish("victory")
 	expect(battle.run.actor("hero").inventory == before, "Settlement cannot grant twice")
@@ -625,13 +624,7 @@ func check_companion_growth() -> void:
 	expect(not "lorne" in Cards.collection(run.data.actors) and Cards.valid_deck(run.card_deck(), run.data.actors, true, run.data),
 		"The solo starter deck is complete and named cards require recruitment")
 	expect(not run.recruit_companion("lorne").ok and run.data.lamp_coins == 8, "Recruitment requires a post-battle shop")
-	var cell: String = run.data.start
-	run.data.battles = 1
-	run.data.pending_victory = {"enemies": 1, "members": ["hero"], "revived": [], "relic": ""}
-	run.open_battle_shop()
-	run.data.tiles[cell].enemies = ["boar"]
-	expect(not run.recruit_companion("lorne").ok, "Enemies block recruitment")
-	run.data.tiles[cell].enemies.clear()
+	Fixture.shop(run, "lorne")
 	run.data.lamp_coins = 5
 	expect(not run.recruit_companion("lorne").ok and run.data.lamp_coins == 5, "Recruitment requires the full price")
 	run.data.lamp_coins = 6
@@ -658,11 +651,9 @@ func check_companion_growth() -> void:
 	expect(saved.load_game(normal_path).ok and saved.actor("lorne").breakthrough == 3,
 		"Paid recruitment and breakthroughs survive loading")
 	var deck: Array = saved.card_deck()
-	saved.data.tiles[cell].enemies = ["boar"]
-	saved.close_battle_shop()
-	saved.data.erase("pending_victory")
+	var encounter := Fixture.stage_battle(saved, ["boar"])
 	var battle := Chess.new()
-	expect(battle.begin(saved, {"position": cell, "origin": cell, "npc": "", "ambush": false}, deck).ok,
+	expect(battle.begin(saved, encounter, deck).ok,
 		"Recruited cards enter a real battle")
 	battle.board[9] = battle.board[10]
 	battle.board[10] = {}
@@ -740,14 +731,13 @@ func check_editor_draft() -> void:
 	await process_frame
 	game.sound.set_volume(0, false)
 	game.run.save_path = "user://test-card-editor-draft.json"
-	game._start_new(false)
+	game._start_new()
 	var gear_id: String = game.run.card_deck()[0]
 	var uid := gear_id.trim_prefix("gear:")
 	var suffix := gear_id.replace(":", "_")
 	expect(game.run.save_card_deck([gear_id]).ok, "An expedition accepts a one-card draft")
 	game.run.data.lamp_coins = 0
 	var cell: String = game.run.actor("hero").position
-	game.run.data.tiles[cell].enemies = []
 	game._deck_dialog()
 	var editor = game.modal_layer.find_child("CardDeckEditor", true, false)
 	editor.search.text = "巡路短刃"
@@ -778,8 +768,8 @@ func check_editor_draft() -> void:
 	expect(game.run.card_deck().is_empty(), "Saving through the ordinary editor persists the empty draft")
 
 	game.run.grant_relic("mint_distillate", "hero", cell)
-	game.run.data.tiles[cell].enemies = ["boar"]
-	game._open_current_encounter(false)
+	Fixture.stage_battle(game.run, ["boar"])
+	game._deck_dialog(true)
 	editor = game.modal_layer.find_child("CardDeckEditor", true, false)
 	await process_frame
 	var preparation := editor.find_child("DeckPreparation", true, false) as OptionButton
@@ -828,12 +818,12 @@ func check_ui() -> void:
 	await process_frame
 	game.sound.set_volume(0, false)
 	game.run.save_path = "user://test-card-chess-ui.json"
-	game._start_new(false)
+	game._start_new()
 	game.run.unlock_spell("ice_spell")
 	await process_frame
 	await click(button_named(game.ui, "卡组"))
 	var editor = game.modal_layer.find_child("CardDeckEditor", true, false)
-	expect(editor != null and editor.grid.get_child_count() >= 9, "Map opens the full illustrated collection")
+	expect(editor != null and editor.grid.get_child_count() >= 9, "Journey opens the full illustrated collection")
 	if editor == null:
 		game.queue_free()
 		return
@@ -911,13 +901,13 @@ func check_ui() -> void:
 	expect(saved.load_game(game.run.save_path).ok and saved.card_deck().size() == 12 and saved.card_deck().count("ice_spell") == 1,
 		"The edited deck persists in the expedition save")
 	var cell: String = game.run.actor("hero").position
-	game.run.data.tiles[cell].enemies = ["boar"]
-	game._open_current_encounter(false)
+	Fixture.stage_battle(game.run, ["boar"])
+	game._deck_dialog(true)
 	await process_frame
 	var start := game.modal_layer.find_child("ConfirmCardDeck", true, false) as Button
 	await click(start)
 	var view = game.ui.find_child("ChessBattle", true, false)
-	expect(view != null and not game.view.visible, "Normal encounter shows the chess board and hides the map")
+	expect(view != null and not game.ui.has_node("JourneyScreen"), "Normal encounter shows the chess board and replaces the journey")
 	if view != null:
 		expect(root.get_visible_rect().encloses(view.get_global_rect()) and view.cells.size() == 12 and view.hand_buttons.size() == 3,
 			"Board fits the viewport with twelve squares and a three-card opening hand")
@@ -992,9 +982,9 @@ func check_ui() -> void:
 			"The selected hand card straightens and rises above the fan")
 		await click(menu)
 		await click(button_named(game.modal_layer, "确认"))
-		game._continue_run(false)
-		expect(game.modal_layer.find_child("CardDeckEditor", true, false) != null and not game.run.data.pending_battle.is_empty(),
-			"Continuing resumes the saved encounter before the board")
+		game._continue_run()
+		expect(game.ui.find_child("JourneyEnter", true, false) != null and not game.run.data.pending_battle.is_empty(),
+			"Continuing restores the revealed node before the board")
 	game.queue_free()
 	await process_frame
 
@@ -1234,11 +1224,11 @@ func check_hover_details() -> void:
 	await process_frame
 	game.sound.set_volume(0, false)
 	game.run.save_path = "user://test-hover-details.json"
-	game._start_new(false)
+	game._start_new()
 	await process_frame
 	var cell: String = game.run.actor("hero").position
-	game.run.data.tiles[cell].enemies = ["boar"]
-	game._open_current_encounter(false)
+	Fixture.stage_battle(game.run, ["boar"])
+	game._deck_dialog(true)
 	await process_frame
 	await click(game.modal_layer.find_child("ConfirmCardDeck", true, false))
 	var view = game.ui.find_child("ChessBattle", true, false)

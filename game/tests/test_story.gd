@@ -1,11 +1,11 @@
 extends SceneTree
+
 const Run = preload("res://scripts/domain/expedition.gd")
 const Chess = preload("res://scripts/domain/chess_battle.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
 const LegacyOutcomes = preload("res://scripts/domain/legacy_companion_outcomes.gd")
 const Opening = preload("res://scripts/domain/opening_story.gd")
-const Nodes = preload("res://scripts/domain/map_nodes.gd")
 var checks = 0
 var failures = 0
 
@@ -84,7 +84,7 @@ func check_personal_choices() -> void:
 			var person = run.actor(id)
 			var hero = run.actor("hero")
 			hero.position = person.position
-			run.data.tiles[person.position].enemies.clear()
+
 			check_personal_blocked(story, run, "hero", id, "not recruited")
 			expect(run.join_companion(id, "hero").ok, id + " joins before personal quest")
 			expect(str(run.data.story[id].get("personal_choice", "")).is_empty(), id + " recruitment does not auto-select a branch")
@@ -96,8 +96,8 @@ func check_personal_choices() -> void:
 			expect(has_option(old_story.dialogue("hero", id), "quest") and old_story.personal_quest("hero", id).ok, id + " old save can start personal quest")
 			old.data.status = "won"
 			expect(str(old_story.character_ending(id).text).contains(definition.pending), id + " unchosen ending retains unfinished concerns")
-			hero.position = run.data.start
-			check_personal_blocked(story, run, "hero", id, "different tiles")
+			hero.position = "away"
+			check_personal_blocked(story, run, "hero", id, "different positions")
 			hero.position = person.position
 			hero.hp = 0
 			check_personal_blocked(story, run, "hero", id, "visitor wounded")
@@ -120,15 +120,15 @@ func check_personal_choices() -> void:
 			expect(quest.ok and quest.has_all(["title", "text", "options", "pose"])
 				and quest.get("title") == definition.title and quest.get("text") == definition.text
 				and has_option(quest, "personal_a") and has_option(quest, "personal_b"), id + " both choices follow the complete personal story")
-			expect(quest.options.all(func(option): return option.spoken and not str(option.text).strip_edges().is_empty()),
-				id + " every personal choice is a nonempty spoken reply")
+			expect(quest.options.all(func(option): return not option.spoken and not str(option.text).strip_edges().is_empty()),
+				id + " every personal choice is a concise action")
 			check_player_advice(id, quest)
 			expect(unrelated_state(run) == before and str(run.data.story[id].get("personal_choice", "")).is_empty(), id + " reading personal quest does not spend or select")
 			var story_before = run.data.story.duplicate(true)
 			var result = story.choose(visitor, id, branch)
 			var response = str(result.get("response", ""))
 			expect(result.ok and not response.is_empty() and response == definition[branch].response, id + " personalized response for " + branch)
-			expect(unrelated_state(run) == before, id + " choice changes no AP, inventory, coins, position, map or battle state")
+			expect(unrelated_state(run) == before, id + " choice changes no inventory, coins, position or battle state")
 			var stored = run.data.story[id].get("personal_choice", "")
 			expect(stored == "journey_" + branch.right(1), id + " records the current journey decision version")
 			story_before[id]["personal_choice"] = stored
@@ -173,7 +173,7 @@ func check_personal_boundaries() -> void:
 	var story = Story.new(run)
 	var person = run.actor("lorne")
 	run.actor("hero").position = person.position
-	run.data.tiles[person.position].enemies.clear()
+
 	expect(run.join_companion("lorne", "hero").ok, "Recruit boundary fixture companion")
 	var before = run.data.duplicate(true)
 	expect(story.choose("hero", "lorne", "leave").ok and run.data == before, "Cancel leaves no personal decision")
@@ -182,9 +182,8 @@ func check_personal_boundaries() -> void:
 	run.data.pending_battle = {"position": person.position}
 	check_personal_blocked(story, run, "hero", "lorne", "encounter pending after opening choices")
 	run.data.pending_battle.clear()
-	run.data.tiles[person.position].enemies = ["bandit"]
-	check_personal_blocked(story, run, "hero", "lorne", "danger appeared after opening choices")
-	run.data.tiles[person.position].enemies.clear()
+
+
 	expect(story.choose("hero", "lorne", "personal_a").ok and run.save_game().ok, "Save valid personal choice before corruption tests")
 	var loaded = Run.new()
 	expect(loaded.load_game(run.save_path).ok, "Load valid personal choice")
@@ -266,7 +265,7 @@ func check_legacy_choice_matrix() -> void:
 		var story = Story.new(run)
 		var person = run.actor(id)
 		run.actor("hero").position = person.position
-		run.data.tiles[person.position].enemies.clear()
+
 		expect(run.join_companion(id, "hero").ok, "Recruit legacy matrix companion " + id)
 		var routes = [
 			{"prefix": "personal_", "table": LegacyOutcomes.OUTCOMES},
@@ -347,7 +346,7 @@ func check_hero_only_mystery() -> void:
 		hero.position = person.position
 		companion.position = person.position
 		stranger.position = person.position
-		run.data.tiles[person.position].enemies.clear()
+
 		expect(run.join_companion("lorne").ok, "Recruit ordinary visitor")
 		var first_state = run.data.duplicate(true)
 		for visitor in ["hero", "lorne"]:
@@ -372,15 +371,15 @@ func check_hero_only_mystery() -> void:
 			id + " repeated past and echo consume no resources and make no decision")
 		check_topics_blocked(story, run, "cen", id, "visitor not recruited")
 		check_topics_blocked(story, run, id, id, "cannot talk to oneself")
-		hero.position = run.data.start
+		hero.position = "away"
 		expect(not story.dialogue("hero", id).ok, id + " distant hero cannot hear the hint")
-		check_topics_blocked(story, run, "hero", id, "different tiles")
+		check_topics_blocked(story, run, "hero", id, "different positions")
 		var ordinary = story.dialogue("lorne", id)
 		expect(ordinary.ok and not str(ordinary.text).contains(Story.HERO_LINES[id]), id + " local companion cannot borrow absent hero familiarity")
 		check_past(story, run, "lorne", id, "hero absent")
 		hero.position = person.position
-		companion.position = run.data.start
-		check_topics_blocked(story, run, "lorne", id, "ordinary visitor on a different tile")
+		companion.position = "away"
+		check_topics_blocked(story, run, "lorne", id, "ordinary visitor on a different position")
 		companion.position = person.position
 		for visitor in ["hero", "lorne"]:
 			var member = run.actor(visitor)
@@ -393,10 +392,7 @@ func check_hero_only_mystery() -> void:
 		for visitor in ["hero", "lorne"]:
 			check_topics_blocked(story, run, visitor, id, "subject wounded")
 		person.hp = person_hp
-		run.data.tiles[person.position].enemies = ["bandit"]
-		for visitor in ["hero", "lorne"]:
-			check_topics_blocked(story, run, visitor, id, "enemies appeared after opening dialogue")
-		run.data.tiles[person.position].enemies.clear()
+
 		run.data.pending_battle = {"position": person.position}
 		for visitor in ["hero", "lorne"]:
 			check_topics_blocked(story, run, visitor, id, "encounter pending after opening dialogue")
@@ -422,78 +418,7 @@ func execute() -> void:
 	r.new_run(41, "wayfarer")
 	expect(Opening.DEPARTURE.length() <= 45 and "死神" not in Opening.DEPARTURE and "伊文洛" not in Opening.DEPARTURE,
 		"Opening preserves the identity reveal")
-	expect(r.data.tiles.size() == 37 and Catalog.COMPANIONS.size() == 25, "Map and roster sizes")
-	expect(r.actor("hero").name == "旅人" and r.actor("hero").skill == "gravity", "Fixed gravity protagonist")
-	expect(r.actor("hero").inventory.trail_food == 2, "Village supplies")
-	expect(r.data.tiles[r.data.boss].enemies.is_empty(), "Boss stays hidden until the fourth story scene")
-	var positions = {}
-	var story = Story.new(r)
-	for id in Catalog.COMPANIONS:
-		var person = r.actor(id)
-		expect(not positions.has(person.position) and r.data.tiles[person.position].npc == id, "Unique encounter tile " + id)
-		positions[person.position] = true
-		expect(person.race in ["龙", "恶魔", "神", "人类", "矮人", "精灵"] and Catalog.SAVE_SKILL_IDS.has(person.skill) and Catalog.SAVE_SKILL_IDS.has(person.ultimate), "Complete character " + id)
-		expect(Nodes.story(r.node_at(person.position)).size() > 0, "Character is placed in a real node " + id)
-		r.retreat_party(person.position)
-		if not r.data.tiles[person.position].enemies.is_empty():
-			expect(not story.dialogue("hero", id).ok, "The encounter has to be cleared first")
-			r.data.tiles[person.position].enemies.clear()
-		expect(not story.dialogue("hero", id).ok, "First meeting opens no story for " + id)
-		check_topics_blocked(story, r, "hero", id, "before recruitment")
-		r.data.lamp_coins = 8
-		r.data.tiles[person.position].npc = id
-		r.data.pending_victory = {"enemies": 1, "members": ["hero"], "revived": [], "relic": ""}
-		r.open_battle_shop()
-		expect(r.recruit_companion(id).ok and person.position == r.actor("hero").position and r.data.lamp_coins == 0,
-			"Paid post-battle recruitment " + id)
-		r.data.erase("pending_story_rewards")
-		r.close_battle_shop()
-		r.data.erase("pending_victory")
-		check_past(story, r, "hero", id, "immediately after first meeting and recruitment")
-		expect(str(r.data.story[id].get("personal_choice", "")).is_empty(), id + " learning the background never selects a personal branch")
-
-	var full_power := Chess.enemy_definition(r, "war_god", true)
-	for cell in positions.keys().slice(0, 8):
-		r.data.peace[cell] = true
-
-	var cells = r.data.tiles.keys()
-	r.data.explored.clear()
-	r.data.visited.clear()
-	for stage in range(1, 5):
-		var needed = ceili(r.data.tiles.size() * stage * 0.2)
-		while r.data.explored.size() < needed - 1:
-			r.data.explored[cells[r.data.explored.size()]] = true
-		expect(r.pending_chapter() == 0, "Chapter does not trigger before its threshold")
-		r.data.explored[cells[r.data.explored.size()]] = true
-		expect(r.pending_chapter() == stage, "Exploration triggers chapter %d" % stage)
-		r.finish_chapter(stage)
-		expect(r.pending_chapter() == 0 and r.actor("hero").name == "旅人", "Chapter acknowledges once and preserves the mystery")
-	expect(r.boss_known() and r.data.tiles[r.data.boss].enemies == ["war_god"], "80 percent locates the actual boss")
-	expect(r.actor("hero").ultimate == "gravity_wave", "A memory unlocks the upgraded gravity skill")
-	r.retreat_party(r.data.boss)
-	var b := Chess.new()
-	var encounter = {"position": r.data.boss, "origin": r.data.boss, "npc": "", "ambush": false}
-	expect(b.begin(r, encounter, r.card_deck()).ok, "Boss battle begins")
-	var enemy := b.commanders[Chess.ENEMY]
-	var hero := b.commanders[Chess.PLAYER]
-	expect(enemy.attack < full_power.attack and enemy.hp_max < full_power.hp,
-		"Earlier peace directly reduces Kadran's power")
-	b.board[4] = hero
-	b.board[10] = {}
-	enemy.hp = 1
-	enemy.armor = 0
-	expect(b.move(4, 1) and enemy.hp == 1 and b.reveal_pending and b.outcome.is_empty() and not b.can_act(),
-		"A lethal blow pauses the battle for the memory instead of completing the run")
-	hero.hp = 1
-	var attack := b.attack_power(enemy)
-	b.awaken_death_power()
-	expect(b.river and r.actor("hero").name == "伊文洛"
-		and hero.hp == hero.hp_max, "Remembering restores Ivenlo and summons the river")
-	expect(b.attack_power(enemy) < attack and not b.retreat(), "The river strips Kadran's strength and prevents retreat")
-	b.hands[Chess.PLAYER] = ["ember_spell"]
-	expect(b.play(0, 1) and r.data.status == "won" and story.main_ending().text.contains("卡德兰"),
-		"Beating Kadran after the memory completes the run")
-	var loaded = Run.new()
-	expect(loaded.load_game(r.save_path).ok and loaded.data.status == "won" and loaded.data.chapter == 4, "Victory and chapter state survive reload")
+	expect(Catalog.COMPANIONS.size() == 25 and r.actor("hero").name == "旅人"
+		and r.actor("hero").inventory.trail_food == 2, "The journey starts with its roster and village supplies")
 	print("STORY TESTS: %d checks, %d failures" % [checks, failures])
 	quit(1 if failures else 0)
