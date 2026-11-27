@@ -105,7 +105,7 @@ func check_camera_drag(game: Node, start: String, next: String) -> void:
 	expect(is_equal_approx(view.camera.size, 3.8), "Wheel zoom can move closer than the old limit")
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("user://map-camera-detail.png")
-	game._continue_run()
+	game._continue_run(false)
 	expect(is_equal_approx(view.camera.size, normal_zoom), "Continuing an expedition starts at the default view")
 	expect(view.fog_reveals.get_child_count() == 0, "Loading explored terrain does not animate fog")
 	game.run.data.chapter = 1
@@ -161,7 +161,7 @@ func check_camera_drag(game: Node, start: String, next: String) -> void:
 	expect(dissolve_seen and not is_instance_valid(veil), "The reveal fades through intermediate opacity and then removes its veil")
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("user://fog-reveal-settled.png")
-	game._start_new()
+	game._start_new(false)
 
 func execute() -> void:
 	var game = Main.instantiate()
@@ -169,7 +169,7 @@ func execute() -> void:
 	await process_frame
 	game.run.save_path = "user://test-map-motion.json"
 	game.chosen_seed = "20261104"
-	game._start_new()
+	game._start_new(false)
 	game.set_process(false)
 	var run = game.run
 	var start = run.actor("hero").position

@@ -87,7 +87,7 @@ func check_victory_receipt(save_path: String) -> void:
 	root.add_child(game)
 	await process_frame
 	game.run.save_path = save_path
-	game._continue_run()
+	game._continue_run(false)
 	expect(game.modal_layer.find_child("ShopView", true, false) != null, "Reload opens the post-battle shop")
 	game._victory_dialog()
 	var result = game.modal_layer.get_node_or_null("VictoryScreen")
@@ -113,7 +113,7 @@ func check_exploration() -> void:
 	await process_frame
 	game.run.save_path = "user://test-relic-exploration.json"
 	var run = game.run
-	game._start_new()
+	game._start_new(false)
 	var site = ""
 	for id in run.relic_sites:
 		if run.relic_sites[id] == "telescope" and run.node_at(id).kind == "cache" and roll(int(run.data.seed), "site:" + id) < 0.25:
@@ -123,7 +123,7 @@ func check_exploration() -> void:
 		# Select a deterministic seed with a successful telescope investigation.
 		for seed_value in range(1, 30):
 			game.chosen_seed = str(seed_value)
-			game._start_new()
+			game._start_new(false)
 			for id in run.relic_sites:
 				if run.relic_sites[id] == "telescope" and run.node_at(id).kind == "cache" and roll(seed_value, "site:" + id) < 0.25:
 					site = id
@@ -154,7 +154,7 @@ func check_exploration() -> void:
 	var sight_is_hidden = new_sight.all(func(id):
 		return run.data.explored.has(id) and not run.has_visited(id) and not game.view.tile_nodes.has(id))
 	expect(not new_sight.is_empty() and sight_is_hidden, "Telescope adds shared sight, deferring map presentation until after the story")
-	game._continue_run()
+	game._continue_run(false)
 	expect(run.relic_intro().get("id") == "telescope" and game.modal_layer.has_node("StoryRewards"),
 		"Continue resumes the saved cache receipt with the same relic")
 	for button in game.modal_layer.find_children("*", "Button", true, false):

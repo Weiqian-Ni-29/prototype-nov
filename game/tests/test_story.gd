@@ -57,22 +57,19 @@ func check_player_advice(subject: String, quest: Dictionary) -> void:
 		expect(labels.get(branch, "") == Story.PERSONAL_QUESTS[subject][branch].label, subject + " presents the player's advice for " + branch)
 	var a: String = labels.get("personal_a", "")
 	var b: String = labels.get("personal_b", "")
+	expect(a != b and a.length() <= 20 and b.length() <= 20, subject + " keeps both decisions short and distinct")
 	if subject == "stone_guard":
-		expect("陪你" in a and "主路" in a and "爆破料" in a and "一起拦住军官" in a,
-			"Stone guard advice offers help with evacuation and explosives, not the guard's own specialist role")
-		expect("帮你" in b and "借梁" in b and "旧出口" in b and not "我下第一段" in b,
-			"Stone guard advice helps gather beams without claiming to take the guard's first support shift")
+		expect("主路" in a and "军官" in a and "借梁" in b and "旧出口" in b, "石垣的两个选择各自说清行动")
 	elif subject == "granite":
-		expect("旧门卫" in a and "士族优先" in a and "不会替你" in a and not "还给我" in a,
-			"Granite advice acknowledges his old guards and privilege without claiming his command")
-		expect("陪你" in b and "城南军官" in b and "谁守门" in b and not "钥匙不交" in b,
-			"Granite advice accompanies negotiations without speaking as the keeper of the gate")
+		expect("旧门卫" in a and "城南军官" in b, "岩钉仍能在两支队伍之间选择")
 
 func check_personal_choices() -> void:
 	var responses = {}
 	var endings = {}
 	for id in Catalog.COMPANIONS:
 		var definition: Dictionary = Story.PERSONAL_QUESTS.get(id, {})
+		expect(Story.BACKGROUNDS[id].length() <= 45 and definition.get("text", "").length() <= 55,
+			id + " fits its optional story into one short passage")
 		expect(definition.has_all(["title", "text", "personal_a", "personal_b", "pending"]), "Complete personal quest " + id)
 		if not definition.has_all(["title", "text", "personal_a", "personal_b", "pending"]):
 			continue
@@ -423,7 +420,7 @@ func execute() -> void:
 	var r = Run.new()
 	r.save_path = "user://test-veylodan-story.json"
 	r.new_run(41, "wayfarer")
-	expect(Opening.world_pages().all(func(page): return "死亡之神" not in page.text and "伊文洛" not in page.text),
+	expect(Opening.DEPARTURE.length() <= 45 and "死神" not in Opening.DEPARTURE and "伊文洛" not in Opening.DEPARTURE,
 		"Opening preserves the identity reveal")
 	expect(r.data.tiles.size() == 37 and Catalog.COMPANIONS.size() == 25, "Map and roster sizes")
 	expect(r.actor("hero").name == "旅人" and r.actor("hero").skill == "gravity", "Fixed gravity protagonist")

@@ -57,7 +57,8 @@ func setup(expedition: RefCounted, actor_id: String, stock: Dictionary, width: f
 	var heading := VBoxContainer.new()
 	heading.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(heading)
-	_label(heading, "战后商店", 29, GOLD)
+	var on_journey: bool = run.data.has("journey")
+	_label(heading, "途中商店" if on_journey else "战后商店", 29, GOLD)
 	_label(heading, "交易者 · " + actor.name, 15, MUTED)
 	var wallet := PanelContainer.new()
 	wallet.add_theme_stylebox_override("panel", _style(Color("1d322d"), Color("887b58"), 8))
@@ -122,8 +123,10 @@ func setup(expedition: RefCounted, actor_id: String, stock: Dictionary, width: f
 	var footer := HBoxContainer.new()
 	footer.add_theme_constant_override("separation", 12)
 	add_child(footer)
-	_button(footer, "查看结局" if run.data.status == "won" else "返回地图", func(): return_requested.emit())
-	_button(footer, "查看战利品", func(): loot_requested.emit())
+	var back := "离开商店" if on_journey else "查看结局" if run.data.status == "won" else "返回地图"
+	_button(footer, back, func(): return_requested.emit())
+	if not on_journey:
+		_button(footer, "查看战利品", func(): loot_requested.emit())
 	if not feedback.is_empty():
 		_label(footer, feedback, 15, GOLD, true).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_render_catalog(resume.get("id", ""))

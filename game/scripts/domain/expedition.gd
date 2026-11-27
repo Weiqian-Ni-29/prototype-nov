@@ -8,7 +8,8 @@ const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Items = preload("res://scripts/domain/expedition_items.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
-const SAVE_VERSION = 13
+const Journey = preload("res://scripts/domain/journey.gd")
+const SAVE_VERSION = 14
 const LEGACY_MAP_RADIUS = 8
 const REMOVED_WEATHER_CARDS = ["rain", "sun", "fog_spell"]
 const REMOVED_SUPPLIES = ["salve", "ether"]
@@ -23,7 +24,7 @@ const SPELL_RELICS = {"banked_ember_box": "ember_spell", "rime_thimble": "ice_sp
 	"herbal_case": "mend_spell"}
 var location_names: Dictionary = {}
 
-func new_run(seed_value: int, profession: String) -> void:
+func new_run(seed_value: int, profession: String, use_journey: bool = false) -> void:
 	assert(Catalog.PROFESSIONS.has(profession))
 	prepared_relic = ""
 	var generated = Hex.generate(seed_value)
@@ -54,7 +55,25 @@ func new_run(seed_value: int, profession: String) -> void:
 	_initialize_nodes(true, generated.opening_route, generated.opening_supply)
 	Items.stock(data, false)
 	reveal(generated.start)
-	note("村民交给你一副卡牌，还给你备好了路上的补给。你想到附近走走，看有没有人认得你，能不能想起自己的名字。")
+	if use_journey:
+		Journey.begin(self)
+		note("村民把卡牌和补给交给你。你带着它们出了村，沿路打听战鼓的来处。")
+	else:
+		note("村民交给你一副卡牌，还给你备好了路上的补给。你想到附近走走，看有没有人认得你，能不能想起自己的名字。")
+
+func migrate_to_journey() -> Dictionary:
+	if data.has("journey"):
+		return success()
+	var archive: String = save_path + ".legacy-map.bak"
+	if FileAccess.file_exists(save_path) and not FileAccess.file_exists(archive):
+		if DirAccess.copy_absolute(save_path, archive) != OK:
+			return fail("无法备份旧地图存档，请检查存档目录后重试。")
+	var previous := data.duplicate(true)
+	Journey.begin(self)
+	var saved := save_game()
+	if not saved.ok:
+		data = previous
+	return saved
 
 func _actor(id: String, definition: Dictionary, position: String, joined: bool) -> Dictionary:
 	var result = definition.duplicate(true)
@@ -293,14 +312,15 @@ func shop_at(cell: String) -> Dictionary:
 
 func _shop_access(id: String) -> Dictionary:
 	var trader := actor(id)
+	var journey_shop := Journey.shop_active(data)
 	if trader.is_empty() or not trader.joined or trader.hp <= 0 or data.status not in ["exploring", "won"] \
-			or not data.has("pending_victory") or shop_at(trader.position).is_empty() \
-			or not data.tiles[trader.position].enemies.is_empty():
-		return fail("战后商店当前不可用。")
+			or shop_at(trader.position).is_empty() \
+			or (not journey_shop and (not data.has("pending_victory") or not data.tiles[trader.position].enemies.is_empty())):
+		return fail("商店当前不可用。")
 	return success()
 
 func open_battle_shop() -> void:
-	if data.has("pending_victory") and not data.has("battle_shop"):
+	if not data.has("battle_shop") and (Journey.shop_active(data) or (not data.has("journey") and data.has("pending_victory"))):
 		Items.open_battle_shop(data, actor("hero").position)
 
 func close_battle_shop() -> void:
@@ -560,6 +580,8 @@ func remaining_steps() -> int:
 	return STEPS_PER_DAY - int(data.steps_today)
 
 func move(destination: String) -> Dictionary:
+	if data.has("journey"):
+		return fail("请在途中抉择中选择接下来的路。")
 	var preview = movement_preview(destination)
 	if not preview.ok:
 		return preview
@@ -616,13 +638,14 @@ func recruit_shop_offers(cell: String) -> Array:
 	if shop_at(cell).is_empty():
 		return []
 	var stock: Array = ["grit", "lorne", "eve"]
-	if int(data.battles) != 1:
+	if data.has("journey") or int(data.battles) != 1:
 		var roster := Catalog.COMPANIONS.keys()
 		var priority := {}
+		var seed_key: String = data.journey.seed if data.has("journey") else str(data.seed)
 		for id in roster:
-			priority[id] = hash("recruits:%s:%s" % [data.seed, id])
+			priority[id] = hash("recruits:%s:%s" % [seed_key, id])
 		roster.sort_custom(func(a, b): return a < b if priority[a] == priority[b] else priority[a] < priority[b])
-		var offset := (int(data.battles) - 2) * 3
+		var offset := int(data.journey.step) * 3 if data.has("journey") else (int(data.battles) - 2) * 3
 		stock = []
 		for i in roster.size():
 			var id: String = roster[posmod(offset + i, roster.size())]
@@ -636,7 +659,8 @@ func recruit_shop_offers(cell: String) -> Array:
 	return stock.filter(func(id): return not actor(id).joined and actor(id).hp > 0)
 
 func recruit_shop_price(cell: String) -> int:
-	return 6 if not shop_at(cell).is_empty() and int(data.battles) == 1 and joined_ids().size() == 1 else Cards.RECRUIT_PRICE
+	var introductory := data.has("journey") or int(data.battles) == 1
+	return 6 if not shop_at(cell).is_empty() and introductory and joined_ids().size() == 1 else Cards.RECRUIT_PRICE
 
 func recruit_quote(id: String) -> Dictionary:
 	var check := _shop_access("hero")
@@ -787,6 +811,8 @@ func boss_known() -> bool:
 	return int(data.chapter) >= 4
 
 func exploration_percent() -> int:
+	if data.has("journey"):
+		return 100 if data.status == "won" else floori(100.0 * int(data.journey.step) / (Journey.STOPS - 1))
 	return floori(100.0 * data.explored.size() / maxi(1, data.tiles.size()))
 
 func pending_chapter() -> int:
@@ -871,7 +897,7 @@ func spell_shop_offers(cell: String) -> Array:
 	if available.is_empty():
 		return []
 	var roller := RandomNumberGenerator.new()
-	roller.seed = hash("spell_shop:%d:%s:%d" % [int(data.seed), cell, restocks])
+	roller.seed = hash("spell_shop:%d:%s:%d" % [int(data.seed), Journey.shop_key(data, cell), restocks])
 	var first: Variant = available.pop_at(roller.randi_range(0, available.size() - 1))
 	return [first, available[roller.randi_range(0, available.size() - 1)]] if has_relic("market_window") and not available.is_empty() else [first]
 
@@ -950,7 +976,7 @@ func load_game(path: String = "") -> Dictionary:
 	if json.parse(FileAccess.get_file_as_string(path)) != OK or not json.data is Dictionary:
 		return fail("存档损坏了，原来的文件还在。")
 	var loaded: Dictionary = json.data
-	if not _whole_number(loaded.get("version", -1)) or int(loaded.version) not in [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, SAVE_VERSION] or not loaded.has_all(["actors", "tiles", "rng_state", "day", "explored", "status"]):
+	if not _whole_number(loaded.get("version", -1)) or int(loaded.version) not in [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, SAVE_VERSION] or not loaded.has_all(["actors", "tiles", "rng_state", "day", "explored", "status"]):
 		return fail("存档版本不兼容，或者进度记录不完整。")
 	if int(loaded.version) >= 4 and (not loaded.get("relic_seen") is Dictionary or not loaded.get("nodes") is Dictionary):
 		return fail("遗器发现记录无效。")
@@ -969,6 +995,8 @@ func load_game(path: String = "") -> Dictionary:
 		Items.migrate(loaded)
 	if int(loaded.version) < 5:
 		_migrate_travel(loaded)
+	if loaded.has("journey") and not Journey.valid(loaded):
+		return fail("途中抉择记录无效，原来的存档还在。")
 	if not Items.validate(loaded):
 		return fail("存档中的装备或遗器记录无效。")
 	if int(loaded.version) >= 8 and loaded.has("card_deck") and not Cards.valid_deck(loaded.card_deck, loaded.actors, false, loaded, int(loaded.version) < 9):

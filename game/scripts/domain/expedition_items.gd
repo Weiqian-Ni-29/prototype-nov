@@ -2,6 +2,7 @@ extends RefCounted
 
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
+const Journey = preload("res://scripts/domain/journey.gd")
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
 
 static func initialize(data: Dictionary) -> void:
@@ -50,7 +51,7 @@ static func refresh_shop(data: Dictionary, cell: String, old_gear: Array, refres
 	var node: Dictionary = data.battle_shop
 	var terrain: String = data.tiles[cell].terrain
 	var roller := RandomNumberGenerator.new()
-	roller.seed = hash("%d:shop_refresh:%s:%d" % [int(data.seed), cell, refresh_count])
+	roller.seed = hash("%d:shop_refresh:%s:%d" % [int(data.seed), Journey.shop_key(data, cell), refresh_count])
 	node.stock = Nodes.shop_supplies(roller)
 	node.relic_stock = _shop_relics(roller, node.relic_stock.keys())
 	for uid in old_gear:
@@ -62,7 +63,7 @@ static func refresh_shop(data: Dictionary, cell: String, old_gear: Array, refres
 static func open_battle_shop(data: Dictionary, cell: String) -> void:
 	var terrain: String = data.tiles[cell].terrain
 	var roller := RandomNumberGenerator.new()
-	roller.seed = hash("%d:battle-shop:%s:%d" % [int(data.seed), cell, int(data.battles)])
+	roller.seed = hash("%d:battle-shop:%s:%d" % [int(data.seed), Journey.shop_key(data, cell), int(data.battles)])
 	data.battle_shop = {"cell": cell, "stock": Nodes.shop_supplies(roller),
 		"relic_stock": _shop_relics(roller), "refresh_count": 0}
 	_stock_shop_gear(data, cell, terrain, roller)
@@ -145,7 +146,7 @@ static func validate(data: Dictionary) -> bool:
 	if not shop is Dictionary:
 		return false
 	if data.has("battle_shop"):
-		if not data.has("pending_victory") or shop.get("cell") != data.actors.hero.position \
+		if (not data.has("pending_victory") and not Journey.shop_active(data)) or shop.get("cell") != data.actors.hero.position \
 				or data.status not in ["exploring", "won"] or not data.pending_battle.is_empty() \
 				or not shop.get("stock") is Dictionary or not shop.get("relic_stock") is Dictionary \
 				or not whole(shop.get("refresh_count")) or not shop.get("spell_sold", false) is bool:

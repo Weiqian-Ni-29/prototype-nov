@@ -740,7 +740,7 @@ func check_editor_draft() -> void:
 	await process_frame
 	game.sound.set_volume(0, false)
 	game.run.save_path = "user://test-card-editor-draft.json"
-	game._start_new()
+	game._start_new(false)
 	var gear_id: String = game.run.card_deck()[0]
 	var uid := gear_id.trim_prefix("gear:")
 	var suffix := gear_id.replace(":", "_")
@@ -828,7 +828,7 @@ func check_ui() -> void:
 	await process_frame
 	game.sound.set_volume(0, false)
 	game.run.save_path = "user://test-card-chess-ui.json"
-	game._start_new()
+	game._start_new(false)
 	game.run.unlock_spell("ice_spell")
 	await process_frame
 	await click(button_named(game.ui, "卡组"))
@@ -992,7 +992,7 @@ func check_ui() -> void:
 			"The selected hand card straightens and rises above the fan")
 		await click(menu)
 		await click(button_named(game.modal_layer, "确认"))
-		game._continue_run()
+		game._continue_run(false)
 		expect(game.modal_layer.find_child("CardDeckEditor", true, false) != null and not game.run.data.pending_battle.is_empty(),
 			"Continuing resumes the saved encounter before the board")
 	game.queue_free()
@@ -1234,7 +1234,7 @@ func check_hover_details() -> void:
 	await process_frame
 	game.sound.set_volume(0, false)
 	game.run.save_path = "user://test-hover-details.json"
-	game._start_new()
+	game._start_new(false)
 	await process_frame
 	var cell: String = game.run.actor("hero").position
 	game.run.data.tiles[cell].enemies = ["boar"]

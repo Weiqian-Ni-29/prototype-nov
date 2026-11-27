@@ -49,7 +49,7 @@ func execute() -> void:
 	root.add_child(game)
 	await process_frame
 	game.run.save_path = "user://native-session.json"
-	game._start_new()
+	game._start_new(false)
 	var r = game.run
 	var p = r.actor("hero").position
 	for id in ["cen","eve","grit"]:
@@ -245,7 +245,7 @@ func execute() -> void:
 	await create_timer(0.3).timeout
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("user://battle-victory-result.png")
-	game._continue_run()
+	game._continue_run(false)
 	var victory_screen = game.modal_layer.find_child("ShopView", true, false)
 	expect(victory_screen != null, "Continuing after victory restores the post-battle shop")
 	if victory_screen != null:
