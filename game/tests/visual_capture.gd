@@ -91,7 +91,8 @@ func inspect_story_layout() -> void:
 		expect(portrait_rect.position.y < stage.size.y * 0.31 and portrait_rect.end.y > frame.position.y,
 			"Portrait reaches into the scene above and the shaded dialogue area below")
 	expect((story_button("上一页") != null) == (page.x > 1), "Previous page is shown only after page one")
-	expect(story_button("下一页") == null and story_button("继续") == null, "Story has no redundant forward buttons")
+	var forward := story_button("继续")
+	expect(story_button("下一页") == null and (forward == null or forward.text != "继续"), "Story has no redundant forward buttons")
 	var column = stage.get_node_or_null("StoryChoices") as Control
 	if page.x < page.y:
 		expect(column == null, "Intermediate screenshots expose no decisions")
@@ -474,11 +475,9 @@ func capture_branch_examples() -> void:
 		expect(not label.text.contains(ending) and not label.text.contains(epilogue), "Summary screenshot does not embed long ending prose")
 	game._ending_story()
 	var ending_pages = await capture_story_body("story-main-ending", ending)
-	expect(ending_pages.size() >= 2 and "".join(ending_pages).ends_with(ending.split("\n\n")[-1]),
-		"Ending screenshots reach the final paragraph across multiple pages")
-	await click_at(root.get_visible_rect().size * Vector2(0.76, 0.30))
-	await capture_story_body("story-companion-ending", epilogue)
+	expect(ending_pages.size() == 1 and ending_pages[0] == ending, "The full ending fits on one screen")
 	await click_story_button("返回远征记录")
+
 
 func inspect_portrait_silhouette(portrait: Texture2D, key: String) -> void:
 	if portrait == null:
@@ -548,12 +547,9 @@ func capture_finale() -> void:
 	game._process(0.1)
 	expect(game.modal_layer.has_node("StoryScreen") and battle.reveal_pending and not battle.river,
 		"A lethal attack triggers the flashback before the river")
-	await capture("story-final-memory")
-	await advance_until_text("都留在我身后")
-	await capture("story-final-before-river")
-	await advance_until_text("冥河在卡德兰脚下涌出")
-	await capture("story-final-river")
-	await finish_linear_story()
+	await capture("story-final-reveal")
+	expect(story_page() == Vector2i(1, 1), "The identity reveal fits on one screen")
+	await click_story_button("继续战斗")
 	await process_frame
 	expect(battle.river and hero.name == "伊文洛",
 		"Leaving the flashback brings the river into the actual combat view")
@@ -578,9 +574,17 @@ func execute() -> void:
 	game.run.save_path = test_save
 	game.chosen_seed = "20261104"
 	if "--journey-only" in OS.get_cmdline_user_args():
-		game._start_new()
+		game._begin_opening_story()
+		await capture("story-opening")
+		await click_story_button("出发")
+		await click_story_button("踏上旅途")
 		await capture("journey-choice")
 		await capture_journey_reveal()
+		await capture_finale()
+		game.run.data.status = "won"
+		game._ending_story()
+		await capture("story-ending")
+		expect(story_page() == Vector2i(1, 1), "The main ending fits on one screen")
 		finish(test_save)
 		return
 	var menu_state = game.screen_state
@@ -588,31 +592,8 @@ func execute() -> void:
 	await create_timer(1.0).timeout
 	await capture("01-menu")
 	game._begin_opening_story()
-	await capture("story-world-intro")
-	await advance_until_text("趴着睡的大兽")
-	await capture("story-prologue-landscape-first")
-	if story_page().y > 1:
-		expect(story_text().text.ends_with("。"), "The landscape narration's first page ends a sentence")
-		await advance_story()
-		await capture("story-prologue-landscape-next")
-	var prologue_scenes = {
-		"最老的，是龙": "dragon", "是恶魔": "demon", "精灵住在林子里": "elves",
-		"矮人把家安进山": "dwarves", "人类生在平原上": "humans", "赶上开集": "market",
-		"战神卡德兰": "kadran", "四季之神梅文娜": "mevenna", "大地之神多兰克": "dorank", "天空神莱文索": "levensor",
-	}
-	for topic in prologue_scenes:
-		await advance_until_text(topic)
-		await capture("story-prologue-" + prologue_scenes[topic])
-	await advance_until_text("运粮的车过不来")
-	await capture("story-world-war")
-	await advance_until_text("你醒了")
-	await capture("story-village-waking")
-	await advance_until_text("一点也想不起来")
-	await capture("story-village-traveler")
-	await advance_until_text("那我出去走走")
-	await capture("story-village-decision")
-	await advance_until_text("一路平安")
-	await capture("story-village-farewell")
+	await capture("story-opening")
+	expect(story_page() == Vector2i(1, 1), "The opening fits on one screen")
 	var history_button = game.modal_layer.find_child("StoryHistoryButton", true, false) as Button
 	expect(history_button != null and history_button.icon != null and history_button.text.is_empty(),
 		"History is presented as an icon in the rendered header")
@@ -621,7 +602,7 @@ func execute() -> void:
 	expect(game.modal_layer.has_node("StoryHistory/HistoryPanel"), "Story history opens over the village illustration")
 	await capture("story-dialogue-history")
 	await click_story_button("关闭")
-	await finish_linear_story()
+	await click_story_button("出发")
 	expect(game.modal_layer.has_node("StoryRewards"), "The village departure shows the starter deck reward")
 	await capture("story-starter-deck-reward")
 	await click_story_button("查看卡组")
@@ -630,7 +611,7 @@ func execute() -> void:
 	await click_story_button("踏上旅途")
 	await capture("journey-choice")
 	for terrain in ["forest", "swamp"]:
-		game._village_page(terrain, 0)
+		game._village_page(terrain)
 		var villager := game.modal_layer.find_child("StoryActor0", true, false) as TextureRect
 		expect(villager != null and villager.texture == game._story_portrait("villager_elf", "concerned"),
 			"The village opens with the elf offering water: " + terrain)

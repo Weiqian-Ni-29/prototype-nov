@@ -45,6 +45,11 @@ func check_pools() -> void:
 			seen[kind] = true
 	expect(seen.size() == 6 and not seen.has("boss"), "All six intermediate encounters are possible, with no early boss.")
 
+	for id in Journey.ENCOUNTERS:
+		var passage: Array = Journey.ENCOUNTERS[id]
+		expect(passage[2].length() <= 28 and passage[3].all(func(label): return label.length() <= 12),
+			id + " keeps the story to a single sentence and uses short actions.")
+
 func check_checkpoints() -> void:
 	var seed_value := seed_for("chest", 2)
 	var run := new_run(seed_value)
@@ -189,7 +194,6 @@ func check_playable_route(game: Node) -> void:
 				return
 			if kind == "boss":
 				boss_count += 1
-				game._deck_dialog(true)
 			else:
 				battle_count += 1
 			if not press_text(game.modal_layer, "开始战斗") or game.combat == null:
@@ -199,7 +203,9 @@ func check_playable_route(game: Node) -> void:
 				expect(not game.combat.can_retreat(), "The final battle is terminal.")
 				game.combat.commanders[Chess.ENEMY].hp = 1
 				expect(game.combat._check_outcome() and game.combat.reveal_pending, "The boss triggers the existing identity reveal.")
-				game.combat.awaken_death_power()
+				game._final_battle_page()
+				if not press_text(game.modal_layer, "继续战斗"):
+					return
 			game.combat.commanders[Chess.ENEMY].hp = 0
 			game.combat._check_outcome()
 			game._finish_battle()
@@ -226,6 +232,7 @@ func execute() -> void:
 	root.add_child(game)
 	await process_frame
 	game.set_process(false)
+	game.sound.set_volume(0.0, false)
 	game.run.save_path = save_path
 	game.chosen_seed = str(seed_for("elite", 2))
 	check_playable_route(game)

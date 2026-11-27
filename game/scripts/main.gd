@@ -299,40 +299,17 @@ func _begin_opening_story() -> void:
 	opening_seed = randi() if chosen_seed.is_empty() else _seed_value()
 	var generated = Hex.generate(opening_seed)
 	var terrain: String = generated.tiles[generated.start].terrain
-	_opening_world_page(terrain, OpeningStory.world_pages(), 0)
-
-func _opening_world_page(terrain: String, pages: Array[Dictionary], index: int) -> void:
-	var page = pages[index]
-	_show_story("维洛丹", "旁白", page.text, page.scene, [], [],
-		func(_option: String):
-			if index + 1 < pages.size():
-				_opening_world_page(terrain, pages, index + 1)
-			else:
-				_village_page(terrain, 0),
-		{"返回主菜单": _cancel_opening}, Color.WHITE, 0, {}, Callable(), _village_page.bind(terrain, 0))
+	_village_page(terrain)
 
 func _cancel_opening() -> void:
 	_close_modal()
 	_show_opening(Screen.MENU)
 
-func _village_page(terrain: String, index: int) -> void:
-	var local = OpeningStory.village(terrain)
-	var villager = "villager_" + str(local[1])
-	var poses = ["concerned", "", "serious", "serious", "", "farewell", "farewell"]
-	var pose: String = poses[index]
-	# The dwarf's serious pose includes a bridge sketch.
-	if villager == "villager_dwarf" and pose == "serious":
-		pose = ""
-	var pages = OpeningStory.dialogue(terrain)
-	var page = pages[index]
-	_show_story(local[0], page[0], page[1], "village_" + terrain,
-		[_story_portrait("hero", "serious")] if page[0] == "旅人" else [_story_portrait(villager, pose)], [],
-		func(_option: String):
-			if index + 1 < pages.size():
-				_village_page(terrain, index + 1)
-			else:
-				_start_new(),
-		{"返回主菜单": _cancel_opening}, Color.WHITE, 0, {}, Callable(), _start_new)
+func _village_page(terrain: String) -> void:
+	var local := OpeningStory.village(terrain)
+	var portrait := _story_portrait("villager_" + str(local[1]), "concerned")
+	_show_story(local[0], "村民", OpeningStory.DEPARTURE, "village_" + terrain, [portrait],
+		[_node_option("depart", "出发")], func(_option: String): _start_new(), {"返回主菜单": _cancel_opening})
 
 func _seed_value() -> int:
 	if chosen_seed.is_empty():
@@ -1250,15 +1227,12 @@ func _open_current_encounter(show_intro: bool = true) -> void:
 func _show_encounter_intro() -> void:
 	var encounter: Dictionary = run.data.pending_battle
 	var cell: String = encounter.position
-	if "war_god" not in Journey.battle_enemies(run.data, encounter):
+	if run.data.has("journey") or "war_god" not in Journey.battle_enemies(run.data, encounter):
 		_deck_dialog(true)
 		return
-	var body := "鼓声从营里传来。你在路上听过同样的鼓点，每响一下，那些想逃走的士兵就握紧了手里的武器。现在鼓就在眼前。卡德兰挡在通往鼓台的路上，伸手取下了自己的兵器。"
 	var portraits := [_story_portrait("hero", "serious"), _story_portrait("war_god", "serious")]
-	var actions := {"返回旅途": _close_modal} if run.data.has("journey") else {}
-	var title: String = "战鼓台" if run.data.has("journey") else _node_title(cell)
-	_show_story(title + " · 战鼓", "旁白", body, _story_scene_at(cell), portraits,
-		[_node_option("deck", "编辑卡组与开战")], func(_option: String): _deck_dialog(true), actions)
+	_show_story(_node_title(cell), "旁白", "卡德兰守在战鼓前。", _story_scene_at(cell), portraits,
+		[_node_option("deck", "编辑卡组与开战")], func(_option: String): _deck_dialog(true), {})
 
 func _deck_dialog(encounter: bool = false, back_to_rewards: Callable = Callable()) -> void:
 	var pending: Dictionary = run.data.pending_battle
@@ -1420,7 +1394,7 @@ func _process(delta: float) -> void:
 	if not combat.outcome.is_empty():
 		_finish_battle()
 	elif combat.reveal_pending:
-		_final_battle_page(0)
+		_final_battle_page()
 	elif combat.turn == Chess.ENEMY:
 		combat.enemy_turn(true)
 		chess_view.present_action()
@@ -1428,10 +1402,10 @@ func _process(delta: float) -> void:
 
 func _chapter_pages() -> Array:
 	return [
-		["留下的人", "你在路边歇脚，一个赶车的人过来问你见没见过他爹。“我爹已经下葬了，可他每天夜里还去找旧路口。那段路早就断了，他走不通，又绕回来。我们请过祭司，也重新葬过他，一点用都没有。”\n\n你想起以前也有许多人找不到路，走过来向你求助。你记得自己伸手牵过他们。你下意识抬了抬手，脚边的石子竟跟着升了起来。你把手放下，石子才落回地上。"],
-		["停不下来的战鼓", "一个士兵从军营逃出来，胳膊还在流血。他说，敌人都撤了，军营里的鼓还在敲。一听见那段鼓声，连受伤的人也站起来追了出去。\n\n远处的战鼓又响起来了。“将军说这是卡德兰给的勇气。可我明明想放下刀，手就是不听话。”他说着就拔了刀。你一抬手，刀沉进泥里，他才松开手。\n\n等鼓声停了，士兵也缓过来了。你想起这股力量能同时压住好几把刀。从前听见同样的鼓声时，你就这样拦过一队人。"],
-		["桌上那杯酒", "夜里，你梦见自己站在一张长桌旁。桌子对面的人递给你一杯酒。你没喝，先问他为什么还要让两边的人打下去。\n\n“坐下再说。”他挥手叫侍从出去。你刚要开口，让他放过那些被战鼓逼着打仗的人，眼前就闪过一道红光。你抬手去挡，接着听见一声碎响。\n\n你醒过来，手还举在半空。那间屋子你去过，桌子对面的人你也认识，可一时想不起他是谁。"],
-		["鼓声从哪里来", "你遇到一个从前线逃出来的鼓手，就问起伤兵听见的那段战鼓。他一听就认出来了。军官曾把他绑在鼓边，对面的兵都丢下武器了，也不准他停。\n\n“山口后面有座大营，那里的鼓自己会响。营里一亮红光，我们这边和敌营的鼓就都跟着响。”他拿树枝在地上画出回营的路。\n\n你拿出地图，照着他画的河湾和山口找到了大营。卡德兰就在那儿。要让那些被逼着打仗的人回家，你得先让那面鼓停下来。"],
+		["留下的人", "已经下葬的人，夜里还在找回家的路。"],
+		["战鼓", "鼓声一起，丢下武器的伤兵又站了起来。"],
+		["那杯酒", "你梦见一杯没喝的酒，和一道刺眼的红光。"],
+		["驻地", "逃兵指出了战鼓的位置。卡德兰就在那儿。"],
 	]
 
 func _show_chapter() -> bool:
@@ -1448,28 +1422,11 @@ func _show_chapter() -> bool:
 			_show_arrival(), {})
 	return true
 
-func _final_battle_page(index: int) -> void:
-	var pages = [
-		["旅人", "这道红光……侍从已经出去了，桌上的酒还没人喝。卡德兰，是你杀了我。"],
-		["旁白", "武器落下以后，你就什么也不记得了。现在你又能感觉到冥界，也终于知道自己后来去了哪里。\n\n你的身体在冥界重新长了出来，可你一直没醒。后来，有人为了逃难召唤恶魔，打开了一条通往冥界的路。你也被带了出来。村民就是那时候找到你的。你也是到现在才知道，自己死了还能回来。"],
-		["卡德兰", "我把你的身体毁得一块都不剩。葬礼办了一场又一场，没有一个亡魂被接走。你怎么还能站在这里？"],
-		["旅人", "我也不知道自己还能回来。这一路，我连名字都想不起。\n\n我是伊文洛，死神。那些死去的人还在等我给他们带路。卡德兰，把你的鼓停下。"],
-		["卡德兰", "停下？城里求我守住粮仓，城外求我打破城门。你叫我答应哪边？\n\n我两边都答应。他们打得越久，我就越强。你回来得太晚了。"],
-		["旅人", "他们已经丢下武器了，你还让他们追着打。\n\n你想打，就冲我来。别再逼他们拿刀。"],
-		["旁白", "你伸出手，用重力把战场上的亡魂托了起来。那个一直挥着断剑的士兵松开了手，顺着你指的路去了冥界。\n\n卡德兰举起武器，你挡在还活着的人身前。"],
-		["伊文洛", "都留在我身后，别碰河水。"],
-		["旁白", "冥河在卡德兰脚下涌出。你用重力拦住河水，给同行的人留了一块能站稳的地方。一截落进河里的断枪迅速锈烂，沉下去，连碎屑都没有浮起。\n\n冥河能夺走人的力量，也能把东西整个吞掉。就算是你的同伴，掉进去也一样。你得把水挡在岸外。卡德兰已经站不稳了，握着武器的手也开始发抖。"],
-	]
-	var page = pages[index]
-	var river_revealed = index == pages.size() - 1
-	var scene = "final_memory" if index < 2 else "finale" if river_revealed else _story_scene_at(run.data.boss)
-	var portraits = [] if index < 2 else [_story_portrait("hero", "battle"), _story_portrait("war_god", "surprise" if river_revealed else "anger")]
-	_show_story("记忆回来了", page[0], page[1], scene, portraits, [],
-		func(_option: String):
-			if not river_revealed:
-				_final_battle_page(index + 1)
-			else:
-				_resume_final_battle(), {}, Color.WHITE, 0, {}, Callable(), _resume_final_battle)
+func _final_battle_page() -> void:
+	var portraits := [_story_portrait("hero", "battle"), _story_portrait("war_god", "surprise")]
+	_show_story("记忆回来了", "旁白", "你想起卡德兰曾杀过你。你是死神伊文洛，冥河应声涌起。",
+		"finale", portraits, [_node_option("fight", "继续战斗")],
+		func(_option: String): _resume_final_battle(), {})
 
 func _resume_final_battle() -> void:
 	combat.awaken_death_power()
@@ -1984,37 +1941,17 @@ func _summary(screen: Vector2) -> void:
 	else:
 		_text(box, narrative.main_ending().title, 25, gold)
 	var met_count = Catalog.COMPANIONS.keys().filter(func(id): return run.data.story[id].met).size()
-	_text(box, "结局里还记下了路上遇到的 %d 个人后来怎么样了。" % met_count, 18, muted)
+	_text(box, "可在角色图鉴查看 %d 位同行者的尾声。" % met_count, 18, muted)
 	_button(box, "查看结局剧情", _ending_story)
 	_button(box, "角色", _show_character_codex)
 	_button(box, "返回主菜单", _to_menu)
 
 func _ending_story() -> void:
 	var ending: Dictionary = narrative.main_ending()
-	var pages: Array[Dictionary] = [{
-		"title": ending.title, "speaker": "旁白", "text": ending.text,
-		"scene": _story_scene_at(run.actor("hero").position), "actor": "hero",
-	}]
-	for id in Catalog.COMPANIONS:
-		if not run.actor(id).joined and not run.data.story[id].met:
-			continue
-		var epilogue: Dictionary = narrative.character_ending(id)
-		pages.append({
-			"title": "尾声 · " + epilogue.name, "speaker": "旁白", "text": epilogue.text,
-			"scene": _story_scene_at(run.actor(id).position), "actor": id,
-		})
-	_ending_page(pages, 0)
-
-func _ending_page(pages: Array[Dictionary], index: int) -> void:
-	var page: Dictionary = pages[index]
-	var last = index == pages.size() - 1
-	_show_story(page.title, page.speaker, page.text, page.scene, [_story_portrait(page.actor, "grief" if run.actor(page.actor).hp <= 0 else "friendly")],
-		[],
-		func(_option: String):
-			if last:
-				_close_modal()
-			else:
-				_ending_page(pages, index + 1),
+	var hero: Dictionary = run.actor("hero")
+	var pose := "grief" if hero.hp <= 0 else "friendly"
+	_show_story(ending.title, "旁白", ending.text, _story_scene_at(hero.position),
+		[_story_portrait("hero", pose)], [], func(_option: String): _close_modal(),
 		{"返回远征记录": _close_modal})
 
 func _to_menu() -> void:

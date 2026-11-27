@@ -81,10 +81,7 @@ func setup(game: Node) -> void:
 		story.get_parent().size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		story.get_parent().size_flags_stretch_ratio = 1.3
 		_line(game, story, passage.title, 40, game.gold)
-		var body: String = passage.text
-		if step == 0:
-			body = "你出了村，沿路打听战鼓的来处。" + body
-		_line(game, story, body, 20, game.ink)
+		_line(game, story, passage.text, 20, game.ink)
 
 	var actions := _panel(game, bottom, Color("172b24f5"))
 	actions.name = "JourneyActions"
@@ -116,10 +113,10 @@ func setup(game: Node) -> void:
 			_line(game, actions, settlement(entry), 16, game.gold)
 			game._button(actions, "继续前进", game._advance_journey.bind(step)).name = "JourneyAdvance"
 		elif entry.kind == "shop":
-			_line(game, actions, "路边的商贩放下货箱，招呼你过去看看。", 19, game.ink)
+			_line(game, actions, "商贩打开货箱。", 19, game.ink)
 			game._button(actions, "进入商店", game._shop_dialog).name = "JourneyEnter"
 		else:
-			_line(game, actions, "卡德兰举起了武器。" if entry.kind == "boss" else "前路被拦住了。队伍停下来清点卡牌，准备迎战。", 19, game.ink)
+			_line(game, actions, "卡德兰拔刀。" if entry.kind == "boss" else "前路被拦住了。", 19, game.ink)
 			game._button(actions, "准备战斗", game._show_encounter_intro).name = "JourneyEnter"
 
 static func settlement(entry: Dictionary) -> String:
