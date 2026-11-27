@@ -164,7 +164,7 @@ func capture_story_body(prefix: String, expected: String) -> PackedStringArray:
 func inspect_board() -> void:
 	for seed_value in ["20261104", "41", "918"]:
 		game.chosen_seed = seed_value
-		game._start_new()
+		game._start_new(false)
 		var run = game.run
 		var view = game.view
 		expect(view.board_fog.get_child_count() > 0 and view.tile_nodes.size() == 7, "Unexplored cells have clouds and no exposed props")
@@ -327,7 +327,7 @@ func inspect_occlusion() -> void:
 	view.set_process(true)
 
 func capture_node_examples() -> void:
-	game._start_new()
+	game._start_new(false)
 	var run = game.run
 	var original_seed: String = game.chosen_seed
 	var seed_value: int = int(run.data.seed)
@@ -344,7 +344,7 @@ func capture_node_examples() -> void:
 	if forest_rest.is_empty():
 		return
 	game.chosen_seed = str(seed_value)
-	game._start_new()
+	game._start_new(false)
 	run.data.chapter = 3
 	var rest: String = forest_rest[0]
 	var approach: String = Hex.neighbors(rest, run.data.tiles).filter(func(cell): return Hex.is_land(run.data.tiles, cell))[0]
@@ -429,7 +429,7 @@ func open_recruitment_shop(id: String) -> bool:
 	return true
 
 func capture_branch_examples() -> void:
-	game._start_new()
+	game._start_new(false)
 	var run = game.run
 	var person = run.actor("longroad")
 	run.actor("hero").position = person.position
@@ -526,7 +526,7 @@ func inspect_character_poses() -> void:
 
 func capture_finale() -> void:
 	game._close_modal()
-	game._start_new()
+	game._start_new(false)
 	var run = game.run
 	var hero = run.actor("hero")
 	for cell in run.data.tiles:
@@ -560,6 +560,15 @@ func capture_finale() -> void:
 	await capture("battle-final-river")
 	game.combat = null
 
+func capture_journey_reveal() -> void:
+	var option := game.ui.find_child("JourneyChoice2", true, false) as Button
+	expect(option != null and option.text.ends_with("高赌注") and root.get_visible_rect().encloses(option.get_global_rect()),
+		"The journey displays an on-screen action with its stake.")
+	if option != null:
+		await click_at(option.get_global_rect().get_center())
+		expect(game.ui.find_child("JourneyChoice2", true, false) == null, "Revealing the result closes all choices.")
+		await capture("journey-revealed")
+
 func execute() -> void:
 	DirAccess.make_dir_recursive_absolute(destination)
 	game = Main.instantiate()
@@ -568,6 +577,12 @@ func execute() -> void:
 	var test_save = "user://visual-test-run-%d.json" % OS.get_process_id()
 	game.run.save_path = test_save
 	game.chosen_seed = "20261104"
+	if "--journey-only" in OS.get_cmdline_user_args():
+		game._start_new()
+		await capture("journey-choice")
+		await capture_journey_reveal()
+		finish(test_save)
+		return
 	var menu_state = game.screen_state
 	game._refresh()
 	await create_timer(1.0).timeout
@@ -612,7 +627,8 @@ func execute() -> void:
 	await click_story_button("查看卡组")
 	await capture("story-starter-deck-editor")
 	await click_story_button("返回奖励")
-	await click_story_button("返回地图")
+	await click_story_button("踏上旅途")
+	await capture("journey-choice")
 	for terrain in ["forest", "swamp"]:
 		game._village_page(terrain, 0)
 		var villager := game.modal_layer.find_child("StoryActor0", true, false) as TextureRect
@@ -631,6 +647,9 @@ func execute() -> void:
 	if resume != null:
 		await click_at(resume.get_global_rect().get_center())
 	await create_timer(0.5).timeout
+	await capture("journey-resumed")
+	await capture_journey_reveal()
+	game._start_new(false)
 	await capture("02-exploration")
 	var arrival_run = game.run
 	arrival_run.data.chapter = 1
@@ -658,7 +677,7 @@ func execute() -> void:
 	game.set_process(false)
 	await capture_branch_examples()
 	for biome in ["plains", "forest", "mountain", "ruins", "desert", "swamp"]:
-		game._start_new()
+		game._start_new(false)
 		var run = game.run
 		var position = run.actor("hero").position
 		run.data.tiles[position].terrain = biome
@@ -725,7 +744,7 @@ func execute() -> void:
 	await capture("story-lorne-personal-choices")
 	game._close_modal()
 	# Recruit Eve for the first time, without the earlier battle fixtures' relic rewards.
-	game._start_new()
+	game._start_new(false)
 	game.run.actor("hero").position = game.run.actor("eve").position
 	game.run.data.tiles[game.run.actor("eve").position].enemies.clear()
 	if not open_recruitment_shop("eve"):
@@ -752,6 +771,9 @@ func execute() -> void:
 		doll.queue_free()
 	inspect_character_poses()
 	await capture_finale()
+	finish(test_save)
+
+func finish(test_save: String) -> void:
 	for suffix in ["", ".bak", ".tmp"]:
 		if FileAccess.file_exists(test_save + suffix):
 			DirAccess.remove_absolute(test_save + suffix)

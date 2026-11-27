@@ -28,7 +28,7 @@ func execute() -> void:
 	game.set_process(false)
 	game.chosen_seed = "20261104"
 	game.run.save_path = "user://test-map-landmarks-%d.json" % OS.get_process_id()
-	game._start_new()
+	game._start_new(false)
 	var run = game.run
 	var view = game.view
 	var village := "0,0"

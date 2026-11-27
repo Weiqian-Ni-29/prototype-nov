@@ -26,7 +26,7 @@ func execute():
 	await process_frame
 	game.sound.set_volume(0.0, false)
 	game.run.save_path = "user://test-squad-retreat.json"
-	game._start_new()
+	game._start_new(false)
 	game.set_process(false)
 	var run = game.run
 	var origin = run.actor("hero").position

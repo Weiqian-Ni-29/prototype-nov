@@ -209,7 +209,7 @@ func render(hold_square: int = -1) -> void:
 		return
 	var usable: bool = battle.can_act()
 	menu.disabled = false
-	retreat.disabled = not usable or battle.river
+	retreat.disabled = not usable or not battle.can_retreat()
 	end_turn_button.disabled = not usable
 	end_turn_button.text = "敌方回合" if battle.turn == Battle.ENEMY else "结束回合"
 	var legal := _legal()

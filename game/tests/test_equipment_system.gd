@@ -291,7 +291,7 @@ func check_ui() -> void:
 	root.add_child(game)
 	await process_frame
 	game.run.save_path = "user://test-equipment-ui.json"
-	game._start_new()
+	game._start_new(false)
 	game.run.data.lamp_coins = 100
 	game._inventory_dialog("hero", 1)
 	await process_frame

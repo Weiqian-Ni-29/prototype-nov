@@ -3,6 +3,7 @@ extends RefCounted
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
+const Journey = preload("res://scripts/domain/journey.gd")
 const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const RelicRules = preload("res://scripts/domain/chess_relics.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
@@ -84,7 +85,7 @@ func begin(expedition: RefCounted, encounter: Dictionary, deck: Array) -> Dictio
 	if not expedition.data.tiles.has(cell) or hero.position != cell or hero.hp <= 0:
 		return {"ok": false, "message": "旅人需要在遭遇地点，且能行动。"}
 	var npc: String = encounter.get("npc", "")
-	var types: Array = expedition.data.tiles[cell].enemies.duplicate()
+	var types: Array = Journey.battle_enemies(expedition.data, encounter).duplicate()
 	if not npc.is_empty():
 		var opponent: Dictionary = expedition.actor(npc)
 		if opponent.is_empty() or opponent.hp <= 0 or opponent.position != cell:
@@ -100,7 +101,7 @@ func begin(expedition: RefCounted, encounter: Dictionary, deck: Array) -> Dictio
 	pending = encounter.duplicate(true)
 	enemy_types = types
 	final_battle = "war_god" in types
-	var source := "battle:%s:%s" % [cell, npc]
+	var source := "journey:battle:%d" % int(pending.journey_step) if pending.has("journey_step") else "battle:%s:%s" % [cell, npc]
 	var elite: bool = is_elite_encounter(run, cell, pending)
 	exploration = run.exploration_percent()
 	difficulty = difficulty_tier(exploration, elite, final_battle)
@@ -160,6 +161,8 @@ func _shuffle(pile: Array, roller: RandomNumberGenerator) -> void:
 		pile[j] = entry
 
 static func is_elite_encounter(expedition: RefCounted, cell: String, encounter: Dictionary = {}) -> bool:
+	if encounter.has("journey_step"):
+		return Journey.current(expedition.data).get("kind") == "elite"
 	return expedition.node_at(cell).get("kind") == "elite" or encounter.get("reward_tier") == "elite" \
 		or Nodes.is_elite(expedition.data.tiles.get(cell, {}).get("enemies", []))
 
@@ -970,8 +973,12 @@ func awaken_death_power() -> void:
 	commanders[PLAYER].hp = commanders[PLAYER].hp_max
 	_log("冥河显现，伊文洛恢复生命，敌方攻击 −1。")
 
+func can_retreat() -> bool:
+	return outcome.is_empty() and not reveal_pending and not river and turn == PLAYER \
+		and (not pending.has("journey_step") or not final_battle)
+
 func retreat() -> bool:
-	if not outcome.is_empty() or reveal_pending or river or turn != PLAYER:
+	if not can_retreat():
 		return false
 	_finish("retreat")
 	return true
@@ -984,6 +991,9 @@ func _finish(result: String) -> void:
 	var extra_max := int(commanders[PLAYER].hp_max) - initial_board_hp_max
 	var change := int(commanders[PLAYER].hp) - initial_board_hp - extra_max
 	var scaled := floori(float(change * hero.hp_max) / maxi(1, initial_board_hp_max))
+	var on_journey := pending.has("journey_step")
+	if on_journey and not final_battle and scaled < 0:
+		scaled = -Journey.scale(run.data, -scaled)
 	hero.hp = 0 if result == "defeat" else clampi(initial_hero_hp + scaled, 1, int(hero.hp_max))
 	if result == "victory" and commanders[PLAYER].hp < commanders[PLAYER].hp_max:
 		run.data.relic_effect_flags["last_battle_wounded_victory"] = true
@@ -992,9 +1002,10 @@ func _finish(result: String) -> void:
 	var npc: String = pending.get("npc", "")
 	if result == "victory":
 		if npc.is_empty():
-			run.data.tiles[position].enemies = []
-			if not final_battle:
-				run.data.peace[position] = true
+			if not on_journey:
+				run.data.tiles[position].enemies = []
+				if not final_battle:
+					run.data.peace[position] = true
 		else:
 			run.actor(npc).hp = 0
 			run.data.flags["duel_won_" + npc] = true
@@ -1006,7 +1017,7 @@ func _finish(result: String) -> void:
 	if result != "victory" or final_battle:
 		run.data.erase("pending_arrival")
 	run.data.status = "failed" if result == "defeat" else "won" if result == "victory" and final_battle else "exploring"
-	if result == "victory":
+	if result == "victory" and not on_journey:
 		run.open_battle_shop()
 	if result == "defeat":
 		run.data.flags["failure_reason"] = "己方主战者倒下，远征在这里中断了。"
@@ -1014,19 +1025,33 @@ func _finish(result: String) -> void:
 		if str(key).begins_with("uphill_ready:"):
 			run.data.item_effect_counts.erase(key)
 	run.note("击倒敌方主战者。" if result == "victory" else "己方主战者倒下。" if result == "defeat" else "远征队撤退。")
+	if on_journey:
+		var message := "队伍击倒了%s，清出了前路。" % commanders[ENEMY].name
+		if result == "retreat":
+			message = "你负伤脱身。队伍绕过交战的地方，继续向前。"
+		elif result == "defeat":
+			message = run.data.flags.failure_reason
+		elif not str(run.data.pending_victory.relic).is_empty():
+			message += " 你获得了遗器「%s」。" % Relics.DATA[run.data.pending_victory.relic].name
+		Journey.settle(run, message)
 	var saved: Dictionary = run.save_game()
 	if not saved.ok:
 		run.note("战斗已结算，存档写入失败：" + str(saved.message))
 	run.changed.emit()
 
 func _grant_victory(npc: String) -> void:
-	var key := position + ":" + npc
+	var on_journey := pending.has("journey_step")
+	var key: String = pending.battle_uid if on_journey else position + ":" + npc
 	var relic := ""
 	var coins := 0
 	var duplicate := false
 	if not run.data.rewards.has(key):
 		run.data.rewards[key] = true
-		coins = run.reward_coins("battle", Nodes.battle_coins(int(run.data.seed), position, Nodes.is_elite(enemy_types), final_battle))
+		var base_coins := Nodes.battle_coins(int(run.data.seed), key if on_journey else position,
+			Nodes.is_elite(enemy_types), final_battle)
+		if on_journey and not final_battle:
+			base_coins = Journey.scale(run.data, base_coins)
+		coins = run.reward_coins("battle", base_coins)
 		var bonus := {"amount": 0, "elite": pending.reward_tier == "elite"}
 		_relic("victory", bonus)
 		coins += int(bonus.amount)

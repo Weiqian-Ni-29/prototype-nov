@@ -38,7 +38,7 @@ func execute() -> void:
 	await process_frame
 	game.sound.set_volume(0.0, false)
 	game.run.save_path = "user://test-hero-marker.json"
-	game._start_new()
+	game._start_new(false)
 	game.set_process(false)
 	var run = game.run
 	run.data.chapter = 1
