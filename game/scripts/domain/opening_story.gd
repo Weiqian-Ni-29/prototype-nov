@@ -12,3 +12,6 @@ const VILLAGES = {
 
 static func village(terrain: String) -> Array:
 	return VILLAGES.get(terrain, VILLAGES.plains)
+
+static func terrain(seed_value: int) -> String:
+	return VILLAGES.keys()[posmod(hash("village:%d" % seed_value), VILLAGES.size())]

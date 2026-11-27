@@ -1,4 +1,6 @@
 extends SceneTree
+
+const Fixture = preload("res://tests/journey_fixture.gd")
 ## Rendered card editor, chess turns and settlement, then NPC injury/rescue.
 const Main = preload("res://scenes/main.tscn")
 const Chess = preload("res://scripts/domain/chess_battle.gd")
@@ -49,7 +51,7 @@ func execute() -> void:
 	root.add_child(game)
 	await process_frame
 	game.run.save_path = "user://native-session.json"
-	game._start_new(false)
+	game._start_new()
 	var r = game.run
 	var p = r.actor("hero").position
 	for id in ["cen","eve","grit"]:
@@ -58,9 +60,8 @@ func execute() -> void:
 	game._refresh()
 	await process_frame
 	await RenderingServer.frame_post_draw
-	root.get_texture().get_image().save_png("user://expedition-sidebar.png")
-	r.data.tiles[p].enemies = ["boar", "archer", "boar"]
-	game._open_current_encounter(false)
+	root.get_texture().get_image().save_png("user://journey-screen.png")
+	Fixture.stage_battle(r, ["boar", "archer", "boar"])
 	game._deck_dialog(true)
 	var editor = game.modal_layer.find_child("CardDeckEditor", true, false)
 	expect(editor != null, "Encounter opens the native illustrated deck editor")
@@ -104,10 +105,10 @@ func execute() -> void:
 		and b.played_cards.size() == 1 and chess.card_history.shown_count == 0,
 		"The enemy reveals its first card before landing it, with player input locked")
 	if first_reveal != null:
-		var center: Vector2 = first_reveal.position
 		await RenderingServer.frame_post_draw
+		var center: Vector2 = first_reveal.position
 		root.get_texture().get_image().save_png("user://chess-enemy-card-reveal.png")
-		await create_timer(1.12).timeout
+		await create_timer(0.55).timeout
 		game.battle_timer = 0.0
 		game._process(0.0)
 		expect(chess.reveal_card == first_reveal and first_reveal.position.is_equal_approx(center)
@@ -234,69 +235,29 @@ func execute() -> void:
 			and (strike.attacker.position + strike.attacker.size / 2.0).is_equal_approx(destination),
 			"The defender fades before the attacker settles into the captured square")
 	await create_timer(0.3).timeout
-	expect(game.combat == null and b.outcome == "victory" and game.modal_layer.find_child("ShopView", true, false) != null,
-		"The last chess attack opens the post-battle shop")
-	expect(r.data.tiles[p].enemies.is_empty() and not r.data.rewards.is_empty(),"Victory settles once with actual rewards")
+	expect(game.combat == null and b.outcome == "victory" and game.modal_layer.has_node("VictoryScreen"),
+		"The last chess attack opens the victory receipt")
 	var checkpoint = JSON.parse_string(FileAccess.get_file_as_string(r.save_path))
 	expect(checkpoint is Dictionary and checkpoint.get("pending_battle", {"missing": true}).is_empty()
-		and checkpoint.get("tiles", {}).get(p, {}).get("enemies") == [] and checkpoint.get("rewards") == r.data.rewards
+		and checkpoint.journey.history[0].settled and checkpoint.get("rewards") == r.data.rewards
 		and checkpoint.get("pending_victory", {}).get("coins", 0) > 0,
 		"Battle settlement auto-saves the cleared encounter and the reward")
-	await create_timer(0.3).timeout
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("user://battle-victory-result.png")
-	game._continue_run(false)
-	var victory_screen = game.modal_layer.find_child("ShopView", true, false)
-	expect(victory_screen != null, "Continuing after victory restores the post-battle shop")
-	if victory_screen != null:
-		for button in victory_screen.find_children("*", "Button", true, false):
-			if button.text == "返回地图":
-				button.pressed.emit()
-				break
+	game._continue_run()
+	expect(game.modal_layer.has_node("VictoryScreen"), "Continuing restores the victory receipt")
+	game._dismiss_victory()
 	expect(game.combat == null and not r.data.has("pending_victory") and r.data.rewards == checkpoint.get("rewards"),
-		"Acknowledging the settlement returns to exploration without re-awarding loot")
-	# Recruitment gifts and a victory drop can each have multiple story pages.
-	var page_budget: int = maxi(2, r.data.relic_intros.size() * 8)
-	for page in page_budget:
-		if r.relic_intro().is_empty() or not game.modal_layer.has_node("StoryScreen"):
-			break
-		for pressed in [true, false]:
-			var event = InputEventMouseButton.new()
-			event.button_index = MOUSE_BUTTON_LEFT
-			event.pressed = pressed
-			event.position = root.get_visible_rect().size * Vector2(0.76, 0.30)
-			root.push_input(event, true)
-		await process_frame
-	expect(r.relic_intro().is_empty(), "Any victory relic introduction can be completed after the results")
+		"Acknowledging victory returns to the journey without re-awarding loot")
 	game.set_process(false)
-	# A normal NPC conflict uses the same injury state, not a cosmetic non-lethal shortcut.
-	r.actor("ember").position = p
-	r.data.tiles[p].npc = "ember"
-	r.data.story.ember.met = true
-	r.actor("ember").hp = 0
-	game._refresh()
-	await create_timer(1.5).timeout
-	expect(game.view.dolls.keys() == ["hero"] and r.actor("ember").hp == 0, "Injured NPC stays in domain state without a map figure")
-	expect(r.save_game().ok and r.load_game().ok and r.actor("ember").hp == 0,
-		"Continuing preserves an injured NPC")
-	r.actor("ember").hp = r.actor("ember").hp_max
-	game.view.reset()
-	game._refresh()
-	await process_frame
-	expect(game.view.dolls.keys() == ["hero"], "Loading does not add extra map figures")
 	r.data.lamp_coins = 52
-	var cell: String = r.actor("hero").position
-	r.data.tiles[cell].enemies.clear()
-	r.data.tiles[cell].npc = "ember"
-	r.data.pending_victory = {"enemies": 1, "members": ["hero"], "revived": [], "relic": ""}
-	r.open_battle_shop()
-	r.data.battles = 2
+	Fixture.shop(r, "ember")
 	game._shop_dialog("", {"category": "companion", "id": "ember"})
 	await process_frame
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("user://companion-recruitment.png")
 	var recruit = game.modal_layer.find_child("ConfirmTrade", true, false)
-	expect(recruit != null and not recruit.disabled, "The merchant offers the recovered companion")
+	expect(recruit != null and not recruit.disabled, "The merchant offers the companion")
 	recruit.pressed.emit()
 	expect(r.actor("ember").joined and r.data.lamp_coins == 44 and game.modal_layer.has_node("StoryRewards"),
 		"Recruitment charges the wallet and opens the gift receipt")
@@ -304,7 +265,7 @@ func execute() -> void:
 		if button.text.begins_with("返回商店"):
 			button.pressed.emit()
 			break
-	game._leave_battle_shop()
+	game._leave_journey_shop()
 	game._show_character_codex()
 	var codex = game.modal_layer.get_node("CharacterCodex")
 	codex._select_character("ember")

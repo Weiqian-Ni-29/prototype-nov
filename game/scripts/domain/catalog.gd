@@ -1,19 +1,9 @@
 class_name GameCatalog
 extends RefCounted
-## Balance values for terrain, characters, items, and combat.
+## Balance values for characters, items, and combat.
 
 const VERSION = 1
-const RADIUS = 3
 const ENERGY_MAX = 100
-const TERRAIN = {
-	"plains": {"name": "平原", "color": "91a577"},
-	"forest": {"name": "森林", "color": "47765b"},
-	"mountain": {"name": "山地", "color": "8d9290"},
-	"ruins": {"name": "遗迹", "color": "aba28b"},
-	"desert": {"name": "沙漠", "color": "cfb578"},
-	"swamp": {"name": "沼泽", "color": "657c72"},
-	"lake": {"name": "湖泊", "color": "397d84"},
-}
 const PROFESSIONS = {
 	"wayfarer": {"name": "巡路客", "description": "善于探索和支援，行动频繁。", "hp": 95, "mp": 48, "attack": 18, "defense": 5, "speed": 122, "skill": "trail_shot", "ultimate": "rally", "color": "caa76d", "attack_delivery": "ranged"},
 	"guardian": {"name": "守灯卫", "description": "高生命与防护，机动较低。", "hp": 145, "mp": 35, "attack": 24, "defense": 10, "speed": 83, "skill": "guard_all", "ultimate": "dawn_strike", "color": "799cba", "attack_delivery": "melee"},
@@ -88,6 +78,3 @@ const ENEMIES = {
 
 static func item_name(id: String) -> String:
 	return str(ITEMS.get(id, {}).get("name", id))
-
-static func terrain_name(id: String) -> String:
-	return str(TERRAIN.get(id, TERRAIN.plains).name)

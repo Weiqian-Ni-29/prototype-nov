@@ -1,7 +1,6 @@
 class_name JourneySound
 extends Node
 ## Original synthesized cues; no downloaded samples or runtime network dependency.
-const DAY_CHIME = preload("res://assets/audio/dawn-bronze-bell.wav")
 var player: AudioStreamPlayer
 var cache: Dictionary = {}
 var volume = 0.65
@@ -35,7 +34,7 @@ func play(kind: String = "click") -> void:
 	if player == null or volume <= 0:
 		return
 	if not cache.has(kind):
-		cache[kind] = DAY_CHIME if kind == "day" else _synthesize(kind)
+		cache[kind] = _synthesize(kind)
 	var voice = voices[voice_index%voices.size()]
 	voice_index += 1
 	voice.stop()

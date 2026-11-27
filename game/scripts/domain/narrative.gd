@@ -1,7 +1,6 @@
 extends RefCounted
 
 const Catalog = preload("res://scripts/domain/catalog.gd")
-const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const LegacyOutcomes = preload("res://scripts/domain/legacy_companion_outcomes.gd")
 
 const CHARACTER_BEHAVIOR = {
@@ -255,17 +254,15 @@ func _init(expedition: RefCounted) -> void:
 	run = expedition
 
 func _choice(id: String, label: String) -> Dictionary:
-	return {"id": id, "text": label, "enabled": true, "reason": "", "spoken": not run.data.has("journey")}
+	return {"id": id, "text": label, "enabled": true, "reason": "", "spoken": false}
 
 func encounter_intro(visitor: String, subject: String) -> Dictionary:
 	var member = run.actor(visitor)
 	var person = run.actor(subject)
 	if member.is_empty() or person.is_empty() or not BACKGROUNDS.has(subject) or not run.data.story.has(subject):
 		return {"ok": false, "message": "没有可以交谈的对象。", "beats": []}
-	if not member.joined or member.hp <= 0 or subject == visitor or person.position != member.position or not run.data.tiles.has(person.position):
+	if not member.joined or member.hp <= 0 or subject == visitor or person.position != member.position:
 		return {"ok": false, "message": "要交谈，先让能行动的队员走到对方身边。", "beats": []}
-	if not run.data.tiles[person.position].enemies.is_empty():
-		return {"ok": false, "message": "这里还不安全。先把敌人赶走，再和对方交谈。", "beats": []}
 	return {"ok": true, "beats": []}
 
 func _personal_choice(subject: String) -> String:

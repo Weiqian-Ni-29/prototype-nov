@@ -1,5 +1,7 @@
 extends SceneTree
 
+const Fixture = preload("res://tests/journey_fixture.gd")
+
 const Run = preload("res://scripts/domain/expedition.gd")
 const Items = preload("res://scripts/domain/expedition_items.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
@@ -26,9 +28,7 @@ func fixture() -> RefCounted:
 	return run
 
 func open_shop(run: RefCounted) -> String:
-	run.data.pending_victory = {"enemies": 1, "members": ["hero"], "revived": [], "relic": ""}
-	run.open_battle_shop()
-	return run.actor("hero").position
+	return Fixture.shop(run)
 
 func add_gear(run, actor: String, id: String, quality: String = "common") -> String:
 	return Items.add_gear(run.data, id, quality, "actor", actor)
@@ -81,7 +81,7 @@ func check_equipment() -> void:
 	expect(result.ok and run.commit_item_operation("test-enhance", revision, enhance) == result
 		and not run.commit_item_operation("stale", revision, enhance).ok, "Repeated or stale enhancement confirmations are harmless")
 	expect(run.data.gear_instances[spare].enhance_level == 1 and run.data.gear_instances[primary].enhance_level == 0
-		and run.data.lamp_coins == 994 and run.remaining_steps() == 5, "Only the selected instance is strengthened")
+		and run.data.lamp_coins == 994, "Only the selected instance is strengthened")
 	expect(run.gear_transfer("hero", "lorne", spare).ok and not run.gear_transfer("hero", "lorne", primary).ok,
 		"An unmounted copy can be transferred while the worn copy remains equipped")
 	var sale: Dictionary = run.gear_trade("lorne", spare, false)
@@ -144,8 +144,6 @@ func check_bulk_trade() -> void:
 	run.actor("hero").position = cell
 	run.grant_relic("survey_bonus_stamp", "hero", cell)
 	run.grant_relic("modest_trade_coupon", "hero", cell)
-	for visited in run.data.tiles.keys().slice(0, 61):
-		run.data.visited[visited] = true
 	run.shop_at(cell).relic_stock.lamp_badge = 2
 	run.data.lamp_coins = 199
 	var quote: Dictionary = run.shop_quote(100, true, 2)
@@ -168,32 +166,29 @@ func check_relics() -> void:
 	var first: Array = ["uphill_kneepad", "ranged_sight", "herbal_case", "rime_thimble", "opening_flint", "tender_gauze"]
 	for id in first:
 		run.grant_relic(id, "hero", hero.position)
-	var explored_without_telescope: Dictionary = run.data.explored.duplicate()
 	run.grant_relic("lamp_badge", "hero", hero.position)
 	run.grant_relic("telescope", "hero", hero.position)
 	run.grant_relic("telescope", "hero", hero.position)
 	var all_passives: Array = first + ["lamp_badge", "telescope"]
 	all_passives.sort()
 	expect(run.passive_relic_ids() == all_passives and run.data.relic_inventory.telescope == 2
-		and run.data.explored.size() > explored_without_telescope.size(),
-		"All owned passives activate once per relic ID, including map vision after the sixth relic")
+,
+		"All owned passives activate once per relic ID, including the seventh relic")
 
-	run.data.version = 11
+	Fixture.old_save(run.data, 11)
 	run.data.relic_attunement = first
-	run.data.explored = explored_without_telescope
 	run.data.relic_intros.clear()
 	expect(run.save_game().ok and run.load_game().ok, "Load a save with all six legacy attunement slots filled")
 	expect(run.passive_relic_ids() == all_passives and not run.data.has("relic_attunement")
-		and run.data.explored.size() > explored_without_telescope.size(),
-		"Older saves activate passives outside the legacy slots and reveal map vision immediately")
+,
+		"Older saves activate passives outside the legacy slots without a slot limit")
 	expect(run.save_game().ok and run.load_game().ok and run.passive_relic_ids() == all_passives,
 		"All passives remain active when saving and loading without legacy slots")
 
 	hero = run.actor("hero")
 	var position: String = hero.position
-	run.data.tiles[position].enemies = ["hunter_elite"]
 	var battle := Chess.new()
-	var encounter = {"position": position, "origin": position, "ambush": false, "npc": "", "reward_tier": "elite"}
+	var encounter := Fixture.battle(run, ["hunter_elite"])
 	expect(battle.begin(run, encounter, run.card_deck()).ok, "Start a battle with more than six passive relics")
 	var commander: Dictionary = Chess.commander_definition(run)
 	expect(battle.relic_ids == all_passives
@@ -212,7 +207,7 @@ func check_relics() -> void:
 	hero.mp = 0
 	expect(not run.use_relic("hero", "stillwater_stone").ok and "stillwater_stone" in run.preparation_options()
 		and not run.has_relic("stillwater_stone"),
-		"Consumable is available for the next battle without changing map resources")
+		"Consumable is available for the next battle without spending party resources")
 	var successes = 0
 	for seed in 10000:
 		run.data.seed = seed
@@ -227,7 +222,7 @@ func check_relics() -> void:
 func check_migration() -> void:
 	var run = fixture()
 	var legacy: Dictionary = run.data.duplicate(true)
-	legacy.version = 3
+	Fixture.old_save(legacy, 3)
 	legacy.relics = {"telescope": true, "life_seed": true, "rain_bell": true}
 	legacy.relic_checks = {"battle:0,0:": ""}
 	legacy.erase("gear_instances")
@@ -241,10 +236,6 @@ func check_migration() -> void:
 	hero.hp_max = 114
 	hero.inventory.merge({"trail_blade": 2, "padded_coat": 1, "lamp_charm": 1})
 	hero.equipment = {"weapon": "trail_blade", "armor": "padded_coat", "accessory": "lamp_charm"}
-	for node in legacy.nodes.values():
-		node.erase("gear_uid")
-		if node.kind == "cache":
-			node.item = "ether"
 	run.save_game()
 	legacy.rng_state = run.data.rng_state
 	var file = FileAccess.open(run.save_path, FileAccess.WRITE)
@@ -267,10 +258,8 @@ func check_migration() -> void:
 func check_battle() -> void:
 	var run = fixture()
 	var position: String = run.actor("hero").position
-	run.data.tiles[position].terrain = "forest"
-	run.data.tiles[position].enemies = ["hunter_elite"]
 	var battle := Chess.new()
-	var encounter = {"position": position, "origin": position, "ambush": false, "npc": "", "reward_tier": "elite"}
+	var encounter := Fixture.battle(run, ["hunter_elite"])
 	expect(battle.begin(run, encounter, run.card_deck()).ok, "Start an elite chess encounter")
 	var offer: String = battle.pending.relic_offer
 	expect(not offer.is_empty() and not run.data.relic_inventory.has(offer), "Elite reward is frozen before combat without being granted")
@@ -278,7 +267,7 @@ func check_battle() -> void:
 	battle._check_outcome()
 	battle._check_outcome()
 	expect(run.data.relic_inventory.get(offer) == 1 and run.data.relic_claims[battle.pending.battle_uid].delivered
-		and run.data.tiles[position].terrain == "forest", "Victory commits one drop and never rewrites terrain")
+, "Victory commits one drop")
 
 func find_button(parent: Node, prefix: String) -> Button:
 	for button in parent.find_children("*", "Button", true, false):
@@ -291,7 +280,7 @@ func check_ui() -> void:
 	root.add_child(game)
 	await process_frame
 	game.run.save_path = "user://test-equipment-ui.json"
-	game._start_new(false)
+	game._start_new()
 	game.run.data.lamp_coins = 100
 	game._inventory_dialog("hero", 1)
 	await process_frame

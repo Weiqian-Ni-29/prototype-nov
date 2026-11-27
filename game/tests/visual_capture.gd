@@ -1,11 +1,11 @@
 extends SceneTree
+
+const Fixture = preload("res://tests/journey_fixture.gd")
 ## Presentation fixtures, deliberately separate from no-cheat end-to-end journeys.
 const Main = preload("res://scenes/main.tscn")
 const Game = preload("res://scripts/main.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Chess = preload("res://scripts/domain/chess_battle.gd")
-const Hex = preload("res://scripts/domain/hex_map.gd")
-const Nodes = preload("res://scripts/domain/map_nodes.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
 var game: Node
@@ -118,22 +118,6 @@ func advance_story() -> void:
 	inspect_story_layout()
 	await click_at(root.get_visible_rect().size * Vector2(0.76, 0.30))
 
-func advance_until_text(fragment: String) -> void:
-	for index in range(128):
-		if story_contains(fragment):
-			return
-		if not game.modal_layer.has_node("StoryScreen"):
-			break
-		await advance_story()
-	expect(false, "Bounded story reading reaches: " + fragment)
-
-func finish_linear_story() -> void:
-	for index in range(128):
-		if not game.modal_layer.has_node("StoryScreen"):
-			return
-		await advance_story()
-	expect(false, "Bounded linear story reaches its destination")
-
 func capture_story_body(prefix: String, expected: String) -> PackedStringArray:
 	await process_frame
 	var first = story_page()
@@ -161,207 +145,6 @@ func capture_story_body(prefix: String, expected: String) -> PackedStringArray:
 			await click_at(root.get_visible_rect().size * Vector2(0.76, 0.30))
 	expect("".join(pages).replace("\n", "") == expected.replace("\n", ""), "Captured pages preserve every word, including the final paragraph: " + prefix)
 	return pages
-
-func inspect_board() -> void:
-	for seed_value in ["20261104", "41", "918"]:
-		game.chosen_seed = seed_value
-		game._start_new(false)
-		var run = game.run
-		var view = game.view
-		expect(view.board_fog.get_child_count() > 0 and view.tile_nodes.size() == 7, "Unexplored cells have clouds and no exposed props")
-		var fringe_is_inward = view.board_fringe.get_child_count() > 0
-		for patch in view.board_fringe.get_children():
-			var arrays: Array = patch.mesh.surface_get_arrays(0)
-			for i in range(0, arrays[Mesh.ARRAY_VERTEX].size(), view.board_surface.template.size()):
-				var vertex: Vector3 = arrays[Mesh.ARRAY_VERTEX][i]
-				var local: Vector2 = arrays[Mesh.ARRAY_TEX_UV][i] * 2.0 - Vector2.ONE
-				var id = Hex.cell_at(vertex - Vector3(local.x, 0.0, local.y))
-				var mask = 0
-				for side in Hex.DIRECTIONS.size():
-					var neighbor = Hex.key(Hex.coord(id) + Hex.DIRECTIONS[side])
-					if run.data.tiles.has(neighbor) and not run.data.explored.has(neighbor):
-						mask |= 1 << side
-				fringe_is_inward = fringe_is_inward and run.data.explored.has(id) and mask != 0 \
-					and roundi(arrays[Mesh.ARRAY_TEX_UV2][i].x) == mask
-		expect(fringe_is_inward, "Soft fog edges lie on revealed hexes and only face unknown map neighbors")
-		var hidden = ""
-		for id in run.data.tiles:
-			if not run.data.explored.has(id):
-				hidden = id
-				break
-		var point = Hex.world(hidden)
-		var old_height = view.board_surface.height_at(point)
-		var old_terrain = run.data.tiles[hidden].terrain
-		run.data.tiles[hidden].terrain = "mountain" if old_terrain != "mountain" else "lake"
-		game._refresh()
-		expect(not view.board_surface.profiles.has(hidden) and is_equal_approx(old_height, view.board_surface.height_at(point)), "Hidden terrain cannot influence relief")
-		run.data.tiles[hidden].terrain = old_terrain
-		var shore = ""
-		var ridge = ""
-		var coastal_ridge = ""
-		for id in run.data.tiles:
-			run.data.explored[id] = true
-			var terrain: String = run.data.tiles[id].terrain
-			if terrain == "lake":
-				for next in Hex.neighbors(id, run.data.tiles):
-					if Hex.is_land(run.data.tiles, next):
-						shore = next
-						break
-			if terrain == "mountain":
-				var neighbors = Hex.neighbors(id, run.data.tiles)
-				if ridge.is_empty() and neighbors.any(func(next): return run.data.tiles[next].terrain == "mountain"):
-					ridge = id
-				if neighbors.size() < 6 and Hex.distance(Hex.coord(id), Hex.coord(run.data.start)) <= 2:
-					coastal_ridge = id
-		view.zoom_size = 38.0
-		view.focus_cell("0,0")
-		game._refresh()
-		expect(view.board_fog.get_child_count() == 0 and view.board_fringe.get_child_count() == 0
-			and view.board_surface.triangles.size() == run.data.tiles.size(), "All revealed cells render and support surface picking")
-		verify_seams(view.board_surface)
-		var rocky_mountain = verify_mountain_rocks(view)
-		await create_timer(view.FOG_REVEAL_SECONDS + 0.1).timeout
-		await capture("terrain-island-" + seed_value)
-		game.selected_cell = shore
-		view.zoom_size = 9.2
-		view.focus_cell(shore)
-		game._refresh()
-		await capture("terrain-lake-" + seed_value)
-		if seed_value == "20261104":
-			await inspect_occlusion()
-			var areas = {"ridge": ridge, "coast-close": coastal_ridge, "ridge-close": ridge, "rocks-close": rocky_mountain}
-			for detail in areas:
-				var focus: String = areas[detail]
-				if not focus.is_empty():
-					view.zoom_size = view.MIN_MAP_ZOOM if detail.ends_with("-close") else view.DEFAULT_MAP_ZOOM
-					game.selected_cell = focus
-					view.focus_cell(focus)
-					game._refresh()
-					await capture("terrain-" + detail)
-	game.chosen_seed = "20261104"
-	game.view.zoom_size = game.view.DEFAULT_MAP_ZOOM
-
-func verify_seams(surface: RefCounted) -> void:
-	var matched = true
-	for id in surface.tiles:
-		var own := {}
-		for point in surface.triangles[id]:
-			own[Vector2(point.x, point.z)] = point.y
-		for next in Hex.neighbors(id, surface.tiles):
-			if id > next:
-				continue
-			var shared := {}
-			for point in surface.triangles[next]:
-				var key = Vector2(point.x, point.z)
-				if own.has(key):
-					shared[key] = true
-					matched = matched and is_equal_approx(own[key], point.y)
-			matched = matched and shared.size() == surface.SUBDIVISIONS + 1
-	expect(matched, "Every internal edge shares all tessellated world vertices and heights")
-
-func verify_mountain_rocks(view: Node3D) -> String:
-	var rocky_cell = ""
-	var grounded = true
-	for id in view.board_surface.profiles:
-		if view.board_surface.profiles[id][0] != "mountain":
-			continue
-		for rock in view.tile_nodes[id].get_children():
-			if not rock.scene_file_path.get_file().begins_with("Rock_"):
-				continue
-			rocky_cell = id
-			var lowest = INF
-			var highest = -INF
-			for mesh in rock.find_children("*", "MeshInstance3D", true, false):
-				for i in mesh.mesh.get_surface_count():
-					for vertex in mesh.mesh.surface_get_arrays(i)[Mesh.ARRAY_VERTEX]:
-						var point: Vector3 = mesh.global_transform * vertex
-						var clearance: float = point.y - view.board_surface.height_at(point)
-						lowest = minf(lowest, clearance)
-						highest = maxf(highest, clearance)
-			grounded = grounded and lowest < 0.0 and highest > 0.025
-	expect(grounded and not rocky_cell.is_empty(), "Mountain rocks meet the actual ground mesh and remain partly visible")
-	return rocky_cell
-
-func inspect_occlusion() -> void:
-	var view = game.view
-	var run = game.run
-	var occluder: MeshInstance3D
-	for candidate in view.map_occluders:
-		var bounds: AABB = candidate.global_transform * candidate.get_aabb()
-		var cell := Hex.cell_at(bounds.get_center())
-		if run.data.tiles.get(cell, {}).get("terrain") == "forest" and bounds.size.y > 0.42:
-			occluder = candidate
-			break
-	if not is_instance_valid(occluder):
-		expect(false, "A tall forest occluder exists for the close-up")
-		return
-	var forest := Hex.cell_at((occluder.global_transform * occluder.get_aabb()).get_center())
-	run.actor("hero").position = forest
-	game.selected_cell = forest
-	view.zoom_size = 8.0
-	view.focus_cell(forest)
-	game._refresh()
-	expect(not view.canopy_batch.visible and view.canopy_individual, "Close view can fade individual props")
-	var actor = view.dolls.hero
-	while actor.is_moving():
-		await process_frame
-	var bounds: AABB = occluder.global_transform * occluder.get_aabb()
-	var sight: Vector3 = -view.camera.global_basis.z
-	actor.global_position = bounds.get_center() + sight * 0.48 - Vector3.UP * 0.20
-	view.set_process(false)
-	await capture("terrain-forest-covered")
-	view._update_occlusion(1.0)
-	var targets: PackedVector3Array = view.fading_occluders.get(occluder, {}).get("targets", PackedVector3Array())
-	expect(targets.size() == 1 and targets[0].is_equal_approx(actor.global_position + Vector3.UP * 0.20),
-		"A tree covering the traveler fades around their position")
-	if not view.fading_occluders.has(occluder):
-		view.set_process(true)
-		return
-	var original: Material = view.fading_occluders[occluder].originals[0]
-	await capture("terrain-forest-occlusion")
-	view.zoom_size = 10.0
-	view._update_camera()
-	view._update_occlusion(1.0)
-	expect(not view.fading_occluders.has(occluder) and occluder.get_surface_override_material(0) == original, "Zooming out restores the tree's original material")
-	expect(view.canopy_batch.visible and not view.canopy_individual, "Wide view groups canopy meshes for rendering")
-	game._refresh()
-	view.set_process(true)
-
-func capture_node_examples() -> void:
-	game._start_new(false)
-	var run = game.run
-	var original_seed: String = game.chosen_seed
-	var seed_value: int = int(run.data.seed)
-	var forest_rest = run.data.nodes.keys().filter(func(cell):
-		return run.node_at(cell).kind == "supply" and run.data.tiles[cell].terrain == "forest")
-	for candidate in range(24):
-		if not forest_rest.is_empty():
-			break
-		seed_value = candidate
-		run.new_run(seed_value, "wayfarer")
-		forest_rest = run.data.nodes.keys().filter(func(cell):
-			return run.node_at(cell).kind == "supply" and run.data.tiles[cell].terrain == "forest")
-	expect(not forest_rest.is_empty(), "Node fixture seed has a forest supply stop")
-	if forest_rest.is_empty():
-		return
-	game.chosen_seed = str(seed_value)
-	game._start_new(false)
-	run.data.chapter = 3
-	var rest: String = forest_rest[0]
-	var approach: String = Hex.neighbors(rest, run.data.tiles).filter(func(cell): return Hex.is_land(run.data.tiles, cell))[0]
-	run.data.tiles[approach].enemies.clear()
-	run.actor("hero").position = approach
-	run.reveal(approach)
-	game._select_actor("hero")
-	game._select_cell(rest)
-	game._select_cell(rest)
-	var deadline := Time.get_ticks_msec() + 5000
-	while game.map_traveling and Time.get_ticks_msec() < deadline:
-		await process_frame
-	expect(game.modal_layer.has_node("StoryRewards"), "Walking to the forest supply stop opens the receipt")
-	await capture("node-supply-reward")
-	await click_story_button("返回地图")
-	game.chosen_seed = original_seed
 
 func story_button(prefix: String) -> Button:
 	for button in game.modal_layer.find_children("*", "Button", true, false):
@@ -419,36 +202,24 @@ func story_contains(text: String) -> bool:
 
 func open_recruitment_shop(id: String) -> bool:
 	var run = game.run
-	var cell: String = run.actor(id).position
-	run.retreat_party(cell)
-	run.data.tiles[cell].enemies.clear()
-	run.data.tiles[cell].npc = id
-	run.data.pending_victory = {"enemies": 1, "members": ["hero"], "revived": [], "relic": ""}
-	run.open_battle_shop()
-	game._select_actor("hero")
+	Fixture.shop(run, id)
 	game._shop_dialog("", {"category": "companion", "id": id})
 	return true
 
 func capture_branch_examples() -> void:
-	game._start_new(false)
+	game._start_new()
 	var run = game.run
-	var person = run.actor("longroad")
-	run.actor("hero").position = person.position
-	run.data.tiles[person.position].enemies.clear()
-	run.reveal(person.position)
-	game._select_actor("hero")
 	if not open_recruitment_shop("longroad"):
 		return
 	await capture("companion-recruitment")
 	game.modal_layer.find_child("ConfirmTrade", true, false).pressed.emit()
 	if game.modal_layer.has_node("StoryRewards"):
 		await click_story_button("返回商店")
-	await click_story_button("返回地图")
+	await click_story_button("离开商店")
 	game._talk("longroad")
 	if not await await_story_choices():
 		return
 	await click_story_button(quest_option_label(game.narrative.dialogue("hero", "longroad"), "quest"))
-	await advance_story()
 	var quest = game.narrative.personal_quest("hero", "longroad")
 	await capture_story_body("story-personal", quest.text)
 	if not await await_story_choices():
@@ -459,15 +230,13 @@ func capture_branch_examples() -> void:
 	await capture("story-personal-choices")
 	inspect_story_layout()
 	await click_story_button(second)
-	await capture("story-personal-player-reply")
-	await advance_story()
 	await capture_story_body("story-personal-conclusion", Story.PERSONAL_QUESTS.longroad.personal_b.response)
 	game._close_modal()
 	run.data.status = "won"
 	game._refresh()
 	await capture("story-epilogue-record")
 	for button in game.ui.find_children("*", "Button", true, false):
-		if button.text in ["查看结局剧情", "返回主菜单"]:
+		if button.text in ["查看结局", "主菜单"]:
 			expect(root.get_visible_rect().encloses(button.get_global_rect()), "Ending record keeps its action visible: " + button.text)
 	var ending: String = game.narrative.main_ending().text
 	var epilogue: String = game.narrative.character_ending("longroad").text
@@ -525,17 +294,11 @@ func inspect_character_poses() -> void:
 
 func capture_finale() -> void:
 	game._close_modal()
-	game._start_new(false)
+	game._start_new()
 	var run = game.run
 	var hero = run.actor("hero")
-	for cell in run.data.tiles:
-		run.data.explored[cell] = true
-	for chapter in range(1, 5):
-		run.finish_chapter(chapter)
-	hero.position = run.data.boss
-	run.reveal(hero.position)
 	var battle := Chess.new()
-	var encounter = {"position": hero.position, "origin": hero.position, "npc": "", "ambush": false}
+	var encounter := Fixture.stage_battle(run, ["war_god"])
 	expect(battle.begin(run, encounter, run.card_deck()).ok, "Finale starts the actual boss battle")
 	game.combat = battle
 	game._refresh()
@@ -630,126 +393,8 @@ func execute() -> void:
 	await create_timer(0.5).timeout
 	await capture("journey-resumed")
 	await capture_journey_reveal()
-	game._start_new(false)
-	await capture("02-exploration")
-	var arrival_run = game.run
-	arrival_run.data.chapter = 1
-	var first_tile: String = Hex.neighbors(arrival_run.data.start, arrival_run.data.tiles).filter(func(cell):
-		return arrival_run.node_at(cell).get("kind") == "supply" and arrival_run.data.tiles[cell].enemies.is_empty())[0]
-	game._select_cell(first_tile)
-	game._select_cell(first_tile)
-	var arrival_deadline = Time.get_ticks_msec() + 5000
-	while game.map_traveling and Time.get_ticks_msec() < arrival_deadline:
-		await process_frame
-	expect(game.modal_layer.has_node("StoryRewards") and arrival_run.actor("hero").position == first_tile,
-		"First arrival shows the supplies received at the destination")
-	await capture("node-first-arrival")
-	await click_story_button("返回地图")
-	await create_timer(0.9).timeout
-	await capture("map-visited-locations")
-	game.crew_collapsed = true
-	game._refresh()
-	await capture("02-exploration-folded")
-	game.crew_collapsed = false
-	game._refresh()
-	await inspect_board()
-	await capture_node_examples()
-	# Inspect every biome through the exact same battle view used in the playable game.
 	game.set_process(false)
 	await capture_branch_examples()
-	for biome in ["plains", "forest", "mountain", "ruins", "desert", "swamp"]:
-		game._start_new(false)
-		var run = game.run
-		var position = run.actor("hero").position
-		run.data.tiles[position].terrain = biome
-		run.data.tiles[position].site = ""
-		for id in ["lorne", "cen", "eve", "grit", "ember", "tide"]:
-			run.actor(id).position = position
-			run.join_companion(id)
-		run.data.tiles[position].enemies = ["spider", "furnace", "swarm", "canal"]
-		var battle := Chess.new()
-		var pending = {"position": position, "origin": position, "npc": "", "ambush": false}
-		expect(battle.begin(run, pending, run.card_deck()).ok, "Chess battle fixture begins " + biome)
-		game.combat = battle
-		game._refresh()
-		await process_frame
-		expect(game.chess_view != null and game.chess_view.is_visible_in_tree() and not game.view.visible,
-			"The playable chess board is shown over this biome")
-		await capture("chess-battle-" + biome)
-		expect(battle.retreat(), "Retreat from chess battle " + biome)
-		game._finish_battle()
-	# Seven-person inventory and portrait dialogue layout use explicit presentation fixtures.
-	game.run.data.status = "exploring"
-	game.run.data.pending_battle = {}
-	game._inventory_dialog("hero", 0, "trail_food")
-	await capture("inventory-seven-members")
-	game._inventory_dialog("hero", 1, str(game.run.actor("hero").equipment.weapon))
-	await capture("inventory-gear")
-	game._transfer_dialog("hero", "trail_food")
-	await capture("transfer-seven-members")
-	game._close_modal()
-	game._show_character_codex()
-	var codex = game.modal_layer.get_node("CharacterCodex")
-	codex._set_tab(1)
-	await capture("codex-list")
-	var grid_view = codex.find_child("CodexGridView", true, false) as Button
-	await click_at(grid_view.get_global_rect().get_center())
-	expect(game.character_codex_state.grid, "The joined grid segment opens the card layout")
-	await capture("codex-grid")
-	game._close_character_codex()
-	# Stage the courier before recruitment at his original encounter site.
-	for position in game.run.data.tiles:
-		if game.run.data.tiles[position].npc == "lorne":
-			game.run.actor("hero").position = position
-			game.run.actor("lorne").position = position
-			break
-	game.run.actor("lorne").joined = false
-	game.run.data.story.lorne.met = false
-	game.run.data.story.lorne.relation = "unmet"
-	game.run.data.tiles[game.run.actor("lorne").position].enemies.clear()
-	game.run.data.lamp_coins = 8
-	if not open_recruitment_shop("lorne"):
-		quit(1)
-		return
-	await capture("courier-recruitment")
-	game.modal_layer.find_child("ConfirmTrade", true, false).pressed.emit()
-	if game.modal_layer.has_node("StoryRewards"):
-		await click_story_button("返回商店")
-	await click_story_button("返回地图")
-	game._talk("lorne")
-	await await_story_choices()
-	await capture("story-courier-joined-choices")
-	await click_story_button(quest_option_label(game.narrative.dialogue("hero", "lorne"), "quest"))
-	await advance_story()
-	await await_story_choices()
-	await capture("story-lorne-personal-choices")
-	game._close_modal()
-	# Recruit Eve for the first time, without the earlier battle fixtures' relic rewards.
-	game._start_new(false)
-	game.run.actor("hero").position = game.run.actor("eve").position
-	game.run.data.tiles[game.run.actor("eve").position].enemies.clear()
-	if not open_recruitment_shop("eve"):
-		quit(1)
-		return
-	await capture("eve-recruitment")
-	expect(game.modal_layer.find_child("ShopView", true, false) != null, "Companion recruitment appears inside the shop")
-	game._close_modal()
-	expect(game.modal_layer.get_child_count() == 0 and game.view.visible, "Closing the shop returns to the map")
-	open_recruitment_shop("eve")
-	game.modal_layer.find_child("ConfirmTrade", true, false).pressed.emit()
-	expect(game.modal_layer.has_node("StoryRewards"), "Recruitment opens the illustrated relic receipt")
-	await capture("eve-recruitment-reward")
-	game._close_modal()
-	# Instantiate every remaining enemy art family and verify its skeleton in the tree.
-	for id in Catalog.ENEMIES:
-		var definition = Catalog.ENEMIES[id].duplicate(true)
-		definition.id = "visual_" + id
-		definition.type = id
-		var doll = load("res://scripts/presentation/doll.gd").new()
-		game.view.add_child(doll)
-		doll.configure(definition)
-		expect(doll.skeleton.get_bone_count() >= 6, "Enemy has rig " + id)
-		doll.queue_free()
 	inspect_character_poses()
 	await capture_finale()
 	finish(test_save)

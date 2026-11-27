@@ -1,8 +1,9 @@
 extends SceneTree
 
+const Fixture = preload("res://tests/journey_fixture.gd")
+
 const Run = preload("res://scripts/domain/expedition.gd")
 const Chess = preload("res://scripts/domain/chess_battle.gd")
-const Hex = preload("res://scripts/domain/hex_map.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
 var checks := 0
@@ -65,8 +66,7 @@ func execute() -> void:
 	expect(upgraded.level == 1 and upgraded.equip_guard == 1 and run.card_deck() == deck and original.level == 0,
 		"Upgrading a gear instance updates the card without editing its deck slot")
 	var store: String = run.data.start
-	run.data.pending_victory = {"enemies": 1, "members": ["hero"], "revived": [], "relic": ""}
-	run.open_battle_shop()
+	Fixture.shop(run)
 	var offer: String = run.spell_shop_offers(store)[0]
 	var balance: int = run.data.lamp_coins
 	expect(run.buy_spell("hero", offer).ok and run.data.lamp_coins == balance - 8
@@ -75,11 +75,8 @@ func execute() -> void:
 		"A paid spell is appended to the current deck and takes the store's current blueprint slot")
 	expect(not run.buy_spell("hero", offer).ok and run.shop_refresh_cost(store) == 1
 		and run.card_deck() == deck + [offer], "A spell purchase cannot repeat or alter refresh costs")
-	run.retreat_party(start)
-	run.data.tiles[start].enemies = ["boar"]
-	var encounter := {"position": start, "origin": start, "npc": "", "ambush": false}
-	run.close_battle_shop()
-	run.data.erase("pending_victory")
+
+	var encounter := Fixture.stage_battle(run, ["boar"])
 	var battle := Chess.new()
 	expect(battle.begin(run, encounter, deck).ok and battle.hands[0].size() == 3
 		and battle.hands[1].size() == 3 and battle.piles[0].size() == 8, "Both sides draw exactly three from shuffled decks")
@@ -92,7 +89,8 @@ func execute() -> void:
 	run.grant_relic("dry_ink_seal", "hero", start)
 	run.grant_relic("banked_ember_box", "hero", start)
 	run.grant_relic("rime_thimble", "hero", start)
-	run.data.tiles[start].enemies = ["boar"]
+
+	encounter = Fixture.stage_battle(run, ["boar"])
 	battle = Chess.new()
 	expect(battle.begin(run, encounter, run.card_deck()).ok
 		and battle.piles[0].size() == 8 and battle.hands[0].has("temp:ember_spell") and battle.hands[0].size() == 5,
@@ -123,9 +121,8 @@ func check_mobility_spell_shop() -> void:
 	run.save_path = "user://test-mobility-spell-shop.json"
 	run.new_run(81, "wayfarer")
 	var cell: String = run.actor("hero").position
-	run.data.pending_victory = {"enemies": 1, "members": ["hero"], "revived": [], "relic": ""}
 	run.data.lamp_coins = 40
-	run.open_battle_shop()
+	Fixture.shop(run)
 	var mobility := ["tailwind_spell", "sidestep_spell"]
 	var deck := run.card_deck()
 	expect(not run.save_card_deck(deck + mobility).ok, "The movement spells must be unlocked before adding them to the deck")
@@ -150,12 +147,10 @@ func check_progression() -> void:
 	for tier in 5:
 		run.new_run(41, "wayfarer")
 		var cell: String = run.actor("hero").position
-		run.data.tiles[cell].enemies = ["boar"]
-		run.data.explored.clear()
-		for key in run.data.tiles.keys().slice(0, ceili(run.data.tiles.size() * tier / 5.0)):
-			run.data.explored[key] = true
+
+		run.data.journey.step = [0, 2, 3, 4, 5][tier]
 		var battle := Chess.new()
-		var result := battle.begin(run, {"position": cell, "origin": cell, "npc": "", "ambush": false}, run.card_deck())
+		var result := battle.begin(run, Fixture.battle(run, ["boar"]), run.card_deck())
 		expect(result.ok and battle.difficulty == tier and battle.commanders[Chess.ENEMY].hp > earlier_hp,
 			"Each new exploration band increases enemy strength")
 		var enemy_deck: Array = battle.hands[Chess.ENEMY] + battle.piles[Chess.ENEMY]
@@ -181,14 +176,6 @@ func check_progression() -> void:
 	expect(squad.count("foe:swarm") == 1 and "foe:archer" in squad,
 		"The enemy recruits from its encounter first, with at most one copy of each reinforcement")
 
-	for seed in 24:
-		run.new_run(seed, "wayfarer")
-		var guards: Array = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).get("intro_duel", false))
-		var route: bool = guards.size() == 2 and Hex.distance(Hex.coord(guards[0]), Hex.coord(guards[1])) == 1
-		expect(route and guards.all(func(cell): return run.data.tiles[cell].enemies == ["boar"]),
-			"Seed %d has two opening duels" % seed)
-
-
 func check_legacy_loadout() -> void:
 	var run := Run.new()
 	run.save_path = "user://test-chess-v8-migration.json"
@@ -196,7 +183,7 @@ func check_legacy_loadout() -> void:
 	var hero_cell: String = run.actor("hero").position
 	run.actor("eve").position = hero_cell
 	run.join_companion("eve")
-	run.data.version = 8
+	Fixture.old_save(run.data, 8)
 	run.data.spell_collection = []
 	var equipment := run.card_deck().slice(0, 4)
 	run.data.card_deck = ["support_vanguard", "support_archer", "support_medic", "support_guard",
@@ -213,7 +200,7 @@ func check_weather_migration() -> void:
 	var start: String = run.actor("hero").position
 	var original_deck := run.card_deck()
 	run.grant_relic("telescope", "hero", start)
-	run.data.version = 10
+	Fixture.old_save(run.data, 10)
 	run.data.weather = "rain"
 	run.data.card_deck = original_deck + ["rain", "sun", "fog_spell"]
 	run.data.spell_collection.append("fog_spell")
@@ -226,8 +213,6 @@ func check_weather_migration() -> void:
 	run.data.relic_claims["field_cache:" + start] = {"success": true, "relic_id": "rainstone", "delivered": true}
 	run.data.battle_offers["battle:" + start + ":"] = "rain_bell"
 	run.data.pending_victory = {"enemies": 1, "members": ["hero"], "revived": [], "relic": "rain_bell"}
-	run.open_battle_shop()
-	run.data.battle_shop.relic_stock["rain_bell"] = 1
 	run.data.pending_story_rewards = {"source": "旧奖励", "items": [{"kind": "relic", "id": "rainstone", "count": 1}]}
 	expect(run.save_game().ok and run.load_game().ok, "A version-ten save with weather cards and relics opens successfully")
 	expect(run.card_deck() == original_deck and Cards.valid_deck(run.card_deck(), run.data.actors, true, run.data)
@@ -237,13 +222,12 @@ func check_weather_migration() -> void:
 		and run.passive_relic_ids() == ["telescope"] and run.data.relic_intros.size() == 1
 		and run.data.relic_claims["field_cache:" + start].relic_id == ""
 		and run.data.relic_claims["field_cache:" + start].delivered and run.data.battle_offers["battle:" + start + ":"] == ""
-		and run.data.pending_victory.relic == "" and not run.data.has("pending_story_rewards")
-		and not run.data.battle_shop.relic_stock.has("rain_bell"),
+		and not run.data.has("pending_victory") and not run.data.has("pending_story_rewards"),
 		"Retired weather loot is removed from inventory, receipts, passive effects, and pending offers")
 	var short_deck := original_deck.slice(0, Cards.OPENING_HAND)
-	run.data.tiles[start].enemies = ["boar"]
+
 	var battle := Chess.new()
-	var encounter := {"position": start, "origin": start, "npc": ""}
+	var encounter := Fixture.stage_battle(run, ["boar"])
 	expect(battle.begin(run, encounter, short_deck).ok and battle.hands[0].size() == 3 and battle.piles[0].is_empty(),
 		"An opening-hand-sized deck starts battle")
 
@@ -253,7 +237,7 @@ func check_expedition_save_migration() -> void:
 	run.new_run(41, "wayfarer")
 	var deck := run.card_deck() + ["sunforge_flare", "lantern_vigil"]
 	expect(run.save_card_deck(deck).ok, "The save fixture includes cards added after the starter deck")
-	run.data.version = 12
+	Fixture.old_save(run.data, 12)
 	run.data.day = 3
 	run.data.steps_today = 2
 	run.data.weather = "rain"
@@ -265,5 +249,5 @@ func check_expedition_save_migration() -> void:
 		and run.data.actors.values().all(func(actor): return not actor.has("element"))
 		and run.data.log.slice(-3) == ["第 2 天。", "第 3 天。", "抵达山地。"],
 		"Migration clears obsolete map and actor fields and converts old date announcements")
-	expect(run.data.day == 3 and run.remaining_steps() == 3 and run.card_deck() == deck
+	expect(run.data.day == 3 and run.data.journey.step == 0 and not run.data.has("steps_today") and run.card_deck() == deck
 		and run.save_game().ok and run.load_game().ok, "Progress and card choices survive migration and resaving")

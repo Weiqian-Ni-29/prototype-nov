@@ -3,13 +3,14 @@ extends RefCounted
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
 const Journey = preload("res://scripts/domain/journey.gd")
-const Nodes = preload("res://scripts/domain/map_nodes.gd")
+const STARTING_COINS = 8
+const SUPPLY_PRICES = {"trail_food": 3}
 
 static func initialize(data: Dictionary) -> void:
 	data.merge({"gear_instances": {}, "next_gear_uid": 1, "item_revision": 0,
 		"last_item_operation": {}, "relic_inventory": {},
 		"relic_seen": {}, "relic_effect_flags": {}, "relic_claims": {}, "relic_intros": [],
-		"battle_offers": {}, "item_effect_counts": {}, "map_intel": {}, "route_records": {}})
+		"battle_offers": {}, "item_effect_counts": {}})
 
 static func add_gear(data: Dictionary, definition: String, quality: String, kind: String, owner: String) -> String:
 	var uid = str(int(data.next_gear_uid))
@@ -18,41 +19,12 @@ static func add_gear(data: Dictionary, definition: String, quality: String, kind
 		"enhance_level": 0, "upgrade_paid": 0, "owner": {"kind": kind, "id": owner}}
 	return uid
 
-static func stock(data: Dictionary, legacy: bool) -> void:
-	var cells = data.nodes.keys()
-	cells.sort()
-	for cell in cells:
-		var node = data.nodes[cell]
-		var roller = RandomNumberGenerator.new()
-		roller.seed = hash("%s:items:%s" % [str(int(data.seed)), cell])
-		var terrain: String = data.tiles[cell].terrain
-		if node.kind == "trade":
-			if node.has("relic_stock"):
-				continue
-			node.relic_stock = _shop_relics(roller)
-			for id in node.stock.keys():
-				if not Gear.LEGACY_PRICES.has(id):
-					continue
-				if legacy:
-					for i in int(node.stock[id]):
-						add_gear(data, id, "common", "shop", cell)
-				node.stock.erase(id)
-			if not legacy:
-				_stock_shop_gear(data, cell, terrain, roller)
-		elif node.kind == "cache" and node.result.is_empty() and not node.has("gear_uid"):
-			var definition: String = node.item
-			if not legacy:
-				definition = Gear.roll_definition(terrain, roller, Gear.SLOTS, ["trail_food", "trail_food"])
-			node.item = definition
-			if Gear.DATA.has(definition):
-				node.gear_uid = add_gear(data, definition, "common" if legacy else Gear.roll_quality(roller), "source", "field_cache:" + cell)
-
 static func refresh_shop(data: Dictionary, cell: String, old_gear: Array, refresh_count: int) -> void:
 	var node: Dictionary = data.battle_shop
-	var terrain: String = data.tiles[cell].terrain
+	var terrain: String = data.village
 	var roller := RandomNumberGenerator.new()
-	roller.seed = hash("%d:shop_refresh:%s:%d" % [int(data.seed), Journey.shop_key(data, cell), refresh_count])
-	node.stock = Nodes.shop_supplies(roller)
+	roller.seed = hash("%d:shop_refresh:%s:%d" % [int(data.seed), Journey.shop_key(data), refresh_count])
+	node.stock = {"trail_food": roller.randi_range(1, 2)}
 	node.relic_stock = _shop_relics(roller, node.relic_stock.keys())
 	for uid in old_gear:
 		data.gear_instances.erase(uid)
@@ -61,10 +33,10 @@ static func refresh_shop(data: Dictionary, cell: String, old_gear: Array, refres
 	node.erase("spell_sold")
 
 static func open_battle_shop(data: Dictionary, cell: String) -> void:
-	var terrain: String = data.tiles[cell].terrain
+	var terrain: String = data.village
 	var roller := RandomNumberGenerator.new()
-	roller.seed = hash("%d:battle-shop:%s:%d" % [int(data.seed), Journey.shop_key(data, cell), int(data.battles)])
-	data.battle_shop = {"cell": cell, "stock": Nodes.shop_supplies(roller),
+	roller.seed = hash("%d:battle-shop:%s:%d" % [int(data.seed), Journey.shop_key(data), int(data.battles)])
+	data.battle_shop = {"cell": cell, "stock": {"trail_food": roller.randi_range(1, 2)},
 		"relic_stock": _shop_relics(roller), "refresh_count": 0}
 	_stock_shop_gear(data, cell, terrain, roller)
 
@@ -110,20 +82,9 @@ static func migrate(data: Dictionary) -> void:
 	for key in data.get("relic_checks", {}):
 		var id = str(data.relic_checks[key])
 		data.relic_claims[key] = {"success": not id.is_empty(), "relic_id": id, "delivered": true}
-	for cell in data.get("nodes", {}):
-		var node = data.nodes[cell]
-		if node.result.is_empty():
-			continue
-		var source: String = {"choice": "commission", "haunt": "spirit_farewell", "cache": "field_cache"}.get(node.kind, "")
-		if not source.is_empty():
-			mark_historical(data, source + ":" + cell)
 	for id in actors:
 		if id != "hero" and data.actors[id].joined:
 			mark_historical(data, "recruit:" + id)
-	for threshold in [20, 60, 100]:
-		if data.get("visited", {}).size() >= threshold:
-			mark_historical(data, "explore:" + str(threshold))
-	stock(data, true)
 	data.erase("relics")
 	data.erase("relic_checks")
 	data.version = 4
@@ -137,7 +98,7 @@ static func whole(value: Variant, minimum: int = 0) -> bool:
 
 static func validate(data: Dictionary) -> bool:
 	for field in ["gear_instances", "last_item_operation", "relic_inventory", "relic_seen", "relic_effect_flags",
-			"relic_claims", "battle_offers", "item_effect_counts", "map_intel", "route_records"]:
+			"relic_claims", "battle_offers", "item_effect_counts"]:
 		if not data.get(field) is Dictionary:
 			return false
 	if not whole(data.get("next_gear_uid"), 1) or not whole(data.get("item_revision")):
@@ -146,7 +107,7 @@ static func validate(data: Dictionary) -> bool:
 	if not shop is Dictionary:
 		return false
 	if data.has("battle_shop"):
-		if (not data.has("pending_victory") and not Journey.shop_active(data)) or shop.get("cell") != data.actors.hero.position \
+		if not Journey.shop_active(data) or shop.get("cell") != data.actors.hero.position \
 				or data.status not in ["exploring", "won"] or not data.pending_battle.is_empty() \
 				or not shop.get("stock") is Dictionary or not shop.get("relic_stock") is Dictionary \
 				or not whole(shop.get("refresh_count")) or not shop.get("spell_sold", false) is bool:
@@ -170,14 +131,7 @@ static func validate(data: Dictionary) -> bool:
 				if not data.actors.has(owner.get("id")):
 					return false
 			"shop":
-				if (shop.is_empty() or owner.get("id") != shop.cell) \
-						and data.get("nodes", {}).get(owner.get("id"), {}).get("kind") != "trade":
-					return false
-			"source":
-				var cell = str(owner.get("id", "")).trim_prefix("field_cache:")
-				var node = data.get("nodes", {}).get(cell, {})
-				if owner.id != "field_cache:" + cell or node.get("kind") != "cache" or node.get("gear_uid") != uid \
-						or node.get("item") != instance.definition_id or not node.result.is_empty():
+				if shop.is_empty() or owner.get("id") != shop.cell:
 					return false
 			_:
 				return false
@@ -212,14 +166,5 @@ static func validate(data: Dictionary) -> bool:
 			return false
 	for id in data.battle_offers:
 		if not data.battle_offers[id] is String or (data.battle_offers[id] != "" and not Relics.DATA.has(data.battle_offers[id])):
-			return false
-	for node in data.get("nodes", {}).values():
-		if node.kind == "trade":
-			if not node.get("relic_stock") is Dictionary or not whole(node.get("refresh_count", 0)):
-				return false
-			for id in node.relic_stock:
-				if not Relics.is_active(id) or not whole(node.relic_stock[id]):
-					return false
-		elif node.has("gear_uid") and not data.gear_instances.has(node.gear_uid):
 			return false
 	return true
