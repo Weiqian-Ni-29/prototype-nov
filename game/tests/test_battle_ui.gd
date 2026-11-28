@@ -791,6 +791,25 @@ func button_named(parent: Node, title: String) -> Button:
 			return node as Button
 	return null
 
+func inspect_card(editor: Control, card: Button) -> void:
+	await click(card)
+	await create_timer(0.32).timeout
+	expect(editor.detail != null, "A single card click opens detail after the double-click window")
+	if editor.detail != null and editor.detail.motion != null and editor.detail.motion.is_running():
+		await editor.detail.motion.finished
+	await process_frame
+
+func close_card_detail(editor: Control) -> void:
+	if editor.detail == null:
+		return
+	var escape := InputEventKey.new()
+	escape.keycode = KEY_ESCAPE
+	escape.pressed = true
+	root.push_input(escape, true)
+	if editor.detail != null:
+		await create_timer(0.23).timeout
+	expect(editor.detail == null, "Escape closes card detail")
+
 func drag_card(card: Button, target: Control) -> void:
 	var from := card.get_global_rect().get_center()
 	var to := target.get_global_rect().get_center()
@@ -808,7 +827,7 @@ func drag_card(card: Button, target: Control) -> void:
 		motion.button_mask = MOUSE_BUTTON_MASK_LEFT
 		root.push_input(motion, true)
 		previous = point
-	expect(root.gui_is_dragging(), "A collection card starts a native drag")
+	expect(root.gui_is_dragging(), "A card starts a native drag")
 	var release := InputEventMouseButton.new()
 	release.position = to
 	release.button_index = MOUSE_BUTTON_LEFT
@@ -833,12 +852,14 @@ func check_editor_draft() -> void:
 	var editor = game.modal_layer.find_child("CardDeckEditor", true, false)
 	editor.search.text = "巡路短刃"
 	editor.search.text_changed.emit(editor.search.text)
-	await process_frame
+	editor.reduce_motion = true
+	await inspect_card(editor, editor.find_child("Collection_" + suffix, true, false))
 	var upgrade := editor.find_child("EnhanceDeckCard", true, false) as Button
 	expect(upgrade != null and upgrade.disabled and upgrade.tooltip_text == "灯铢不足",
 		"The upgrade shows the price and explains why it is disabled")
 	game.run.data.lamp_coins = 100
-	await click(editor.find_child("Collection_" + suffix, true, false))
+	await close_card_detail(editor)
+	await inspect_card(editor, editor.find_child("Collection_" + suffix, true, false))
 	upgrade = editor.find_child("EnhanceDeckCard", true, false) as Button
 	var save_path: String = game.run.save_path
 	game.run.save_path = "user://test-card-editor-missing-directory/draft.json"
@@ -851,6 +872,7 @@ func check_editor_draft() -> void:
 	expect(int(game.run.data.gear_instances[uid].enhance_level) == 1 and editor.deck == [gear_id]
 		and editor.cost_bars[0].value == 1 and editor.selected == gear_id and "+1" in tile.accessibility_name,
 		"Enhancing refreshes the same gear card in place without changing the draft or cost distribution")
+	await close_card_detail(editor)
 	await click(editor.find_child("Remove_" + suffix, true, false))
 	expect(editor.deck.is_empty() and editor.cost_bars[0].value == 0 and not editor.done.disabled
 		and editor.deck_title.has_focus() and "草稿" in editor.guidance.text,
@@ -862,6 +884,7 @@ func check_editor_draft() -> void:
 	game.run.data.tiles[cell].enemies = ["boar"]
 	game._open_current_encounter(false)
 	editor = game.modal_layer.find_child("CardDeckEditor", true, false)
+	editor.reduce_motion = true
 	await process_frame
 	var preparation := editor.find_child("DeckPreparation", true, false) as OptionButton
 	expect(preparation != null and editor.done.disabled and "3 张" in editor.guidance.text,
@@ -869,7 +892,7 @@ func check_editor_draft() -> void:
 	if preparation != null:
 		preparation.select(1)
 		preparation.item_selected.emit(1)
-		await click(editor.find_child("Collection_mend_spell", true, false))
+		await inspect_card(editor, editor.find_child("Collection_mend_spell", true, false))
 		await click(editor.add_button)
 		expect(game.run.prepared_relic == "mint_distillate" and preparation.selected == 1
 			and editor.done.disabled and "2 张" in editor.guidance.text and editor.cost_bars[0].value == 1,
@@ -887,13 +910,13 @@ func check_editor_scroll() -> void:
 	var editor := DeckEditor.new()
 	editor.size = Vector2(1020, 650)
 	root.add_child(editor)
-	editor.setup(run.data.actors, deck, false, "", run)
-	editor._choose("mend_spell")
+	editor.setup(run.data.actors, deck, false, "", run, "", true)
 	await process_frame
 	await process_frame
 	editor.collection_scroll.scroll_vertical = 168
 	editor.deck_scroll.scroll_vertical = 116
 	await process_frame
+	editor._open_detail(editor._tile("mend_spell"))
 	await click(editor.add_button)
 	expect(editor.deck.size() > 30 and editor.deck.count("mend_spell") == 1
 		and editor.selected == "mend_spell" and editor.add_button.has_focus(),
@@ -935,9 +958,11 @@ func check_ui() -> void:
 		var cards: Array[Node] = editor.grid.get_children()
 		expect(cards.size() >= 2 and cards.all(func(button): return ("%d 费" % cost) in button.accessibility_name),
 			"Clicking cost %d shows the owned cards at that cost" % cost)
+	await inspect_card(editor, editor.find_child("Collection_sunforge_flare", true, false))
 	await click(editor.add_button)
 	expect(editor.deck.count("sunforge_flare") == 1 and editor.cost_bars[9].value == 1,
 		"Adding the displayed ten-cost card updates the last chart bar")
+	await close_card_detail(editor)
 	await click(editor.find_child("Remove_sunforge_flare", true, false))
 	expect(editor.deck == initial_deck and editor.cost_bars[9].value == 0, "Removing the ten-cost card empties the last chart bar")
 	await click(editor.find_child("ClearCardFilters", true, false))
@@ -966,9 +991,26 @@ func check_ui() -> void:
 	editor.search.text_changed.emit(editor.search.text)
 	await process_frame
 	var ice := editor.find_child("Collection_ice_spell", true, false) as Button
+	await inspect_card(editor, ice)
+	expect(editor.deck == initial_deck and editor.detail != null and editor.detail_id == "ice_spell"
+		and "1 费，已入组 0 张，上限 2 张" in ice.accessibility_name,
+		"Single click shows the correct card without editing the draft")
+	await close_card_detail(editor)
+	expect(ice.has_focus(), "Dismissing detail restores focus to the card")
 	await click(ice)
-	expect(editor.deck == initial_deck and "1 费，已入组 0 张，上限 2 张" in ice.accessibility_name,
-		"Selecting a card leaves the draft intact and announces its cost and copy limit")
+	await click(ice)
+	expect(editor.detail == null and editor.deck.count("ice_spell") == 1
+		and editor.find_child("DeckCardTransfer", true, false) != null,
+		"Double-clicking a collection card adds one with a transfer effect and does not open detail")
+	var ice_row := editor._deck_card("ice_spell") as Button
+	await inspect_card(editor, ice_row)
+	expect(editor.detail != null and editor.detail_source == ice_row and editor.deck.count("ice_spell") == 1,
+		"Single-clicking the deck row also opens detail")
+	await close_card_detail(editor)
+	await click(ice_row)
+	await click(ice_row)
+	expect(editor.detail == null and editor.deck == initial_deck and editor._deck_card("ice_spell") == null,
+		"Double-clicking a deck row moves one copy out and removes its last row")
 	await drag_card(ice, editor.search)
 	expect(editor.deck == initial_deck and editor.error.visible and editor.search.text == "冰针",
 		"Dropping outside the list leaves the deck and search intact")
@@ -976,17 +1018,26 @@ func check_ui() -> void:
 	expect(editor.deck.count("ice_spell") == 1 and editor.cost_bars[0].value == 8
 		and not editor.error.visible and "已入组 1 张" in ice.accessibility_name,
 		"Dropping onto a deck row updates the card, deck, and distribution together")
+	await inspect_card(editor, ice)
 	await click(editor.find_child("AddDeckCard", true, false))
 	var capped := editor.find_child("AddDeckCard", true, false) as Button
-	expect(editor.total.text == "13 张" and capped != null and capped.disabled and ice.has_focus(),
-		"The editor adds cards and still enforces the per-card limit")
+	expect(editor.total.text == "13 张" and capped != null and capped.disabled and editor.remove_button.has_focus(),
+		"The detail adds a card and moves focus to Remove at the same-name limit")
+	await close_card_detail(editor)
 	await drag_card(ice, editor.deck_scroll)
 	expect(editor.deck.count("ice_spell") == 2 and "同名上限" in editor.error.text,
 		"Dragging onto the list also enforces the per-card limit and explains the rejection")
-	await click(editor.find_child("Remove_ice_spell", true, false))
+	await click(ice)
+	await click(ice)
+	expect(editor.deck.count("ice_spell") == 2 and editor.detail == null and "同名上限" in editor.error.text,
+		"Double-click also enforces the same-name limit")
+	ice_row = editor._deck_card("ice_spell")
+	await drag_card(ice_row, editor.search)
+	expect(editor.deck.count("ice_spell") == 2, "Dragging out of the editor without reaching the collection cancels removal")
+	await drag_card(ice_row, ice)
 	expect(editor.deck.count("ice_spell") == 1 and editor.cost_bars[0].value == 8
-		and not capped.disabled and editor.selected == "ice_spell" and editor.search.text == "冰针",
-		"Removing a copy updates the detail and distribution without disturbing the current filters")
+		and editor.selected == "ice_spell" and editor.search.text == "冰针" and editor._deck_card("ice_spell") == ice_row,
+		"Dragging back to a collection card removes one copy and preserves the same row and filters")
 	await click(editor.find_child("ConfirmCardDeck", true, false))
 	var saved := Run.new()
 	expect(saved.load_game(game.run.save_path).ok and saved.card_deck().size() == 12 and saved.card_deck().count("ice_spell") == 1,

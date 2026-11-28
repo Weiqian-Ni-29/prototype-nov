@@ -87,6 +87,69 @@ func check_deck_layout(editor: Control) -> void:
 	root.content_scale_aspect = original_aspect
 	await process_frame
 
+func click_deck_point(point: Vector2) -> void:
+	for pressed in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.button_mask = MOUSE_BUTTON_MASK_LEFT if pressed else 0
+		event.position = point
+		event.pressed = pressed
+		root.push_input(event, true)
+
+func check_deck_motion(editor: Control) -> void:
+	editor.search.text = "伊芙"
+	editor.search.text_changed.emit(editor.search.text)
+	await process_frame
+	var tile := editor.find_child("Collection_eve", true, false) as Button
+	expect(tile != null, "The encounter collection includes the recruited partner")
+	if tile == null:
+		return
+	var start := tile.get_global_rect().get_center()
+	var deck: Array = editor.deck.duplicate()
+	click_deck_point(start)
+	expect(editor.detail == null and not editor.click_timer.is_stopped(),
+		"A click waits for a possible second click before opening the detail")
+	if editor.click_timer.is_stopped():
+		return
+	await editor.click_timer.timeout
+	var detail = editor.detail
+	expect(detail != null and detail.frame.scale.x < 1 and detail.heading.text == "伊芙",
+		"Detail begins at the card at a reduced scale")
+	if detail == null:
+		return
+	await detail.motion.finished
+	await RenderingServer.frame_post_draw
+	expect(detail.frame.scale.is_equal_approx(Vector2.ONE)
+		and root.get_visible_rect().encloses(detail.frame.get_global_rect()) and editor.deck == deck,
+		"The zoom reveals an on-screen card and leaves the draft unchanged")
+	root.get_texture().get_image().save_png("user://chess-deck-card-detail.png")
+	click_deck_point(Vector2(14, 14))
+	expect(detail.closing and detail.motion.is_running(), "Clicking the backdrop starts the return zoom")
+	if detail.closing:
+		await detail.dismissed
+	expect(editor.detail == null and tile.has_focus(), "The return zoom dismisses detail and restores the source focus")
+	click_deck_point(start)
+	click_deck_point(start)
+	await process_frame
+	await process_frame
+	var flight := editor.find_child("DeckCardTransfer", true, false)
+	expect(flight != null and flight.joining and not flight.from_drag and editor.deck.count("eve") == 1,
+		"Double-click updates the count while an illustrated card flies into the list")
+	if flight != null:
+		await create_timer(0.13).timeout
+		await RenderingServer.frame_post_draw
+		root.get_texture().get_image().save_png("user://chess-deck-card-flight.png")
+	var deck_row := editor._deck_card("eve") as Button
+	if deck_row != null:
+		editor.deck_scroll.ensure_control_visible(deck_row)
+		await process_frame
+		var row_point := deck_row.get_global_rect().get_center()
+		click_deck_point(row_point)
+		click_deck_point(row_point)
+		expect(editor.deck == deck, "Double-clicking the deck row restores the original draft")
+	editor.search.clear()
+	editor.search.text_changed.emit("")
+
 func execute() -> void:
 	game = Main.instantiate()
 	root.add_child(game)
@@ -108,6 +171,7 @@ func execute() -> void:
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("user://chess-deck-editor.png")
 	await check_deck_layout(editor)
+	await check_deck_motion(editor)
 	editor.cost_buttons.back().pressed.emit()
 	await process_frame
 	await RenderingServer.frame_post_draw
