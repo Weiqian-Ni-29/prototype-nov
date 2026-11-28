@@ -227,6 +227,8 @@ func _card(entry: Dictionary) -> Button:
 	button.accessibility_name = entry.title
 	button.pressed.connect(_show_item.bind(entry))
 	_toggle(button, slot_group)
+	if entry.kind in ["companion", "gear", "spell"]:
+		CardUI.frame(button)
 	var content := VBoxContainer.new()
 	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content.add_theme_constant_override("separation", 2)
@@ -236,10 +238,7 @@ func _card(entry: Dictionary) -> Button:
 	content.offset_right = -10
 	content.offset_top = 6
 	content.offset_bottom = -6
-	if entry.kind == "companion":
-		CardUI.art(content, entry, Vector2(0, 66))
-	else:
-		_icon(content, entry.icon, Vector2(0, 66), entry.get("level", 0))
+	CardUI.art(content, entry, Vector2(0, 66))
 	var title := _label(content, entry.title, 16, INK)
 	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	button.tooltip_text = entry.title
@@ -265,10 +264,7 @@ func _show_item(entry: Dictionary) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12)
 	detail.add_child(row)
-	if entry.kind == "companion":
-		CardUI.art(row, entry, Vector2(100, 100))
-	else:
-		_icon(row, entry.icon, Vector2(100, 100), entry.get("level", 0))
+	CardUI.art(row, entry, Vector2(100, 100))
 	var title := VBoxContainer.new()
 	title.alignment = BoxContainer.ALIGNMENT_CENTER
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL

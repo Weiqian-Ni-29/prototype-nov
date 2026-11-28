@@ -21,4 +21,8 @@ Source pages: [Adventurers](https://kaylousberg.itch.io/kaykit-adventurers), [An
 
 `portraits/mattes/` contains grayscale opacity masks derived from the existing portraits using U²-NetP and refined around clothing and props. The dialogue shader uses the original portrait colors and samples these masks for opacity only.
 
+## Card and story art refresh
+
+The new card faces in `ui/card-art/` and the repainted story scenes, portraits, expression sheets and card back were made with the built-in ImageGen tool. The original [Mend illustration](ui/item-icons/spell_mend.png) was the paint reference. The shared prompt asked for broad angular value masses, opaque gouache strokes, dry-brush grain, colored shadows, and concentrated accent light. Repaints used the existing assets to retain character identity, scene framing, alpha cutouts, and sprite positions. New spell and defense illustrations use each card's action as the subject and prioritize readability at thumbnail size.
+
 Godot and its components retain their notices in `licenses/`. Standard export templates are used. No editor, Blender, original download archive, access token or paid source pack is shipped.
