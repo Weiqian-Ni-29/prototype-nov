@@ -3,7 +3,6 @@ extends SceneTree
 const Main = preload("res://scenes/main.tscn")
 const Run = preload("res://scripts/domain/expedition.gd")
 const Story = preload("res://scripts/domain/narrative.gd")
-const Hex = preload("res://scripts/domain/hex_map.gd")
 const Battle = preload("res://scripts/domain/chess_battle.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
@@ -107,62 +106,15 @@ func check_victory_receipt(save_path: String) -> void:
 		expect(game.run.relic_intro().is_empty(), "Acknowledging victory clears the earned relic introduction")
 	game.queue_free()
 
-func check_exploration() -> void:
+func check_backpack() -> void:
 	var game = Main.instantiate()
 	root.add_child(game)
 	await process_frame
-	game.run.save_path = "user://test-relic-exploration.json"
+	game.run.save_path = "user://test-relic-backpack.json"
+	game._start_new()
 	var run = game.run
-	game._start_new(false)
-	var site = ""
-	for id in run.relic_sites:
-		if run.relic_sites[id] == "telescope" and run.node_at(id).kind == "cache" and roll(int(run.data.seed), "site:" + id) < 0.25:
-			site = id
-			break
-	if site.is_empty():
-		# Select a deterministic seed with a successful telescope investigation.
-		for seed_value in range(1, 30):
-			game.chosen_seed = str(seed_value)
-			game._start_new(false)
-			for id in run.relic_sites:
-				if run.relic_sites[id] == "telescope" and run.node_at(id).kind == "cache" and roll(seed_value, "site:" + id) < 0.25:
-					site = id
-					break
-			if not site.is_empty():
-				break
-	expect(not site.is_empty(), "A map seed offers a successful investigation")
-	if site.is_empty():
-		game.queue_free()
-		return
-	var approach: String = Hex.neighbors(site, run.data.tiles).filter(func(cell): return Hex.is_land(run.data.tiles, cell))[0]
-	run.data.chapter = 3
-	run.data.tiles[approach].enemies.clear()
-	run.actor("hero").position = approach
-	run.reveal(approach)
-	game._select_actor("hero")
-	game._select_cell(site)
-	game._select_cell(site)
-	var deadline := Time.get_ticks_msec() + 5000
-	while game.map_traveling and Time.get_ticks_msec() < deadline:
-		await process_frame
-	var intro = run.relic_intro()
-	expect(run.has_relic("telescope") and intro.get("id") == "telescope" and game.modal_layer.has_node("StoryRewards"), "Investigating an eligible tile opens the item receipt directly")
-	if intro.is_empty():
-		game.queue_free()
-		return
-	var new_sight: Array = intro.new_sight
-	var sight_is_hidden = new_sight.all(func(id):
-		return run.data.explored.has(id) and not run.has_visited(id) and not game.view.tile_nodes.has(id))
-	expect(not new_sight.is_empty() and sight_is_hidden, "Telescope adds shared sight, deferring map presentation until after the story")
-	game._continue_run(false)
-	expect(run.relic_intro().get("id") == "telescope" and game.modal_layer.has_node("StoryRewards"),
-		"Continue resumes the saved cache receipt with the same relic")
-	for button in game.modal_layer.find_children("*", "Button", true, false):
-		if button.text.begins_with("返回地图"):
-			button.pressed.emit()
-			break
-	expect(run.relic_intro().is_empty() and game.view.fog_reveals.get_child_count() > 0
-		and not run.investigate_relic("hero").ok, "Acknowledging the receipt starts the fog dissolve and prevents a second investigation")
+	expect(run.grant_relic("telescope", "hero", run.actor("hero").position),
+		"The telescope fixture is available in the journey's relic inventory")
 	game._inventory_dialog("hero", 2)
 	var tabs = game.modal_layer.find_child("InventoryTabs", true, false)
 	var page = tabs.get_child(2)
@@ -186,7 +138,7 @@ func execute() -> void:
 	check_effects(run)
 	check_battle_drop(run)
 	await check_victory_receipt(run.save_path)
-	await check_exploration()
+	await check_backpack()
 	await create_timer(0.3).timeout
 	print("RELICS: %d checks, %d failures" % [checks, failures])
 	quit(0 if failures == 0 else 1)

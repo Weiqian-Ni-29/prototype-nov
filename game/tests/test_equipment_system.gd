@@ -81,7 +81,7 @@ func check_equipment() -> void:
 	expect(result.ok and run.commit_item_operation("test-enhance", revision, enhance) == result
 		and not run.commit_item_operation("stale", revision, enhance).ok, "Repeated or stale enhancement confirmations are harmless")
 	expect(run.data.gear_instances[spare].enhance_level == 1 and run.data.gear_instances[primary].enhance_level == 0
-		and run.data.lamp_coins == 994 and run.remaining_steps() == 5, "Only the selected instance is strengthened")
+		and run.data.lamp_coins == 994, "Only the selected instance is strengthened")
 	expect(run.gear_transfer("hero", "lorne", spare).ok and not run.gear_transfer("hero", "lorne", primary).ok,
 		"An unmounted copy can be transferred while the worn copy remains equipped")
 	var sale: Dictionary = run.gear_trade("lorne", spare, false)

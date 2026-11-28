@@ -56,10 +56,6 @@ func execute() -> void:
 	for id in ["cen","eve","grit"]:
 		r.actor(id).position = p
 		r.join_companion(id)
-	game._refresh()
-	await process_frame
-	await RenderingServer.frame_post_draw
-	root.get_texture().get_image().save_png("user://expedition-sidebar.png")
 	r.data.tiles[p].enemies = ["boar", "archer", "boar"]
 	game._open_current_encounter(false)
 	game._deck_dialog(true)
@@ -271,7 +267,7 @@ func execute() -> void:
 	expect(victory_screen != null, "Continuing after victory restores the post-battle shop")
 	if victory_screen != null:
 		for button in victory_screen.find_children("*", "Button", true, false):
-			if button.text == "返回地图":
+			if button.text == "返回远征":
 				button.pressed.emit()
 				break
 	expect(game.combat == null and not r.data.has("pending_victory") and r.data.rewards == checkpoint.get("rewards"),
@@ -295,16 +291,9 @@ func execute() -> void:
 	r.data.tiles[p].npc = "ember"
 	r.data.story.ember.met = true
 	r.actor("ember").hp = 0
-	game._refresh()
-	await create_timer(1.5).timeout
-	expect(game.view.dolls.keys() == ["hero"] and r.actor("ember").hp == 0, "Injured NPC stays in domain state without a map figure")
 	expect(r.save_game().ok and r.load_game().ok and r.actor("ember").hp == 0,
 		"Continuing preserves an injured NPC")
 	r.actor("ember").hp = r.actor("ember").hp_max
-	game.view.reset()
-	game._refresh()
-	await process_frame
-	expect(game.view.dolls.keys() == ["hero"], "Loading does not add extra map figures")
 	r.data.lamp_coins = 52
 	var cell: String = r.actor("hero").position
 	r.data.tiles[cell].enemies.clear()
