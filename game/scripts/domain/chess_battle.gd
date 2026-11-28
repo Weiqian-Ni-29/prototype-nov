@@ -44,6 +44,7 @@ var last_enemy_action := {}
 var played_cards: Array[Dictionary] = []
 var last_attack := {}
 var last_movement := {}
+var last_healing := {}
 var difficulty := 0
 var exploration := 0
 var outcome := ""
@@ -295,14 +296,19 @@ func _attack_range(piece: Dictionary) -> int:
 	return mini(3, maxi(int(piece.get("range", piece.get("move", 1))), int(_weapon(piece).get("range", 0))) + int(piece.get("sight", 0)))
 
 func _open_line(from: int, target: int, reach: int) -> bool:
+	return _line_problem(from, target, reach).is_empty()
+
+func _line_problem(from: int, target: int, reach: int) -> String:
 	var length := _distance(from, target)
-	if length == 0 or length > reach or (from % COLS != target % COLS and _row(from) != _row(target)):
-		return false
+	if from % COLS != target % COLS and _row(from) != _row(target):
+		return "需要横竖直线"
+	if length == 0 or length > reach:
+		return "超出射程"
 	var step := int(float(target - from) / length)
 	for offset in range(1, length):
 		if not board[from + step * offset].is_empty():
-			return false
-	return true
+			return "路径被棋子挡住"
+	return ""
 
 func _spell_source(side: int, target: int, reach: int) -> int:
 	var source := -1
@@ -317,15 +323,19 @@ func _spell_source(side: int, target: int, reach: int) -> int:
 func _can_cast_from(side: int, from: int, target: int, reach: int) -> bool:
 	return from >= 0 and from < board.size() and board[from].get("side", -1) == side and _open_line(from, target, reach)
 
+func _is_slowed(piece: Dictionary) -> bool:
+	return int(piece.get("slow_until", 0)) >= round_number
+
+func _walking_range(piece: Dictionary) -> int:
+	return 1 if _is_slowed(piece) else maxi(int(piece.get("move", 1)), int(piece.get("ready_move", 0)))
+
 func moves(from: int) -> Dictionary:
 	var options := {}
 	if from < 0 or from >= board.size() or board[from].is_empty():
 		return options
 	var actor: Dictionary = board[from]
-	var walking := maxi(int(actor.get("move", 1)), int(actor.get("ready_move", 0)))
-	var slowed := int(actor.get("slow_until", 0)) >= round_number
-	if slowed:
-		walking = 1
+	var walking := _walking_range(actor)
+	var slowed := _is_slowed(actor)
 	var range_attack := _attack_range(actor)
 	for target in board.size():
 		var other: Dictionary = board[target]
@@ -357,7 +367,7 @@ func _relocation_targets(side: int, from: int, pattern: String) -> Array[int]:
 	var targets: Array[int] = []
 	if from < 0 or from >= board.size() or board[from].get("side", -1) != side:
 		return targets
-	var reach := 1 if int(board[from].get("slow_until", 0)) >= round_number else 2
+	var reach := 1 if _is_slowed(board[from]) else 2
 	for target in board.size():
 		if not board[target].is_empty():
 			continue
@@ -366,6 +376,29 @@ func _relocation_targets(side: int, from: int, pattern: String) -> Array[int]:
 		elif pattern == "diagonal" and absi(_row(from) - _row(target)) == 1 and absi(from % COLS - target % COLS) == 1:
 			targets.append(target)
 	return targets
+
+func targeting_problem(from: int, target: int, card: Dictionary) -> String:
+	var unit: Dictionary = board[target]
+	if card.has("damage"):
+		if unit.is_empty() or unit.side == PLAYER:
+			return "请选择敌方棋子"
+		return _line_problem(from, target, card.get("cast_range", 2))
+	if card.has("relocate"):
+		if not unit.is_empty():
+			return "落点必须为空格"
+		if card.relocate == "diagonal":
+			return "只能斜移一格"
+		return _line_problem(from, target, 1 if _is_slowed(board[from]) else 2)
+	if not card.is_empty():
+		if unit.get("side", -1) != PLAYER:
+			return "请选择友方棋子"
+		if card.get("cup", false):
+			return "请选择友方伙伴"
+		return "生命已满"
+	if not unit.is_empty():
+		return "格子已占用"
+	var reason := _line_problem(from, target, _walking_range(board[from]))
+	return reason if reason == "路径被棋子挡住" else "超出走棋范围"
 
 func card_targets(side: int, index: int, from: int = -1) -> Array[int]:
 	var targets: Array[int] = []
@@ -422,10 +455,16 @@ func take_movement() -> Dictionary:
 	last_movement = {}
 	return movement
 
+func take_healing() -> Dictionary:
+	var healing := last_healing
+	last_healing = {}
+	return healing
+
 func move(from: int, target: int, side: int = PLAYER) -> bool:
 	if not can_move_piece(side) or not moves(from).has(target) or board[from].side != side:
 		return false
 	last_attack = {}
+	last_healing = {}
 	var kind := "move" if board[target].is_empty() else "attack"
 	last_movement = _movement_event(from, target) if kind == "move" else {}
 	_move_piece(from, target)
@@ -451,9 +490,24 @@ func play(index: int, target: int, side: int = PLAYER, from: int = -1) -> bool:
 	_play_card(side, index, target, from)
 	_complete_action(side, "damage_spell" if card.has("damage") else card.kind)
 	var after := _card_board_snapshot()
+	last_healing = _healing_event(card, index, target, before, after)
 	played_cards.append({"side": side, "round": round_number, "card": card.duplicate(true),
 		"target": target, "slot": slot, "effects": _card_effects(target, before, after, slot, replaced, from if relocating else -1)})
 	return true
+
+func _healing_event(card: Dictionary, index: int, target: int, before: Array[Dictionary], after: Array[Dictionary]) -> Dictionary:
+	if not Cards.is_healing_card(card):
+		return {}
+	var restored: Array[Dictionary] = []
+	for square in board.size():
+		if before[square].is_empty() or after[square].is_empty():
+			continue
+		var amount := int(after[square].hp) - int(before[square].hp)
+		if amount > 0:
+			restored.append({"square": square, "name": after[square].name, "amount": amount})
+	if restored.is_empty():
+		return {}
+	return {"restored": restored, "card": card.name, "card_index": index, "target": target}
 
 func _movement_event(from: int, target: int, card: Dictionary = {}) -> Dictionary:
 	var unit: Dictionary = board[from]
@@ -515,6 +569,7 @@ func end_turn() -> bool:
 		return false
 	last_attack = {}
 	last_movement = {}
+	last_healing = {}
 	_relic("turn_end")
 	turn = ENEMY
 	last_enemy_action = {}
@@ -537,6 +592,7 @@ func enemy_turn(hold_for_display: bool = false) -> void:
 func _enemy_step() -> void:
 	last_attack = {}
 	last_movement = {}
+	last_healing = {}
 	if not enemy_turn_started:
 		enemy_turn_started = true
 		_start_turn(ENEMY)

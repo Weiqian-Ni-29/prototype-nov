@@ -1315,6 +1315,158 @@ func move_mouse(point: Vector2) -> void:
 	await process_frame
 	await process_frame
 
+func check_target_arrow() -> void:
+	var battle = fixture()
+	battle.board[3] = battle.board[10]
+	battle.board[10] = {}
+	battle.board[4] = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
+	battle.board[5] = battle._piece(battle.definition("foe:archer"), Chess.ENEMY)
+	battle.hands[Chess.PLAYER] = ["ember_spell", "tailwind_spell"]
+	battle.mana[Chess.PLAYER] = 2
+	battle.draw_count = 0
+	var view := ChessView.new()
+	root.add_child(view)
+	view.setup(battle, null)
+	await process_frame
+	await process_frame
+	var arrow := view.aim_arrow
+	view.cells[3].pressed.emit()
+	var empty_tile := view.cells[6]
+	var empty_center := empty_tile.get_global_transform_with_canvas() * (empty_tile.size * 0.5)
+	await move_mouse(empty_center + Vector2(12, 9))
+	await create_timer(0.09).timeout
+	expect(arrow.visible and arrow.valid and arrow.tip.is_equal_approx(arrow.rect_in_layer(empty_tile).get_center()),
+		"The legal movement arrow follows the pointer and settles at the center of the target cell")
+	await move_mouse(Vector2(1, 1))
+	expect(not arrow.visible and view.selected_square == 3 and battle.can_move_piece(),
+		"Leaving the board hides the arrow while preserving the source and action")
+	var key := InputEventKey.new()
+	key.keycode = KEY_TAB
+	key.pressed = true
+	root.push_input(key, true)
+	empty_tile.grab_focus()
+	await process_frame
+	await process_frame
+	expect(arrow.visible and arrow.valid and arrow.tip.is_equal_approx(arrow.rect_in_layer(empty_tile).get_center()),
+		"Keyboard focus previews a legal target even when the pointer is outside")
+	key = InputEventKey.new()
+	key.keycode = KEY_ESCAPE
+	key.pressed = true
+	root.push_input(key, true)
+	expect(view.selected_square == -1 and not arrow.visible and battle.can_move_piece(), "Escape cancels without moving")
+
+	view.cells[3].pressed.emit()
+	view.hand_buttons[0].pressed.emit()
+	var enemy := view.cells[5]
+	var blocked_point := enemy.get_global_transform_with_canvas() * (enemy.size * Vector2(0.62, 0.43))
+	await move_mouse(blocked_point)
+	expect(arrow.visible and not arrow.valid and view.hint.text == "路径被棋子挡住",
+		"An obstructed spell route shows the invalid arrow and explains the blocker")
+	enemy.pressed.emit()
+	expect(view.selected_card == 0 and battle.played_cards.is_empty() and battle.mana[Chess.PLAYER] == 2,
+		"Clicking a blocked target keeps the selected spell and resources")
+	var right := InputEventMouseButton.new()
+	right.position = blocked_point
+	right.button_index = MOUSE_BUTTON_RIGHT
+	right.pressed = true
+	root.push_input(right, true)
+	expect(view.selected_card == -1 and view.selected_square == -1 and not arrow.visible, "Right click cancels the spell")
+
+	view.cells[3].pressed.emit()
+	view.hand_buttons[1].pressed.emit()
+	empty_tile.pressed.emit()
+	expect(arrow.confirming and view.movement_effect != null and battle.board[6].leader and battle.can_move_piece(),
+		"Spell relocation plays while the confirmation arrow recedes and consumes only mana")
+	if view.movement_effect != null:
+		await view.movement_effect.finished
+	expect(not arrow.visible and not view.is_action_playing(), "The confirmation arrow does not remain after settlement")
+	view.queue_free()
+	await process_frame
+
+func check_healing_feedback() -> void:
+	var battle = fixture()
+	var hero: Dictionary = battle.board[10]
+	hero.hp -= 1
+	var partner: Dictionary = battle._piece(Cards.definition("lorne"), Chess.PLAYER)
+	partner.hp = 2
+	battle.board[6] = partner
+	battle.board[9] = battle._piece(Cards.definition("eve"), Chess.PLAYER)
+	battle.hands[Chess.PLAYER] = ["mend_spell", "mend_spell"]
+	battle.mana[Chess.PLAYER] = 2
+	battle.relic_ids = ["herbal_case"]
+	battle.draw_count = 0
+	var view := ChessView.new()
+	root.add_child(view)
+	view.setup(battle, null)
+	await process_frame
+	await process_frame
+	view.hand_buttons[0].pressed.emit()
+	var full := view.cells[9]
+	await move_mouse(full.get_global_transform_with_canvas() * (full.size * 0.5))
+	expect(view.aim_arrow.visible and not view.aim_arrow.valid and view.hint.text == "生命已满",
+		"Full health is an invalid target for a pure healing spell")
+	full.pressed.emit()
+	expect(view.selected_card == 0 and view.healing_effect == null and battle.mana[Chess.PLAYER] == 2,
+		"An invalid healing click preserves the spell and spends nothing")
+	view.cells[6].pressed.emit()
+	var effect := view.healing_effect
+	expect(effect != null and not effect.landed and partner.hp == 5 and view.cells[6].get_node("Health").get_child(0).text == "2",
+		"The healing rules settle immediately, while the tile keeps its old health until contact")
+	if effect != null:
+		await effect.contact
+		expect(effect.numbers[0].get_child(0).text == "生命 +3" and view.cells[6].get_node("Health").get_child(0).text == "5",
+			"Healing contact shows the actual relic-boosted amount and synchronizes the health badge")
+		await effect.released
+		expect(effect.visible and not view.end_turn_button.disabled and view.card_history.recent.text.contains("生命 +3"),
+			"The floating value lingers after controls and the card history become available")
+	view.reduce_movement = true
+	view.hand_buttons[0].pressed.emit()
+	view.cells[10].pressed.emit()
+	effect = view.healing_effect
+	expect(effect != null and effect.landed and effect.reduced and effect.numbers[0].get_child(0).text == "生命 +1" and hero.hp == hero.hp_max,
+		"Reduced motion still displays the capped amount when only one health point is missing")
+	if effect != null:
+		await effect.released
+	view.queue_free()
+	await process_frame
+
+	battle = fixture()
+	battle.turn = Chess.ENEMY
+	battle.hands[Chess.ENEMY] = ["mend_spell"]
+	battle.board[1].hp -= 1
+	view = ChessView.new()
+	root.add_child(view)
+	view.setup(battle, null)
+	await process_frame
+	var before: String = view.cells[1].get_node("Health").get_child(0).text
+	expect(battle.play(0, 1, Chess.ENEMY), "Enemy healing is a real card play")
+	view.present_action()
+	expect(view.pending_reveal and view.healing_effect == null and view.cells[1].get_node("Health").get_child(0).text == before,
+		"Enemy healing waits for the reveal and holds the previous health value")
+	if view.reveal_card != null:
+		await view.reveal_card.tree_exiting
+	effect = view.healing_effect
+	expect(effect != null and not view.pending_reveal and view.card_history.shown_count == 0,
+		"The enemy healing animation takes over before the card record updates")
+	if effect != null:
+		await effect.released
+	expect(view.card_history.recent.text.contains("生命 +1"), "The enemy card record contains the same actual recovery amount")
+	view.queue_free()
+	await process_frame
+
+	battle = fixture()
+	battle.hands[Chess.PLAYER] = ["camp_respite", "broth_card"]
+	battle.mana[Chess.PLAYER] = 5
+	battle.board[9] = partner.duplicate(true)
+	battle.board[9].hp = battle.board[9].hp_max - 3
+	battle.board[10].hp -= 1
+	battle.board[11] = battle._piece(Cards.definition("eve"), Chess.PLAYER)
+	expect(battle.play(0, 10), "A healing defense can target an entire row")
+	var card_healing: Dictionary = battle.take_healing()
+	expect(card_healing.get("restored", []).map(func(item): return [item.square, item.amount]) == [[9, 3], [10, 1]]
+		and battle.take_healing().is_empty(), "Area healing emits one actual amount for each healed unit and skips full units")
+	expect(battle.play(0, 10) and battle.take_healing().is_empty(), "A full-health armor grant does not show a +0 healing number")
+
 func check_hover_details() -> void:
 	var game := Main.instantiate()
 	root.add_child(game)
@@ -1439,6 +1591,8 @@ func execute() -> void:
 	await check_attack_feedback()
 	await check_spell_feedback()
 	await check_mobility_spells()
+	await check_target_arrow()
+	await check_healing_feedback()
 	check_movement_routes()
 	await check_enemy_movement()
 	await check_editor_draft()

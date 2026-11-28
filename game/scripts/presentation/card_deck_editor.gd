@@ -306,6 +306,7 @@ func _add_tile(id: String) -> void:
 
 func _render_tile_face(button: Button, id: String, card: Dictionary) -> void:
 	UI.clear(button)
+	UI.frame(button)
 	var content := VBoxContainer.new()
 	content.name = "Face"
 	UI.button_body(button, content, 8)
