@@ -28,6 +28,7 @@ func set_volume(value: float, persist: bool = true) -> void:
 	AudioServer.set_bus_volume_db(0, linear_to_db(maxf(0.0001, volume)))
 	if persist:
 		var settings = ConfigFile.new()
+		settings.load("user://settings.cfg")
 		settings.set_value("audio", "volume", volume)
 		settings.save("user://settings.cfg")
 

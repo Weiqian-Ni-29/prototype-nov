@@ -48,6 +48,7 @@ func execute() -> void:
 	game = Main.instantiate()
 	root.add_child(game)
 	await process_frame
+	game.reduce_chess_movement = false
 	game.run.save_path = "user://native-session.json"
 	game._start_new(false)
 	var r = game.run
@@ -87,6 +88,26 @@ func execute() -> void:
 	chess.cells[10].pressed.emit()
 	chess.cells[7].pressed.emit()
 	expect(b.turn == Chess.PLAYER and not b.can_move_piece(), "Moving leaves the player in control with their board action spent")
+	var step = chess.movement_effect
+	expect(step != null and not chess.cells[7].has_node("PieceFace") and chess.cells[6].text.is_empty(),
+		"The overlay clears old targets and draws just one solid moving chess piece")
+	if step != null:
+		chess.end_turn_button.pressed.emit()
+		expect(b.turn == Chess.PLAYER, "Ending the turn waits for the movement animation")
+		while is_instance_valid(step) and step.elapsed < 0.16:
+			await process_frame
+		if is_instance_valid(step) and not step.landed:
+			await RenderingServer.frame_post_draw
+			root.get_texture().get_image().save_png("user://chess-movement-travel.png")
+		while is_instance_valid(step) and not step.landed:
+			await process_frame
+		if is_instance_valid(step):
+			await RenderingServer.frame_post_draw
+			root.get_texture().get_image().save_png("user://chess-movement-landing.png")
+		if is_instance_valid(step) and chess.is_action_playing():
+			await step.finished
+	expect(chess.cells[7].has_node("PieceFace") and not chess.end_turn_button.disabled,
+		"The destination paints the final piece and restores player input after landing")
 	b.hands[Chess.ENEMY] = ["brace", "brace"]
 	b.mana[Chess.ENEMY] = 2
 	b.mana_capacity[Chess.ENEMY] = 2

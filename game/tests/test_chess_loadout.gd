@@ -105,7 +105,7 @@ func execute() -> void:
 	battle.board[7] = battle._piece(battle.definition("foe:archer"), Chess.ENEMY)
 	expect(4 not in battle.card_targets(0, spell_index), "A blocker stops a two-square spell")
 	battle.board[7] = {}
-	expect(battle.play(spell_index, 4) and enemy.armor == 0 and enemy.hp == old_hp - 1
+	expect(battle.play(spell_index, 4, Chess.PLAYER, 10) and enemy.armor == 0 and enemy.hp == old_hp - 1
 		and battle.board[10].leader and battle.can_move_piece(), "A spell resolves relic damage and armor without moving a piece")
 	var loaded := Run.new()
 	expect(loaded.load_game(run.save_path).ok and "ice_spell" in Cards.collection(loaded.data.actors, loaded.data),
