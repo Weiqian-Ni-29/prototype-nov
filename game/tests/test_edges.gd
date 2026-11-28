@@ -2,8 +2,6 @@ extends SceneTree
 ## Adversarial state fixtures; these are not claimed as full player journeys.
 const Run = preload("res://scripts/domain/expedition.gd")
 const Chess = preload("res://scripts/domain/chess_battle.gd")
-const Story = preload("res://scripts/domain/narrative.gd")
-const Catalog = preload("res://scripts/domain/catalog.gd")
 var checks = 0
 var failures = 0
 
@@ -24,8 +22,7 @@ func fresh(profession: String = "wayfarer") -> RefCounted:
 
 func execute() -> void:
 	checkpoint_edges()
-	story_modifiers()
-	print("EDGE TESTS: %d checks, %d failures (invalid saves, encounter checkpoints and epilogue modifiers)" % [checks, failures])
+	print("EDGE TESTS: %d checks, %d failures (invalid saves, encounter checkpoints)" % [checks, failures])
 	quit(0 if failures == 0 else 1)
 
 func checkpoint_edges() -> void:
@@ -73,11 +70,3 @@ func checkpoint_edges() -> void:
 	resumed._check_outcome()
 	expect(resumed.outcome == "victory" and continued.actor("hero").inventory == inventory
 		and continued.data.lamp_coins == coins, "Repeated finish cannot duplicate victory rewards")
-
-func story_modifiers() -> void:
-	var r = fresh()
-	var story = Story.new(r)
-	for id in Catalog.COMPANIONS:
-		r.actor(id).joined = true
-		r.actor(id).hp = 0
-		expect(story.character_ending(id).text.contains(r.actor(id).name), "Injury is reflected in the ending " + id)

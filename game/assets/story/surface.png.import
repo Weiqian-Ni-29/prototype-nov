@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://b5nuoi8np1xlb"
-path="res://.godot/imported/mevenna.webp-f8062ada147c3f99c6a4755dfd5fc83c.ctex"
+uid="uid://uf0q8ea8fbwn"
+path="res://.godot/imported/surface.png-eb77c73448c6a118527a3288cf32a83c.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/story/prologue/mevenna.webp"
-dest_files=["res://.godot/imported/mevenna.webp-f8062ada147c3f99c6a4755dfd5fc83c.ctex"]
+source_file="res://assets/story/surface.png"
+dest_files=["res://.godot/imported/surface.png-eb77c73448c6a118527a3288cf32a83c.ctex"]
 
 [params]
 

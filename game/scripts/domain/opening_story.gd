@@ -1,14 +1,4 @@
 extends RefCounted
 
-const DEPARTURE = "你醒了？我们在战场上找到你，你连名字都忘了。带上这副牌，沿鼓声走。"
-
-const VILLAGES = {
-	"plains": ["河边村庄", "human"],
-	"forest": ["林间村庄", "elf"],
-	"mountain": ["山间村庄", "dwarf"],
-	"desert": ["沙地村庄", "human"],
-	"swamp": ["水边村庄", "elf"],
-}
-
-static func village(terrain: String) -> Array:
-	return VILLAGES.get(terrain, VILLAGES.plains)
+const TITLE = "鲸肚里的酒馆"
+const DEPARTURE = "酒馆被鲸吞了。带上牌去找出口，账可以出去再结。"
