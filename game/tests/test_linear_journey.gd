@@ -172,8 +172,7 @@ func check_playable_route(game: Node) -> void:
 	var boss_count := 0
 	for i in Journey.STOPS:
 		var screen: Node = game.ui.get_node_or_null("JourneyScreen")
-		expect(screen != null and not game.view.visible and not game.view.is_processing_unhandled_input(),
-			"The default exploration surface is the journey, with map input disabled.")
+		expect(screen != null, "The journey is the default expedition screen.")
 		if screen == null:
 			return
 		expect(screen.find_children("JourneyChoice*", "Button", true, false).size() == (1 if i == Journey.STOPS - 1 else 3),
@@ -198,7 +197,8 @@ func check_playable_route(game: Node) -> void:
 				battle_count += 1
 			if not press_text(game.modal_layer, "开始战斗") or game.combat == null:
 				return
-			expect(game.combat.final_battle == (kind == "boss") and not game.view.visible, "The selected node enters the real card battle.")
+			expect(game.combat.final_battle == (kind == "boss") and game.ui.has_node("ChessBattle"),
+				"The selected node enters the real card battle.")
 			if kind == "boss":
 				expect(not game.combat.can_retreat(), "The final battle is terminal.")
 				game.combat.commanders[Chess.ENEMY].hp = 1

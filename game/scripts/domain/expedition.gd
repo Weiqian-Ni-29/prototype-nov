@@ -13,7 +13,7 @@ const SAVE_VERSION = 14
 const LEGACY_MAP_RADIUS = 8
 const REMOVED_WEATHER_CARDS = ["rain", "sun", "fog_spell"]
 const REMOVED_SUPPLIES = ["salve", "ether"]
-const STEPS_PER_DAY = 5
+const LEGACY_STEPS_PER_DAY = 5
 signal changed
 var data: Dictionary = {}
 var rng = RandomNumberGenerator.new()
@@ -403,59 +403,6 @@ func trade(id: String, item: String, buying: bool, voucher: String = "", amount:
 func reward_coins(_source: String, base: int) -> int:
 	return base
 
-func use_node(id: String, option: String) -> Dictionary:
-	var check = _node_access(id)
-	if not check.ok:
-		return check
-	var visitor = actor(id)
-	var cell: String = visitor.position
-	var node = node_at(cell)
-	if node.is_empty() or not node.result.is_empty():
-		return fail("这里的事件已经处理完毕。")
-	var message = ""
-	var items: Array[Dictionary] = []
-	match [node.kind, option]:
-		["supply", "collect"]:
-			var coins := int(node.coins)
-			data.lamp_coins += coins
-			items.append({"kind": "coins", "id": "lamp_coin", "count": coins})
-			message = "%s取得 %d 灯铢。" % [visitor.name, coins]
-			if node.has("gear_definition"):
-				var equipment := Items.add_gear(data, node.gear_definition, node.gear_quality, "actor", id)
-				items.append({"kind": "gear", "id": equipment, "count": 1})
-			elif node.has("item"):
-				var supply: String = node.item
-				visitor.inventory[supply] = int(visitor.inventory.get(supply, 0)) + 1
-				items.append({"kind": "item", "id": supply, "count": 1})
-		["cache", "search"]:
-			var relic = ""
-			if relic_sites.has(cell):
-				relic = str(investigate_relic(id).get("relic", ""))
-			else:
-				relic = roll_relic("field_cache:" + cell, Relics.DATA.keys(), 0.20, id, cell)
-			var uid: String = node.get("gear_uid", "")
-			if not uid.is_empty():
-				var instance = data.gear_instances[uid]
-				instance.owner = {"kind": "actor", "id": id}
-				node.erase("gear_uid")
-				items.append({"kind": "gear", "id": uid, "count": 1})
-				message = "%s 取得「%s」。" % [visitor.name, Gear.label(instance)]
-			else:
-				var item: String = node.item
-				visitor.inventory[item] = int(visitor.inventory.get(item, 0)) + 1
-				items.append({"kind": "item", "id": item, "count": 1})
-				message = "%s 取得%s ×1。" % [visitor.name, Catalog.item_name(item)]
-			if not relic.is_empty():
-				items.append({"kind": "relic", "id": relic, "count": 1})
-				message += " 发现遗器「%s」。" % Relics.DATA[relic].name
-		_:
-			return fail("这里现在做不了这件事。")
-	node.result = option
-	data.item_revision += 1
-	note(message)
-	changed.emit()
-	return {"ok": true, "message": message, "items": items}
-
 func has_relic(id: String) -> bool:
 	return int(data.relic_inventory.get(id, 0)) > 0 and Relics.is_active(id) and Relics.DATA[id].type == "P"
 
@@ -469,17 +416,6 @@ func passive_relic_ids() -> Array[String]:
 
 func relic_intro() -> Dictionary:
 	return data.relic_intros[0] if not data.relic_intros.is_empty() else {}
-
-func investigate_relic(id: String) -> Dictionary:
-	var check = _node_access(id)
-	if not check.ok:
-		return check
-	var position: String = actor(id).position
-	var source = "site:" + position
-	if not relic_sites.has(position) or data.relic_claims.has(source):
-		return fail("这里没有新的遗器线索。")
-	var relic = roll_relic(source, [relic_sites[position]], 0.25, id, position)
-	return {"ok": true, "relic": relic, "message": "从旧物中找到了「%s」。" % Relics.DATA[relic].name if not relic.is_empty() else "检查过了，这里没有还能带走的遗器。"}
 
 func relic_offer(source: String, candidates: Array, chance: float) -> String:
 	var active = candidates.filter(Relics.is_active)
@@ -511,7 +447,7 @@ func grant_relic(id: String, finder: String, position: String, npc: String = "",
 	if not Relics.is_active(id):
 		return false
 	var first = not data.relic_seen.has(id)
-	var unlocks_sight := id == "telescope" and not has_relic(id)
+	var unlocks_sight := not data.has("journey") and id == "telescope" and not has_relic(id)
 	data.relic_seen[id] = true
 	data.relic_inventory[id] = int(data.relic_inventory.get(id, 0)) + amount
 	data.item_revision += 1
@@ -553,61 +489,6 @@ func use_relic(user: String, id: String, _target: String = "") -> Dictionary:
 	data.relic_effect_flags.life_seed_applied = true
 	_remove_relic(id)
 	return _item_result("生命之种已启用：己方棋子的生命上限 +1。")
-
-func has_visited(position: String) -> bool:
-	return data.visited.has(position)
-
-func knows_encounter(position: String) -> bool:
-	var tile = data.tiles[position]
-	return (has_visited(position) or (position == data.boss and boss_known())) and tile.discovered_enemy and not tile.enemies.is_empty()
-
-func movement_preview(destination: String) -> Dictionary:
-	if data.status != "exploring" or not data.pending_battle.is_empty() or data.has("battle_shop"):
-		return fail("战斗或结算期间不能移动。")
-	var hero = actor("hero")
-	if hero.hp <= 0:
-		return fail("旅人重伤了，无法继续移动。")
-	var source: String = hero.position
-	if not data.tiles[source].enemies.is_empty() and source != data.boss:
-		return fail("敌人拦住了路。你可以迎战，也可以在战斗中撤退。")
-	if not Hex.is_land(data.tiles, destination):
-		return fail("湖面无法通行，请沿湖岸绕行。" if data.tiles.has(destination) else "请选择有效地块。")
-	if destination not in Hex.neighbors(source, data.tiles):
-		return fail("每次只能走一格。")
-	return {"ok": true, "encounter": knows_encounter(destination), "source": source}
-
-func remaining_steps() -> int:
-	return STEPS_PER_DAY - int(data.steps_today)
-
-func move(destination: String) -> Dictionary:
-	if data.has("journey"):
-		return fail("请在途中抉择中选择接下来的路。")
-	var preview = movement_preview(destination)
-	if not preview.ok:
-		return preview
-	_relocate_party(destination)
-	data.steps_today += 1
-	if data.steps_today == STEPS_PER_DAY:
-		_advance_day()
-	reveal(destination)
-	data.route_records.clear()
-	for threshold in [20, 60, 100]:
-		if data.visited.size() >= threshold:
-			roll_relic("explore:" + str(threshold), Relics.DATA.keys(), 1.0, "hero", destination)
-	var t = data.tiles[destination]
-	if not t.npc.is_empty() and actor(t.npc).position == destination:
-		data.story[t.npc].met = true
-	var encounter = not t.enemies.is_empty()
-	if encounter:
-		var surprise = not preview.encounter
-		var ambush = t.hidden and surprise
-		t.discovered_enemy = true
-		data.pending_battle = {"position": destination, "ambush": ambush, "surprise": surprise, "origin": preview.source, "npc": ""}
-		note("隐蔽处的敌人发动伏击！" if ambush else "抵达遭遇地点，可以准备卡组迎战。")
-	else:
-		note("抵达%s。" % Catalog.terrain_name(t.terrain))
-	changed.emit()
-	return {"ok": true, "battle": encounter, "pending": data.pending_battle.duplicate(true)}
 
 func join_companion(id: String, recruiter_id: String = "") -> Dictionary:
 	if not data.actors.has(id) or id == "hero":
@@ -765,33 +646,6 @@ func equip(id: String, uid: String) -> Dictionary:
 	a.equipment[slot] = "" if a.equipment[slot] == uid else uid
 	return _item_result("已更新装备。")
 
-func collect(id: String) -> Dictionary:
-	var check = _map_action(id)
-	if not check.ok:
-		return check
-	var a = actor(id)
-	var t = data.tiles[a.position]
-	if t.quantity <= 0 and node_at(a.position).kind == "supply":
-		return use_node(id, "collect")
-	if not t.enemies.is_empty() or t.quantity <= 0:
-		return fail("这里没有安全可采集的道具。")
-	var amount = int(t.quantity) + (1 if id == "cen" and t.terrain == "forest" else 0)
-	a.inventory[t.resource] = int(a.inventory.get(t.resource, 0)) + amount
-	t.quantity = 0
-	data.item_revision += 1
-	var message = "%s 收集了%s ×%d。" % [a.name, Catalog.item_name(t.resource), amount]
-	note(message)
-	changed.emit()
-	return {"ok": true, "message": message, "items": [{"kind": "item", "id": t.resource, "count": amount}]}
-
-func _advance_day() -> void:
-	data.day += 1
-	data.steps_today = 0
-	for key in data.item_effect_counts.keys():
-		if str(key).begins_with("uphill_ready:") or ":day:" in str(key) or str(key).begins_with("day:"):
-			data.item_effect_counts.erase(key)
-	note("第 %d 天。" % data.day)
-
 func check_global_failure() -> bool:
 	for id in joined_ids():
 		if actor(id).hp > 0:
@@ -814,25 +668,6 @@ func exploration_percent() -> int:
 	if data.has("journey"):
 		return 100 if data.status == "won" else floori(100.0 * int(data.journey.step) / (Journey.STOPS - 1))
 	return floori(100.0 * data.explored.size() / maxi(1, data.tiles.size()))
-
-func pending_chapter() -> int:
-	var chapter = int(data.chapter)
-	if data.status == "exploring" and chapter < 4 and exploration_percent() >= (chapter + 1) * 20:
-		return chapter + 1
-	return 0
-
-func finish_chapter(chapter: int) -> void:
-	if chapter != pending_chapter():
-		return
-	data.chapter = chapter
-	if chapter == 2:
-		actor("hero").ultimate = "gravity_wave"
-		note("你记起了怎样把周围的敌人一并压向地面。")
-	if chapter == 4:
-		data.tiles[data.boss].enemies = ["war_god"]
-		data.tiles[data.boss].discovered_enemy = true
-		data.explored[data.boss] = true
-		note("战神的位置已标在地图上。")
 
 func _map_action(id: String) -> Dictionary:
 	if data.is_empty() or data.status != "exploring" or not data.pending_battle.is_empty():
@@ -1195,7 +1030,7 @@ func _validate_save(loaded: Dictionary) -> String:
 		return "剧情进度无效"
 	if not loaded.log is Array or not _whole_number(loaded.day) or int(loaded.day) < 1 or not str(loaded.rng_state).is_valid_int():
 		return "日期或随机状态无效"
-	if int(loaded.version) >= 5 and (not _whole_number(loaded.get("steps_today")) or loaded.steps_today < 0 or loaded.steps_today >= STEPS_PER_DAY):
+	if int(loaded.version) >= 5 and (not _whole_number(loaded.get("steps_today")) or loaded.steps_today < 0 or loaded.steps_today >= LEGACY_STEPS_PER_DAY):
 		return "当日步数无效"
 	var spells: Variant = loaded.get("spell_collection", [])
 	if not spells is Array or spells.any(func(spell): return spell not in Cards.UNLOCKABLE_SPELLS) or spells.any(func(spell): return spells.count(spell) > 1):
