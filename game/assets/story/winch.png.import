@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cmyqex57m83oe"
-path="res://.godot/imported/war-and-gods.webp-6e377d4732da2d07db080186f946241a.ctex"
+uid="uid://bt81k16us2ghy"
+path="res://.godot/imported/winch.png-236abec54bdb34e62169a4b49f86845c.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/ui/codex/war-and-gods.webp"
-dest_files=["res://.godot/imported/war-and-gods.webp-6e377d4732da2d07db080186f946241a.ctex"]
+source_file="res://assets/story/winch.png"
+dest_files=["res://.godot/imported/winch.png-236abec54bdb34e62169a4b49f86845c.ctex"]
 
 [params]
 

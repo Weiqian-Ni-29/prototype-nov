@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://kdq4bcikaeg3"
-path="res://.godot/imported/dragon.webp-606ed130dd1c6487914ee9472ca8d251.ctex"
+uid="uid://drmohgd6qpgok"
+path="res://.godot/imported/winch.png-f808475c9de33d9fc9f8edc2b5b9c7ff.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/story/prologue/dragon.webp"
-dest_files=["res://.godot/imported/dragon.webp-606ed130dd1c6487914ee9472ca8d251.ctex"]
+source_file="res://assets/portraits/enemies/winch.png"
+dest_files=["res://.godot/imported/winch.png-f808475c9de33d9fc9f8edc2b5b9c7ff.ctex"]
 
 [params]
 

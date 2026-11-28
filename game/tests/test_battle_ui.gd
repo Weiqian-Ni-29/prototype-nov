@@ -926,14 +926,16 @@ func check_ui() -> void:
 		game.queue_free()
 		return
 	var initial_deck: Array = editor.deck.duplicate()
-	expect(editor.cost_bars[0].value == 5 and editor.cost_bars[0].max_value == 5
-		and editor.cost_bars[1].value == 5 and editor.cost_bars[1].max_value == 5
-		and editor.cost_bars[2].value == 4 and editor.cost_bars[3].value == 1,
-		"The default fifteen cards are counted at their real costs")
-	var sorted_costs: Array = []
+	expect(editor.cost_bars.map(func(bar): return int(bar.value)) == [5, 4, 3, 2, 1, 1, 1, 1, 1, 1]
+		and editor.cost_bars.all(func(bar): return bar.max_value == 5),
+		"The twenty starter cards populate all ten cost bars")
+	var displayed_costs: Array[int] = []
 	for row in editor.slots.get_children():
-		sorted_costs.append(int(row.find_child("CardCost", true, false).get_child(0).text))
-	expect(sorted_costs == [1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 4], "Deck rows sort the entire starter deck by cost")
+		displayed_costs.append(int(row.find_child("CardCost", true, false).get_child(0).text))
+	var sorted_costs := displayed_costs.duplicate()
+	sorted_costs.sort()
+	expect(displayed_costs == sorted_costs and displayed_costs.size() == initial_deck.size(),
+		"Deck rows sort the entire starter deck by cost")
 	expect(editor.cost_buttons.size() == 11 and editor.cost_buttons.back().text == "10+"
 		and editor.cost_bars.size() == 10 and editor._cost_bucket(11) == 10,
 		"All and ten cost slots match the ten chart buckets, with 10+ grouping higher costs")
@@ -942,11 +944,12 @@ func check_ui() -> void:
 		var cards: Array[Node] = editor.grid.get_children()
 		expect(cards.size() >= 2 and cards.all(func(button): return ("%d 费" % cost) in button.accessibility_name),
 			"Clicking cost %d shows the owned cards at that cost" % cost)
+	await click(editor.find_child("Collection_lantern_vigil", true, false))
 	await click(editor.add_button)
-	expect(editor.deck.count("sunforge_flare") == 1 and editor.cost_bars[9].value == 1,
+	expect(editor.deck.count("lantern_vigil") == 1 and editor.cost_bars[9].value == 2,
 		"Adding the displayed ten-cost card updates the last chart bar")
-	await click(editor.find_child("Remove_sunforge_flare", true, false))
-	expect(editor.deck == initial_deck and editor.cost_bars[9].value == 0, "Removing the ten-cost card empties the last chart bar")
+	await click(editor.find_child("Remove_lantern_vigil", true, false))
+	expect(editor.deck == initial_deck and editor.cost_bars[9].value == 1, "Removing the added card restores the last chart bar")
 	await click(editor.find_child("ClearCardFilters", true, false))
 	editor.search.text = "选一枚受伤的友方棋子，回复 2 点生命"
 	editor.search.text_changed.emit(editor.search.text)
@@ -985,7 +988,7 @@ func check_ui() -> void:
 		"Dropping onto a deck row updates the card, deck, and distribution together")
 	await click(editor.find_child("AddDeckCard", true, false))
 	var capped := editor.find_child("AddDeckCard", true, false) as Button
-	expect(editor.total.text == "17 张" and capped != null and capped.disabled and ice.has_focus(),
+	expect(editor.total.text == "22 张" and capped != null and capped.disabled and ice.has_focus(),
 		"The editor adds cards and still enforces the per-card limit")
 	await drag_card(ice, editor.deck_scroll)
 	expect(editor.deck.count("ice_spell") == 2 and "同名上限" in editor.error.text,
@@ -996,7 +999,7 @@ func check_ui() -> void:
 		"Removing a copy updates the detail and distribution without disturbing the current filters")
 	await click(editor.find_child("ConfirmCardDeck", true, false))
 	var saved := Run.new()
-	expect(saved.load_game(game.run.save_path).ok and saved.card_deck().size() == 16 and saved.card_deck().count("ice_spell") == 1,
+	expect(saved.load_game(game.run.save_path).ok and saved.card_deck().size() == 21 and saved.card_deck().count("ice_spell") == 1,
 		"The edited deck persists in the expedition save")
 	var cell: String = game.run.actor("hero").position
 	game.run.data.tiles[cell].enemies = ["boar"]
@@ -1009,8 +1012,8 @@ func check_ui() -> void:
 	if view != null:
 		expect(root.get_visible_rect().encloses(view.get_global_rect()) and view.cells.size() == 12 and view.hand_buttons.size() == 3,
 			"Board fits the viewport with twelve squares and a three-card opening hand")
-		expect(game.combat.piles[Chess.PLAYER].size() == 13 and game.combat.piles[Chess.ENEMY].size() == 9,
-			"The battle uses the saved sixteen-card deck and the usual twelve enemy cards")
+		expect(game.combat.piles[Chess.PLAYER].size() == 18 and game.combat.piles[Chess.ENEMY].size() == 9,
+			"The battle uses the saved twenty-one-card deck and the usual twelve enemy cards")
 		expect(view.enemy_cards.text == "手牌 3\n牌库 9" and view.enemy_mana_ratio.text == "1/1"
 			and view.enemy_deck_back.visible, "The rail shows the opponent's opening resources without showing card faces")
 		var grid := view.find_child("ChessGrid", true, false) as GridContainer

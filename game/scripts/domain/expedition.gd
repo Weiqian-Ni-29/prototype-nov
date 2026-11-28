@@ -9,7 +9,7 @@ const Gear = preload("res://scripts/domain/gear_catalog.gd")
 const Items = preload("res://scripts/domain/expedition_items.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const Journey = preload("res://scripts/domain/journey.gd")
-const SAVE_VERSION = 14
+const SAVE_VERSION = 15
 const LEGACY_MAP_RADIUS = 8
 const REMOVED_WEATHER_CARDS = ["rain", "sun", "fog_spell"]
 const REMOVED_SUPPLIES = ["salve", "ether"]
@@ -58,9 +58,7 @@ func new_run(seed_value: int, profession: String, use_journey: bool = false) -> 
 	reveal(generated.start)
 	if use_journey:
 		Journey.begin(self)
-		note("村民把卡牌和补给交给你。你带着它们出了村，沿路打听战鼓的来处。")
-	else:
-		note("村民交给你一副卡牌，还给你备好了路上的补给。你想到附近走走，看有没有人认得你，能不能想起自己的名字。")
+	note("酒馆被鲸吞了。你拿上牌去找出口。")
 
 func migrate_to_journey() -> Dictionary:
 	if data.has("journey"):
@@ -278,7 +276,7 @@ func _initialize_nodes(rebalance: bool = false, opening_route: Array = [], openi
 	cells.sort()
 	for cell in cells:
 		var tile = data.tiles[cell]
-		var title: String = "村庄" if tile.site == "start" else Nodes.story(node_at(cell)).get("location", Catalog.terrain_name(tile.base_terrain))
+		var title: String = "酒馆" if tile.site == "start" else Nodes.story(node_at(cell)).get("location", Catalog.terrain_name(tile.base_terrain))
 		if not by_title.has(title):
 			by_title[title] = []
 		by_title[title].append(cell)
@@ -292,7 +290,7 @@ func node_at(cell: String) -> Dictionary:
 
 func location_name(cell: String) -> String:
 	if cell == data.boss and boss_known():
-		return "战神卡德兰"
+		return "捕鲸机"
 	return location_names.get(cell, Catalog.terrain_name(data.tiles[cell].terrain))
 
 func _node_access(id: String) -> Dictionary:
@@ -822,7 +820,7 @@ func load_game(path: String = "") -> Dictionary:
 	if json.parse(FileAccess.get_file_as_string(path)) != OK or not json.data is Dictionary:
 		return fail("存档损坏了，原来的文件还在。")
 	var loaded: Dictionary = json.data
-	if not _whole_number(loaded.get("version", -1)) or int(loaded.version) not in [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, SAVE_VERSION] or not loaded.has_all(["actors", "tiles", "rng_state", "day", "explored", "status"]):
+	if not _whole_number(loaded.get("version", -1)) or int(loaded.version) not in [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, SAVE_VERSION] or not loaded.has_all(["actors", "tiles", "rng_state", "day", "explored", "status"]):
 		return fail("存档版本不兼容，或者进度记录不完整。")
 	if int(loaded.version) >= 4 and (not loaded.get("relic_seen") is Dictionary or not loaded.get("nodes") is Dictionary):
 		return fail("遗器发现记录无效。")
@@ -861,6 +859,8 @@ func load_game(path: String = "") -> Dictionary:
 	var restore_relic_sight: bool = old_attunement is Array and not old_attunement.has("telescope")
 	loaded.erase("relic_attunement")
 	loaded.erase("weather")
+	if int(loaded.version) < 15:
+		_migrate_story(loaded)
 	loaded.version = SAVE_VERSION
 	data = loaded
 	data.merge({"spell_collection": []})
@@ -900,6 +900,26 @@ func load_game(path: String = "") -> Dictionary:
 	rng.state = int(data.rng_state)
 	changed.emit()
 	return success()
+
+func _migrate_story(loaded: Dictionary) -> void:
+	loaded.actors.hero.name = "旅人"
+	loaded.flags.erase("hero_identity_revealed")
+	for id in Catalog.COMPANIONS:
+		loaded.actors[id].name = Catalog.COMPANIONS[id].name
+		loaded.actors[id].title = Catalog.COMPANIONS[id].title
+		if loaded.story.has(id):
+			loaded.story[id].erase("personal_choice")
+			loaded.story[id].erase("codex_past_read")
+	var receipt: Dictionary = loaded.get("pending_story_rewards", {})
+	if receipt.get("kind") == "starter_deck" or receipt.get("source") == "村庄":
+		receipt.kind = "starter_deck"
+		receipt.source = "酒馆老板"
+	var victory: Dictionary = loaded.get("pending_victory", {})
+	if victory.has("opponent") and (loaded.status == "won" or Journey.current(loaded).get("kind") == "boss"):
+		victory.opponent = Catalog.ENEMIES.war_god.name
+	for entry in loaded.get("journey", {}).get("history", []):
+		if entry.settled:
+			entry.text = "绞盘停了。鲸张开了嘴。" if entry.kind == "boss" and loaded.status == "won" else "已结算。"
 
 func _remove_battle_weather(loaded: Dictionary) -> void:
 	if loaded.get("card_deck") is Array:
@@ -1179,7 +1199,7 @@ func _validate_save(loaded: Dictionary) -> String:
 				return "角色图鉴记录无效"
 			if loaded.story[id].has("personal_choice"):
 				var choice = loaded.story[id].personal_choice
-				var god_choice = Catalog.COMPANIONS[id].race == "神" and choice in ["god_a", "god_b"]
+				var god_choice = id in ["seasons", "earth_god", "sky_god"] and choice in ["god_a", "god_b"]
 				if choice not in ["personal_a", "personal_b", "war_a", "war_b", "war2_a", "war2_b", "journey_a", "journey_b"] and not god_choice:
 					return "个人抉择记录无效"
 	if not loaded.pending_battle.is_empty():

@@ -60,9 +60,9 @@ func execute() -> void:
 			partners.append(id)
 		if card.has("relocate"):
 			mobility.append(id)
-	expect(curve == {1: 5, 2: 5, 3: 4, 4: 1}
+	expect(curve == {1: 5, 2: 4, 3: 3, 4: 2, 5: 1, 6: 1, 7: 1, 8: 1, 9: 1, 10: 1}
 		and partners == ["highdrake", "oathguard", "lorne", "eve"]
-		and mobility == ["tailwind_spell", "sidestep_spell"], "The new deck has four partners, two movement spells and a low-cost curve")
+		and mobility == ["tailwind_spell", "sidestep_spell"], "The starter deck covers all ten mana costs and includes four partners and two movement spells")
 	expect(Cards.valid_deck(deck, run.data.actors, true, run.data) and "ice_spell" not in owned,
 		"The entire starter deck is owned and ice remains an unlock")
 	var blade_id: String = "gear:" + run.actor("hero").equipment.weapon

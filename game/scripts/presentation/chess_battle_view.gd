@@ -205,7 +205,7 @@ func setup(model: RefCounted, scene: Texture2D, reduced_motion: bool = false) ->
 	render()
 
 func _show_turn_banner() -> void:
-	if not battle.outcome.is_empty() or battle.reveal_pending:
+	if not battle.outcome.is_empty():
 		turn_banner.hide()
 		return
 	if displayed_turn == battle.turn:

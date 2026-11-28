@@ -12,15 +12,6 @@ const TABS = ["概览", "装备", "棋子", "故事"]
 const GRID_COLUMNS = 5
 const SLOT_NAMES = {"weapon": "武器", "armor": "护甲", "accessory": "饰品"}
 const STAT_NAMES = {"attack": "攻击", "defense": "防御", "speed": "速度"}
-const BACKDROP_ATLASES = {
-	"journey": ["hero", "ember", "tide", "frost_archer", "storm_caller", "stone_guard"],
-	"allegiances": ["ironforge", "granite", "mistleaf", "ashhorn", "oathguard", "cloudscale"],
-	"war-and-gods": ["fieldmedic", "siltguard", "seasons", "earth_god", "sky_god", "snowforge"],
-}
-const STORY_BACKDROPS = {
-	"cen": "ruins", "lorne": "wetlands", "eve": "village_plains", "grit": "cover",
-	"wind_runner": "road", "willow": "woodland", "highdrake": "highland", "longroad": "drylands",
-}
 
 var game: Node
 var state: Dictionary
@@ -241,8 +232,6 @@ func _status(id: String) -> String:
 func _name_for(id: String) -> String:
 	if not _known(id):
 		return "？？？"
-	if id == "hero":
-		return "伊文洛" if game.narrative.hero_identity_known() else "旅人"
 	return game.run.actor(id).name
 
 func _render_roster() -> void:
@@ -440,19 +429,7 @@ func _fit_portrait() -> void:
 		portrait.position = Vector2((frame_size.x - portrait.size.x) * 0.5, 0)
 
 func _character_backdrop(id: String) -> Texture2D:
-	if id in STORY_BACKDROPS:
-		return load("res://assets/story/" + STORY_BACKDROPS[id] + ".png")
-	for name in BACKDROP_ATLASES:
-		var index: int = BACKDROP_ATLASES[name].find(id)
-		if index >= 0:
-			var sheet: Texture2D = load("res://assets/ui/codex/" + name + ".webp")
-			var tile = Vector2(sheet.get_size()) / Vector2(3, 2)
-			var region = AtlasTexture.new()
-			region.atlas = sheet
-			region.region = Rect2(Vector2(index % 3, floori(float(index) / 3.0)) * tile, tile)
-			region.filter_clip = true
-			return region
-	return null
+	return game._story_texture("tavern" if id == "hero" else "belly")
 
 func _set_tab(index: int) -> void:
 	state.tab = index
@@ -476,21 +453,7 @@ func _set_tab(index: int) -> void:
 
 func _overview(id: String) -> void:
 	var actor: Dictionary = game.run.actor(id)
-	var race = str(actor.get("race", "身份未明"))
-	var title = str(actor.get("title", ""))
-	if id == "hero":
-		var revealed: bool = game.narrative.hero_identity_known()
-		race = "神" if revealed else "身份未明"
-		title = "死神" if revealed else "旅人"
-	elif race == "神":
-		title += "的化身"
-	game._text(details, title + " · " + race, 19, game.gold)
-	var introduction = "在村庄醒来的旅人，会用重力魔法。" if id == "hero" else "在这次远征中遇见的伙伴。"
-	if id == "hero" and game.narrative.hero_identity_known():
-		introduction = "想起自己姓名和来历的死神，能用重力引渡亡魂。"
-	elif id != "hero" and game.run.data.story[id].get("codex_past_read", false):
-		introduction = game.narrative.CHARACTER_BEHAVIOR[id][0]
-	game._text(details, introduction, 16)
+	game._text(details, str(actor.title), 19, game.gold)
 	if not actor.joined:
 		return
 	game._text(details, "当前状态", 19, game.gold)
@@ -515,8 +478,6 @@ func _piece(id: String) -> void:
 	game._text(details, "主战者 · 开局登场" if id == "hero" else "伙伴 · 部署至己方半场", 18, game.gold)
 	UI.label(details, Cards.stats(piece), 16, UI.MUTED, true)
 	game._text(details, piece.trait, 16)
-	if id == "cen":
-		game._text(details, "森林采集时多拿一份。", 16)
 	if id != "hero":
 		_breakthroughs(id)
 
@@ -551,17 +512,8 @@ func _breakthroughs(id: String) -> void:
 		upgrade.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 func _stories(id: String) -> void:
-	if id != "hero" and game.run.actor(id).joined and game.run.data.status == "exploring" \
-			and game.narrative.encounter_intro(game.selected_id, id).ok:
-		game._button(footer, "交谈", game._talk.bind(id)).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var records: Array = game.narrative.character_records(id)
-	for record in records:
-		game._text(details, record.title, 18, game.gold)
-		var body: String = record.get("body", "")
-		if body.is_empty():
-			game._text(details, record.hint, 15, game.muted)
-		else:
-			game._button(details, "阅读 · " + record.title, game._read_character_record.bind(id, record))
+	for record in game.narrative.character_records(id):
+		game._text(details, record.body, 16)
 
 func _select_style(button: Button, selected: bool) -> void:
 	button.set_pressed_no_signal(selected)

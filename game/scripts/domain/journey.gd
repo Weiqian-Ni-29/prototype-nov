@@ -4,6 +4,7 @@ const Catalog = preload("res://scripts/domain/catalog.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
 
 const STOPS = 7
+# Encounter keys are stable so existing routes keep their order when loaded.
 const FINAL = "war_camp"
 const STAKES = ["低赌注", "中赌注", "高赌注"]
 const SCALES = [0.6, 1.0, 1.6]
@@ -13,7 +14,7 @@ const POOLS = [
 	{"elite": 40, "battle": 30, "chest": 30},
 ]
 const LABELS = {"battle": "战斗", "elite": "精英战斗", "chest": "宝箱", "shop": "商店",
-	"rest": "休整", "event": "事件", "boss": "终点 · 卡德兰"}
+	"rest": "休整", "event": "事件", "boss": "终点 · 捕鲸机"}
 const BATTLES = ["battle", "elite", "boss"]
 
 const CHAPTERS = [
@@ -22,20 +23,19 @@ const CHAPTERS = [
 	["camp", "aqueduct", "breach", "burial_road"],
 ]
 const ENCOUNTERS = {
-	"valley": ["风过谷口", "highland", "谷口的枯松倒了，雾还没散。", ["绕开枯松", "跨过树干", "下到谷底"]],
-	"kiln": ["废窑余温", "ruins", "废窑的门歪了，摸上去还暖。", ["沿窑墙走", "穿过窑院", "爬上窑坡"]],
-	"ford": ["无名渡口", "wetlands", "河面那根麻绳快被水淹没了。", ["沿岸绕行", "拉绳涉水", "跳石过河"]],
-	"woods": ["林里的回声", "woodland", "树林深处传来三声敲击。", ["走林边", "循声进林", "拨开藤条"]],
-	"ridge": ["鹿脊山道", "highland", "窄山道外，谷底响起一声闷响。", ["贴着山壁走", "翻过矮脊", "滑下碎石坡"]],
-	"belltower": ["半截钟楼", "ruins", "半截钟楼横在路中。", ["沿街绕行", "穿过门洞", "翻过断梁"]],
-	"quarry": ["断石坡", "drylands", "石粉盖住了坡下的脚印。", ["绕过石坡", "循脚印下坡", "钻过石缝"]],
-	"reedbed": ["白苇滩", "wetlands", "水中的木桩只露出半截。", ["绕过苇滩", "踩木桩过水", "沿水道穿苇丛"]],
-	"camp": ["荒营的火盆", "drylands", "荒营只剩冷火盆，前方还有鼓声。", ["绕过营墙", "穿过营门", "跑下土坡"]],
-	"aqueduct": ["高渠之下", "ruins", "破石渠在头顶漏水，鼓声盖住了水声。", ["沿渠边走", "穿过石拱", "爬上石渠"]],
-	"breach": ["缺口里的灯", "road", "外墙缺口里有一盏快熄的灯。", ["沿墙绕行", "提灯进缺口", "踩木板翻墙"]],
-	"burial_road": ["埋旗的路", "woodland", "路边插着一排旧旗，林尽头有红光。", ["走林边", "沿车道走", "穿林去看红光"]],
-	FINAL: ["战鼓台", "finale", "卡德兰敲响战鼓，伤兵重新举刀。",
-		["走上鼓台，迎战卡德兰"]],
+	"valley": ["翻倒的桌子", "tavern", "桌脚泡在水里。门外漂着几块木板。", ["沿吧台走", "踩着桌子过去", "跳上漂走的木板"]],
+	"kiln": ["酒窖漏水", "tavern", "水从酒窖门缝里往外冒。", ["沿楼梯上去", "拉开酒窖门", "钻进送酒的滑道"]],
+	"ford": ["漂走的酒桶", "belly", "几只空桶碰在一起，最大的那只正漂走。", ["踩稳木板", "拉住酒桶", "跳上最大的桶"]],
+	"woods": ["柜子在响", "tavern", "一只泡湿的柜子里传来敲门声。", ["绕过柜子", "把柜门打开", "撬开底板"]],
+	"ridge": ["斜着的甲板", "belly", "一艘断成两截的船斜靠在旁边。", ["沿船舷绕行", "翻上甲板", "滑进破船舱"]],
+	"belltower": ["旧船铃", "belly", "水一晃，船铃就响一声。", ["从铃下走过", "拉一下铃绳", "顺着桅杆往上爬"]],
+	"quarry": ["泡烂的货箱", "belly", "一排箱子挡住了路，里面有东西在动。", ["绕过箱子", "撬开一只箱子", "踩着箱盖往前跳"]],
+	"reedbed": ["打结的渔网", "belly", "渔网挂在断桅上，网里的东西还在扑腾。", ["绕过渔网", "割开一个口", "从网底钻过去"]],
+	"camp": ["浮板上的锅", "belly", "有人在浮板上煮汤，锅盖跟着水声打拍子。", ["沿着浮板走", "过去问路", "抢在水涌来前跳过去"]],
+	"aqueduct": ["绷紧的缆绳", "belly", "一根缆绳通向亮处，另一头看不清。", ["贴着残船走", "沿缆绳往前拉", "松开绳结跟着水走"]],
+	"breach": ["漏光的缝", "winch", "前面漏进一道光，水流一下比一下急。", ["等水流变慢", "抓着断桨过去", "顺水冲进亮处"]],
+	"burial_road": ["拖着走的铁链", "winch", "铁链擦过船板，前面传来绞盘声。", ["避开铁链", "踩着链环过去", "抓住铁链顺势滑行"]],
+	FINAL: ["卡住的捕鲸机", "winch", "老捕鲸机卡在鲸嘴边，绞盘还在转。", ["打断绞盘"]],
 }
 
 static func begin(run: RefCounted) -> void:
@@ -205,10 +205,10 @@ static func _resolve(run: RefCounted, kind: String, roller: RandomNumberGenerato
 		"rest":
 			var restoration := _scaled(roundi(hero.hp_max * 0.25), stakes)
 			hero.hp = mini(int(hero.hp_max), int(hero.hp) + restoration)
-			message = "队伍在背风处休息。"
+			message = "你扶正两张湿椅子，坐下歇了一会儿。"
 		"chest":
 			data.lamp_coins += _scaled(roller.randi_range(7, 11), stakes)
-			message = "箱里有一袋灯铢。"
+			message = "湿货箱里有一袋灯铢。"
 			var source := "journey:chest:%d" % int(data.journey.step)
 			var relic := _grant_relic(run, source, run.relic_offer(source, Relics.DATA.keys(), 0.25 * SCALES[stakes]))
 			if not relic.is_empty():
@@ -229,11 +229,9 @@ static func _event(run: RefCounted, roller: RandomNumberGenerator, stakes: int) 
 				var companion: Dictionary = run.actor(id)
 				companion.position = hero.position
 				var result: Dictionary = run.join_companion(id, "hero")
-				var added_card: bool = run.add_companion_card(id)
+				run.add_companion_card(id)
 				data.item_revision += 1
-				var message := "%s决定与你同行。" % companion.name
-				if added_card:
-					message += "伙伴牌已加入卡组。"
+				var message := "你拉起落水的%s。对方决定一起找出口。" % companion.name
 				if not result.relic.is_empty():
 					_dismiss_intro(data, result.relic)
 					message += " 你还获得了遗器「%s」。" % Relics.DATA[result.relic].name
@@ -242,14 +240,14 @@ static func _event(run: RefCounted, roller: RandomNumberGenerator, stakes: int) 
 			hero.hp = maxi(0, int(hero.hp) - _scaled(roundi(hero.hp_max * 0.16), stakes))
 			if hero.hp == 0:
 				data.status = "failed"
-				data.flags.failure_reason = "旅人在途中跌伤，再也没能站起来。"
+				data.flags.failure_reason = "你落了水，没能爬回木筏。"
 				return data.flags.failure_reason
-			return "脚下落石，你摔伤了。"
+			return "浮板翻了，你撞伤了胳膊。"
 		2:
 			data.lamp_coins = maxi(0, int(data.lamp_coins) - _scaled(5, stakes))
-			return "钱袋破了，漏掉几枚灯铢。"
+			return "钱袋落水，几枚灯铢沉了下去。"
 	data.lamp_coins += _scaled(5, stakes)
-	return "你捡回孩子的布鞋，他家人给了几枚灯铢。"
+	return "你捞起一桶酒，桶主给了你几枚灯铢。"
 
 static func _grant_relic(run: RefCounted, source: String, offer: String) -> String:
 	var relic: String = run.claim_relic_reward(source, offer, "hero", run.actor("hero").position)

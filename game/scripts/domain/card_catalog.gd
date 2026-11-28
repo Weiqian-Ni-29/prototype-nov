@@ -14,7 +14,8 @@ const LEGACY_STARTER_SPELLS = ["ember_spell", "mend_spell"]
 const STARTER_SPELLS = LEGACY_STARTER_SPELLS + ["tailwind_spell", "sidestep_spell"]
 const STARTER_PARTNERS = ["highdrake", "oathguard", "lorne", "eve"]
 const DEFAULT_DECK = ["brace"] + STARTER_SPELLS + STARTER_PARTNERS + [
-	"pike", "ward", "thin_frost", "charm", "stone_shard", "ironbark_guard",
+	"pike", "thin_frost", "charm", "furnace_surge", "ironbark_guard",
+	"firebreak", "frost_tide", "camp_spring", "thunderstrike", "deepwater_refuge", "sunforge_flare",
 ]
 const LEGACY_STARTERS = {"highdrake": "support_vanguard", "lorne": "support_archer", "eve": "support_medic",
 	"oathguard": "support_guard", "ember": "support_caster"}
