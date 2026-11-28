@@ -914,7 +914,7 @@ func _deck_dialog(encounter: bool = false, back_to_rewards: Callable = Callable(
 		if pending.ambush:
 			opponent += " · 伏击先手"
 	var back := "返回奖励" if back_to_rewards.is_valid() else "返回旅途" if run.data.has("journey") else ""
-	editor.setup(run.data.actors, run.card_deck(), encounter, opponent, run, back)
+	editor.setup(run.data.actors, run.card_deck(), encounter, opponent, run, back, reduce_chess_movement)
 	editor.completed.connect(func(deck: Array):
 		var saved: Dictionary = run.save_card_deck(deck)
 		if not saved.ok:
@@ -1598,7 +1598,7 @@ func _settings_dialog() -> void:
 	slider.value_changed.connect(func(value: float): sound.set_volume(value))
 	box.add_child(slider)
 	var motion := CheckButton.new()
-	motion.text = "减少棋盘动效"
+	motion.text = "减少棋盘与卡组动效"
 	motion.button_pressed = reduce_chess_movement
 	motion.toggled.connect(func(enabled: bool):
 		reduce_chess_movement = enabled

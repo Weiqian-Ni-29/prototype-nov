@@ -75,19 +75,21 @@ static func scroll(parent: Container) -> ScrollContainer:
 	parent.add_child(result)
 	return result
 
-static func art(parent: Node, entry: Dictionary, minimum: Vector2) -> Control:
+static func art(parent: Node, entry: Dictionary, minimum: Vector2, full_portrait: bool = false) -> Control:
 	var texture: Texture2D
 	var portrait: String = entry.get("portrait", "")
 	if not portrait.is_empty():
 		var path := "res://assets/portraits/%s.png" % portrait
 		if ResourceLoader.exists(path, "Texture2D"):
 			var original := load(path) as Texture2D
-			var cropped := AtlasTexture.new()
-			cropped.atlas = original
-			var size := original.get_size()
-			cropped.region = Rect2(size.x * 0.17, 0, size.x * 0.66, size.y * 0.64)
-			cropped.filter_clip = true
-			texture = cropped
+			texture = original
+			if not full_portrait:
+				var cropped := AtlasTexture.new()
+				cropped.atlas = original
+				var size := original.get_size()
+				cropped.region = Rect2(size.x * 0.17, 0, size.x * 0.66, size.y * 0.64)
+				cropped.filter_clip = true
+				texture = cropped
 	var enemy: String = entry.get("enemy_art", "")
 	if texture == null and not enemy.is_empty():
 		var art_path := "res://assets/portraits/enemies/%s.png" % enemy

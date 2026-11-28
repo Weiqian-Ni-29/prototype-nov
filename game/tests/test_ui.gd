@@ -1024,7 +1024,7 @@ func execute() -> void:
 		await click_button(remove)
 		ice_spell = game.modal_layer.find_child("Collection_ice_spell", true, false) as Button
 		await click_button(ice_spell)
-		await click("＋ 加入牌组")
+		await click_button(ice_spell)
 	await click("保存卡组")
 	var edited := deck.duplicate()
 	edited.erase("mend_spell")
