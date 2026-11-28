@@ -2,7 +2,6 @@ extends SceneTree
 
 const Main = preload("res://scenes/main.tscn")
 const Run = preload("res://scripts/domain/expedition.gd")
-const Story = preload("res://scripts/domain/narrative.gd")
 const Battle = preload("res://scripts/domain/chess_battle.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")

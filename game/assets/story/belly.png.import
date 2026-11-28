@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bplh7p1lb74q7"
-path="res://.godot/imported/allegiances.webp-5fd1c84c334c2e478ad41c62706e5dda.ctex"
+uid="uid://owq5qqdx6vf5"
+path="res://.godot/imported/belly.png-e2f21f377b5a24fd89f56c0947d5f93a.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/ui/codex/allegiances.webp"
-dest_files=["res://.godot/imported/allegiances.webp-5fd1c84c334c2e478ad41c62706e5dda.ctex"]
+source_file="res://assets/story/belly.png"
+dest_files=["res://.godot/imported/belly.png-e2f21f377b5a24fd89f56c0947d5f93a.ctex"]
 
 [params]
 

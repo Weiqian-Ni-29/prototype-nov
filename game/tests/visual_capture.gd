@@ -3,7 +3,6 @@ extends SceneTree
 const Main = preload("res://scenes/main.tscn")
 const Catalog = preload("res://scripts/domain/catalog.gd")
 const Chess = preload("res://scripts/domain/chess_battle.gd")
-const Story = preload("res://scripts/domain/narrative.gd")
 var game: Node
 var destination = "user://visual-checks"
 var checks = 0
@@ -225,57 +224,6 @@ func open_recruitment_shop(id: String) -> bool:
 	game._shop_dialog("", {"category": "companion", "id": id})
 	return true
 
-func capture_branch_examples() -> void:
-	game._start_new(false)
-	var run = game.run
-	var person = run.actor("longroad")
-	run.actor("hero").position = person.position
-	run.data.tiles[person.position].enemies.clear()
-	run.reveal(person.position)
-	game.selected_id = "hero"
-	game._refresh()
-	if not open_recruitment_shop("longroad"):
-		return
-	await capture("companion-recruitment")
-	game.modal_layer.find_child("ConfirmTrade", true, false).pressed.emit()
-	if game.modal_layer.has_node("StoryRewards"):
-		await click_story_button("返回商店")
-	await click_story_button("返回远征")
-	game._talk("longroad")
-	if not await await_story_choices():
-		return
-	await click_story_button(quest_option_label(game.narrative.dialogue("hero", "longroad"), "quest"))
-	await advance_story()
-	var quest = game.narrative.personal_quest("hero", "longroad")
-	await capture_story_body("story-personal", quest.text)
-	if not await await_story_choices():
-		return
-	var first = quest_option_label(quest, "personal_a")
-	var second = quest_option_label(quest, "personal_b")
-	expect(story_button(first) != null and story_button(second) != null, "Both personal decisions are rendered")
-	await capture("story-personal-choices")
-	inspect_story_layout()
-	await click_story_button(second)
-	await capture("story-personal-player-reply")
-	await advance_story()
-	await capture_story_body("story-personal-conclusion", Story.PERSONAL_QUESTS.longroad.personal_b.response)
-	game._close_modal()
-	run.data.status = "won"
-	game._refresh()
-	await capture("story-epilogue-record")
-	for button in game.ui.find_children("*", "Button", true, false):
-		if button.text in ["查看结局剧情", "返回主菜单"]:
-			expect(root.get_visible_rect().encloses(button.get_global_rect()), "Ending record keeps its action visible: " + button.text)
-	var ending: String = game.narrative.main_ending().text
-	var epilogue: String = game.narrative.character_ending("longroad").text
-	for label in game.ui.find_children("*", "Label", true, false):
-		expect(not label.text.contains(ending) and not label.text.contains(epilogue), "Summary screenshot does not embed long ending prose")
-	game._ending_story()
-	var ending_pages = await capture_story_body("story-main-ending", ending)
-	expect(ending_pages.size() == 1 and ending_pages[0] == ending, "The full ending fits on one screen")
-	await click_story_button("返回远征记录")
-
-
 func inspect_portrait_silhouette(portrait: Texture2D, key: String) -> void:
 	if portrait == null:
 		return
@@ -297,7 +245,7 @@ func inspect_portrait_silhouette(portrait: Texture2D, key: String) -> void:
 	expect(has_head and has_hem, "The visible silhouette reaches both framing bands: " + key)
 
 func inspect_character_poses() -> void:
-	var ids = Catalog.COMPANIONS.keys() + ["hero", "war_god"]
+	var ids = Catalog.COMPANIONS.keys() + ["hero"]
 	for id in ids:
 		var portrait = game._story_portrait(id)
 		expect(portrait is Texture2D, "Normal portrait is available " + id)
@@ -310,15 +258,6 @@ func inspect_character_poses() -> void:
 				expect(not regions.has(posed.region), "Pose is a separate illustration " + id + "/" + pose)
 				regions.append(posed.region)
 				inspect_portrait_silhouette(posed, id + "/" + pose)
-	for group in ["human", "elf", "dwarf"]:
-		for pose in ["", "concerned", "serious", "farewell", "grief", "battle"]:
-			var portrait = game._story_portrait("villager_" + group, pose)
-			if group == "elf" and pose == "concerned":
-				expect(portrait != null and portrait.resource_path.ends_with("/villager_elf_water.png"),
-					"The concerned elf uses the water offering portrait")
-			else:
-				expect(portrait is AtlasTexture, "Village pose is available " + group + "/" + pose)
-			inspect_portrait_silhouette(portrait, group + "/" + pose)
 
 func capture_finale() -> void:
 	game._close_modal()
@@ -332,22 +271,15 @@ func capture_finale() -> void:
 	expect(battle.begin(run, encounter, run.card_deck()).ok, "Finale starts the actual boss battle")
 	game.combat = battle
 	game._refresh()
-	battle.board[4] = battle.board[10]
-	battle.board[10] = {}
-	battle.commanders[Chess.ENEMY].hp = 1
-	battle.commanders[Chess.ENEMY].armor = 0
-	battle.move(4, 1)
-	game._process(0.1)
-	expect(game.modal_layer.has_node("StoryScreen") and battle.reveal_pending and not battle.river,
-		"A lethal attack triggers the flashback before the river")
-	await capture("story-final-reveal")
-	expect(story_page() == Vector2i(1, 1), "The identity reveal fits on one screen")
-	await click_story_button("继续战斗")
-	await process_frame
-	expect(battle.river and hero.name == "伊文洛",
-		"Leaving the flashback brings the river into the actual combat view")
-	await capture("battle-final-river")
+	await capture("battle-winch")
+	expect(battle.commanders[Chess.ENEMY].name == "捕鲸机", "The finale fights the whaling winch")
+	battle.commanders[Chess.ENEMY].hp = 0
+	expect(battle._check_outcome() and battle.outcome == "victory", "Breaking the winch resolves combat directly")
 	game.combat = null
+	game._ending_story()
+	await capture("story-surface")
+	expect(story_page() == Vector2i(1, 1) and "刚才那杯" in story_text().text, "The ending is one short line")
+	game._close_modal()
 
 func capture_journey_reveal() -> void:
 	var option := game.ui.find_child("JourneyChoice2", true, false) as Button
@@ -403,12 +335,6 @@ func execute() -> void:
 	await click_story_button("返回奖励")
 	await click_story_button("踏上旅途")
 	await capture("journey-choice")
-	for terrain in ["forest", "swamp"]:
-		game._village_page(terrain)
-		var villager := game.modal_layer.find_child("StoryActor0", true, false) as TextureRect
-		expect(villager != null and villager.texture == game._story_portrait("villager_elf", "concerned"),
-			"The village opens with the elf offering water: " + terrain)
-		await capture("story-village-waking-" + terrain)
 	game._close_modal()
 	game._show_opening(menu_state)
 	await capture("01-menu-with-save")
@@ -425,7 +351,6 @@ func execute() -> void:
 	await capture_journey_reveal()
 	# Inspect every biome through the exact same battle view used in the playable game.
 	game.set_process(false)
-	await capture_branch_examples()
 	for biome in ["plains", "forest", "mountain", "ruins", "desert", "swamp"]:
 		game._start_new(false)
 		var run = game.run
@@ -485,14 +410,12 @@ func execute() -> void:
 	if game.modal_layer.has_node("StoryRewards"):
 		await click_story_button("返回商店")
 	await click_story_button("返回远征")
-	game._talk("lorne")
-	await await_story_choices()
-	await capture("story-courier-joined-choices")
-	await click_story_button(quest_option_label(game.narrative.dialogue("hero", "lorne"), "quest"))
-	await advance_story()
-	await await_story_choices()
-	await capture("story-lorne-personal-choices")
-	game._close_modal()
+	game._show_character_codex()
+	var companion_codex = game.modal_layer.get_node("CharacterCodex")
+	companion_codex._select_character("lorne")
+	companion_codex._set_tab(3)
+	await capture("companion-profile")
+	game._close_character_codex()
 	# Recruit Eve for the first time, without the earlier battle fixtures' relic rewards.
 	game._start_new(false)
 	game.run.actor("hero").position = game.run.actor("eve").position

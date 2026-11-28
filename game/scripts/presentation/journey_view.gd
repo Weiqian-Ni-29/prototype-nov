@@ -16,7 +16,8 @@ func setup(game: Node) -> void:
 	var archived: bool = finished and journey.history.is_empty()
 
 	var illustration := TextureRect.new()
-	illustration.texture = game._story_texture("cover" if archived else passage.scene)
+	var scene: String = "surface" if run.data.status == "won" else "belly" if archived else passage.scene
+	illustration.texture = game._story_texture(scene)
 	illustration.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	illustration.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	illustration.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -87,9 +88,9 @@ func setup(game: Node) -> void:
 	actions.name = "JourneyActions"
 	actions.get_parent().size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	if finished:
-		_line(game, actions, "战争结束" if run.data.status == "won" else "远征终止", 28, game.gold)
-		var text: String = game.narrative.main_ending().title if run.data.status == "won" else run.data.flags.get("failure_reason", "远征失败。")
-		_line(game, actions, text, 18, game.ink)
+		_line(game, actions, "回到海面" if run.data.status == "won" else "逃生失败", 28, game.gold)
+		if run.data.status == "failed":
+			_line(game, actions, game.narrative.main_ending().text, 18, game.ink)
 		if entry.get("settled", false):
 			_line(game, actions, settlement(entry), 16, game.gold)
 		game._button(actions, "查看结局", game._ending_story)
@@ -116,7 +117,7 @@ func setup(game: Node) -> void:
 			_line(game, actions, "商贩打开货箱。", 19, game.ink)
 			game._button(actions, "进入商店", game._shop_dialog).name = "JourneyEnter"
 		else:
-			_line(game, actions, "卡德兰拔刀。" if entry.kind == "boss" else "前路被拦住了。", 19, game.ink)
+			_line(game, actions, "绞盘卷起了铁链。" if entry.kind == "boss" else "前路被拦住了。", 19, game.ink)
 			game._button(actions, "准备战斗", game._show_encounter_intro).name = "JourneyEnter"
 
 static func settlement(entry: Dictionary) -> String:

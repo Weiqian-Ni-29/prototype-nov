@@ -3,7 +3,6 @@ const Run = preload("res://scripts/domain/expedition.gd")
 const Journey = preload("res://scripts/domain/journey.gd")
 const JourneyView = preload("res://scripts/presentation/journey_view.gd")
 const Catalog = preload("res://scripts/domain/catalog.gd")
-const Hex = preload("res://scripts/domain/hex_map.gd")
 const Chess = preload("res://scripts/domain/chess_battle.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const CardUI = preload("res://scripts/presentation/card_ui.gd")
@@ -44,7 +43,6 @@ var screen_state = Screen.MENU
 var battle_timer = 0.0
 var toast_text = ""
 var narrative: RefCounted
-var dialogue_subject = ""
 var character_codex_state: Dictionary = {}
 var story_history: Array[Dictionary] = []
 var sound: Node
@@ -54,7 +52,7 @@ var ink = Color("e8e4d1")
 var muted = Color("a2b3a7")
 
 func _ready() -> void:
-	DisplayServer.window_set_title("维洛丹")
+	DisplayServer.window_set_title(OpeningStory.TITLE)
 	var settings := ConfigFile.new()
 	if settings.load(SETTINGS_PATH) == OK:
 		reduce_chess_movement = bool(settings.get_value("display", "reduce_chess_movement", false))
@@ -217,17 +215,15 @@ func _refresh() -> void:
 		_summary(screen)
 
 func _menu(screen: Vector2) -> void:
-	var cover = _opening_image(_story_texture("cover"))
+	var cover = _opening_image(_story_texture("tavern"))
 	cover.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	cover.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var box = VBoxContainer.new()
 	box.position = Vector2(screen.x * 0.06, screen.y * 0.24)
-	box.size.x = minf(365, screen.x * 0.28)
+	box.size.x = minf(420, screen.x * 0.48)
 	box.add_theme_constant_override("separation", 12)
 	ui.add_child(box)
-	_text(box, "维洛丹", 64, ink)
-	_text(box, "VEYLODAN", 14, gold)
-	_text(box, "从一座村庄醒来，找到结束战争的办法。", 18, ink)
+	_text(box, OpeningStory.TITLE, 54, ink)
 	var new_run = _button(box, "开始新远征  →", _begin_opening_story)
 	new_run.custom_minimum_size.y = 52
 	new_run.add_theme_stylebox_override("normal", _style(Color("486054"), gold.darkened(0.2), 6))
@@ -263,19 +259,12 @@ func _begin_opening_story() -> void:
 	story_history.clear()
 	_show_opening(Screen.OPENING_STORY)
 	opening_seed = randi() if chosen_seed.is_empty() else _seed_value()
-	var generated = Hex.generate(opening_seed)
-	var terrain: String = generated.tiles[generated.start].terrain
-	_village_page(terrain)
+	_show_story(OpeningStory.TITLE, "老板", OpeningStory.DEPARTURE, "tavern", [],
+		[_node_option("depart", "出发")], func(_option: String): _start_new(), {"返回主菜单": _cancel_opening})
 
 func _cancel_opening() -> void:
 	_close_modal()
 	_show_opening(Screen.MENU)
-
-func _village_page(terrain: String) -> void:
-	var local := OpeningStory.village(terrain)
-	var portrait := _story_portrait("villager_" + str(local[1]), "concerned")
-	_show_story(local[0], "村民", OpeningStory.DEPARTURE, "village_" + terrain, [portrait],
-		[_node_option("depart", "出发")], func(_option: String): _start_new(), {"返回主菜单": _cancel_opening})
 
 func _seed_value() -> int:
 	if chosen_seed.is_empty():
@@ -295,7 +284,7 @@ func _start_new(use_journey: bool = true) -> void:
 	screen_state = Screen.EXPEDITION
 	toast_text = ""
 	if from_story:
-		run.data.pending_story_rewards = {"source": run.location_name(run.data.start), "kind": "starter_deck", "items": []}
+		run.data.pending_story_rewards = {"source": "酒馆老板", "kind": "starter_deck", "items": []}
 	run.save_game()
 	_refresh()
 	if from_story:
@@ -373,7 +362,7 @@ func _header(screen: Vector2) -> void:
 	title.alignment = BoxContainer.ALIGNMENT_CENTER
 	title.add_theme_constant_override("separation", 0)
 	row.add_child(title)
-	_text(title, "维洛丹", 29, gold)
+	_text(title, OpeningStory.TITLE, 29, gold)
 	var wallet = HBoxContainer.new()
 	wallet.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	wallet.add_theme_constant_override("separation", 6)
@@ -660,12 +649,6 @@ func _close_character_codex() -> void:
 	_close_modal()
 	_refresh()
 
-func _read_character_record(id: String, record: Dictionary) -> void:
-	var read_history = {"speaker": record.title, "pages": {}}
-	_show_story(record.title, "角色图鉴", record.body, _story_scene_at(run.actor(id).position),
-		[_story_portrait(id)], [], func(_option: String): _show_character_codex(),
-		{"返回角色图鉴": _show_character_codex}, Color.WHITE, 0, read_history)
-
 func _inventory_dialog(id: String, current_tab: int = 0, selected_item: String = "", feedback: String = "") -> void:
 	var box = _modal("", 900, 550)
 	var panel: PanelContainer = box.get_parent()
@@ -874,14 +857,7 @@ func _open_current_encounter(show_intro: bool = true) -> void:
 		_deck_dialog(true)
 
 func _show_encounter_intro() -> void:
-	var encounter: Dictionary = run.data.pending_battle
-	var cell: String = encounter.position
-	if run.data.has("journey") or "war_god" not in Journey.battle_enemies(run.data, encounter):
-		_deck_dialog(true)
-		return
-	var portraits := [_story_portrait("hero", "serious"), _story_portrait("war_god", "serious")]
-	_show_story(run.location_name(cell), "旁白", "卡德兰守在战鼓前。", _story_scene_at(cell), portraits,
-		[_node_option("deck", "编辑卡组与开战")], func(_option: String): _deck_dialog(true), {})
+	_deck_dialog(true)
 
 func _deck_dialog(encounter: bool = false, back_to_rewards: Callable = Callable()) -> void:
 	var pending: Dictionary = run.data.pending_battle
@@ -942,7 +918,8 @@ func _deck_dialog(encounter: bool = false, back_to_rewards: Callable = Callable(
 func _show_chess_view() -> void:
 	chess_view = ChessView.new()
 	ui.add_child(chess_view)
-	chess_view.setup(combat, _story_texture(_story_scene_at(combat.position)), reduce_chess_movement)
+	var scene := "winch" if combat.final_battle else _story_scene_at(combat.position)
+	chess_view.setup(combat, _story_texture(scene), reduce_chess_movement)
 	chess_view.acted.connect(func():
 		sound.play("click")
 		battle_timer = 0.20 if chess_view.is_action_playing() else 0.55)
@@ -1041,42 +1018,10 @@ func _process(delta: float) -> void:
 		return
 	if not combat.outcome.is_empty():
 		_finish_battle()
-	elif combat.reveal_pending:
-		_final_battle_page()
 	elif combat.turn == Chess.ENEMY:
 		combat.enemy_turn(true)
 		chess_view.present_action()
 		battle_timer = 0.15 if chess_view.is_action_playing() else 0.45
-
-func _final_battle_page() -> void:
-	var portraits := [_story_portrait("hero", "battle"), _story_portrait("war_god", "surprise")]
-	_show_story("记忆回来了", "旁白", "你想起卡德兰曾杀过你。你是死神伊文洛，冥河应声涌起。",
-		"finale", portraits, [_node_option("fight", "继续战斗")],
-		func(_option: String): _resume_final_battle(), {})
-
-func _resume_final_battle() -> void:
-	combat.awaken_death_power()
-	_close_modal()
-	_refresh()
-
-func _talk(id: String) -> void:
-	if not run.actor(id).get("joined", false):
-		_notice("可在途中招募伙伴。" if run.data.has("journey") else "可在战后商店招募伙伴。")
-		return
-	var intro = narrative.encounter_intro(selected_id, id)
-	if not intro.ok:
-		_notice(intro.message)
-		return
-	if not character_codex_state.is_empty():
-		_close_character_codex()
-	_begin_dialogue(id)
-
-func _begin_dialogue(id: String) -> void:
-	if not run.actor(id).get("joined", false):
-		_notice("可在途中招募伙伴。" if run.data.has("journey") else "可在战后商店招募伙伴。")
-		return
-	dialogue_subject = id
-	_render_dialogue()
 
 func _story_region(control: Control, left: float, top: float, right: float, bottom: float) -> void:
 	control.set_anchor_and_offset(SIDE_RIGHT, right, 0)
@@ -1442,7 +1387,7 @@ func _story_texture(scene: String) -> Texture2D:
 	var path = "res://assets/story/" + scene
 	if scene.get_extension().is_empty():
 		path += ".png"
-	return load(path) if ResourceLoader.exists(path) else load("res://assets/story/" + STORY_TERRAIN.get(scene.trim_prefix("village_"), "road") + ".png")
+	return load(path) if ResourceLoader.exists(path) else load("res://assets/story/belly.png")
 
 func _story_scene_at(position: String) -> String:
 	if run.data.has("journey"):
@@ -1450,80 +1395,19 @@ func _story_scene_at(position: String) -> String:
 	return STORY_TERRAIN.get(run.data.tiles[position].terrain, "road")
 
 func _story_portrait(id: String, pose: String = "") -> Texture2D:
-	if id == "villager_elf" and pose == "concerned":
-		return preload("res://assets/portraits/villager_elf_water.png")
-	var villager = id.begins_with("villager_")
 	var directory = "res://assets/portraits/"
 	var atlas_path = directory + id + "_poses.png"
-	if (villager or not pose.is_empty()) and ResourceLoader.exists(atlas_path):
+	if not pose.is_empty() and ResourceLoader.exists(atlas_path):
 		var sheet: Texture2D = load(atlas_path)
 		var sprite = AtlasTexture.new()
 		sprite.atlas = sheet
 		var cell = Vector2(sheet.get_size()) / Vector2(2, 3)
-		var index = {"concerned": 1, "serious": 2, "farewell": 3, "grief": 4, "battle": 5}.get(pose, 0) if villager else {"serious": 0, "friendly": 1, "grief": 2, "anger": 3, "surprise": 4, "battle": 5}.get(pose, 0)
+		var index = {"serious": 0, "friendly": 1, "grief": 2, "anger": 3, "surprise": 4, "battle": 5}.get(pose, 0)
 		sprite.region = Rect2(Vector2(int(index) % 2, floori(float(index) / 2.0)) * cell, cell)
 		sprite.filter_clip = true
 		return sprite
 	var path = directory + id + ".png"
 	return load(path) if ResourceLoader.exists(path) else null
-
-func _render_dialogue(response: String = "", record_past: bool = false) -> void:
-	var d = narrative.dialogue(selected_id, dialogue_subject)
-	if not d.ok:
-		_notice(d.message)
-		return
-	var person = run.actor(dialogue_subject)
-	var pose = "grief" if person.hp <= 0 else str(d.pose)
-	var speaker: String = d.speaker if response.is_empty() else person.name
-	var text: String = d.text if response.is_empty() else response
-	var portraits = [_story_portrait(selected_id), _story_portrait(dialogue_subject, pose)]
-	var scene = _story_scene_at(run.actor(selected_id).position)
-	if not run.data.has("journey") and not response.is_empty() and not record_past and not run.relic_intro().is_empty():
-		_show_story(d.title, speaker, text, scene, portraits, [],
-			func(_option: String): _show_relic_intro(_render_dialogue), {"结束交谈": _show_relic_intro})
-	else:
-		var on_read = Callable()
-		if record_past:
-			on_read = _record_character_dialogue.bind(dialogue_subject, "codex_past_read", true)
-		_show_story(d.title, speaker, text, scene, portraits, d.options, _story_choice,
-			{"结束交谈": _close_modal}, Color.WHITE, 0, {}, on_read)
-
-func _record_character_dialogue(id: String, key: String, value: Variant) -> void:
-	var record: Dictionary = run.data.story[id]
-	if not record.has(key):
-		record[key] = value
-		run.save_game()
-
-func _personal_quest() -> void:
-	var quest = narrative.personal_quest(selected_id, dialogue_subject)
-	if not quest.ok:
-		_notice(quest.message)
-		return
-	var person = run.actor(dialogue_subject)
-	var portraits = [_story_portrait(selected_id), _story_portrait(dialogue_subject, quest.get("pose", "serious"))]
-	var scene = _story_scene_at(person.position)
-	var actions = {"结束交谈": _close_modal} if quest.options.size() == 1 else {"再想一想": _render_dialogue}
-	_show_story(quest.title, person.name, quest.text, scene, portraits, quest.options,
-		_story_choice, actions)
-
-func _story_choice(option_id: String) -> void:
-	var result = narrative.choose(selected_id, dialogue_subject, option_id)
-	if not result.ok:
-		_notice(result.message, _render_dialogue)
-		return
-	if option_id in ["personal_a", "personal_b"]:
-		run.save_game()
-	var response: String = result.get("response", "")
-	if response.is_empty() and not run.data.has("journey") and _show_relic_intro(_render_dialogue):
-		return
-	if result.get("close", false):
-		_close_modal()
-		_refresh()
-	elif result.get("quest", false):
-		_personal_quest()
-	else:
-		_refresh()
-		_render_dialogue(response, option_id == "past")
 
 func _show_relic_intro(after: Callable = Callable()) -> bool:
 	var intro = run.relic_intro()
@@ -1554,25 +1438,21 @@ func _show_relic_intro(after: Callable = Callable()) -> bool:
 
 func _summary(screen: Vector2) -> void:
 	var box = _panel(ui, Rect2(300, 135, screen.x - 600, screen.y - 300))
-	_text(box, "战争结束" if run.data.status == "won" else "远征终止", 36, gold)
+	_text(box, "回到海面" if run.data.status == "won" else "逃生失败", 36, gold)
 	_text(box, "战斗 %d 场" % int(run.data.battles), 18)
 	if run.data.status == "failed":
 		_text(box, run.data.flags.get("failure_reason", "远征失败。"), 20, muted)
 	else:
 		_text(box, narrative.main_ending().title, 25, gold)
-	var met_count = Catalog.COMPANIONS.keys().filter(func(id): return run.data.story[id].met).size()
-	_text(box, "可在角色图鉴查看 %d 位同行者的尾声。" % met_count, 18, muted)
 	_button(box, "查看结局剧情", _ending_story)
 	_button(box, "角色", _show_character_codex)
 	_button(box, "返回主菜单", _to_menu)
 
 func _ending_story() -> void:
 	var ending: Dictionary = narrative.main_ending()
-	var hero: Dictionary = run.actor("hero")
-	var pose := "grief" if hero.hp <= 0 else "friendly"
-	_show_story(ending.title, "旁白", ending.text, _story_scene_at(hero.position),
-		[_story_portrait("hero", pose)], [], func(_option: String): _close_modal(),
-		{"返回远征记录": _close_modal})
+	var scene := "surface" if run.data.status == "won" else "belly"
+	_show_story(ending.title, "老板" if run.data.status == "won" else "旁白", ending.text, scene,
+		[], [], func(_option: String): _close_modal(), {"返回远征记录": _close_modal})
 
 func _to_menu() -> void:
 	if combat != null:
@@ -1632,7 +1512,7 @@ func _abandon_run() -> void:
 func _credits_dialog() -> void:
 	var box = _modal("制作与许可", 800, 650)
 	var content = _scroll_content(box)
-	_text(content, "维洛丹 · 试玩\n原创世界观、角色与肖像；原创怪物、适配及合成音效。肖像由内置图像生成工具制作。\n\n人形模型、动作与自然地景：Kay Lousberg，CC0。\n狼基础模型：crownjoshua，CC0；本项目修复绑定并制作动作。\n字体：Noto Sans SC，SIL Open Font License。\n引擎：Godot " + Engine.get_version_info().string + "\n完整来源、许可与适配说明随试玩包附带。", 18)
+	_text(content, "鲸肚里的酒馆 · 试玩\n原创角色、怪物、场景适配与合成音效。场景与肖像使用图像生成工具制作。\n\n人形模型、动作与自然地景：Kay Lousberg，CC0。\n狼基础模型：crownjoshua，CC0；本项目修复绑定并制作动作。\n字体：Noto Sans SC，SIL Open Font License。\n引擎：Godot " + Engine.get_version_info().string + "\n完整来源、许可与适配说明随试玩包附带。", 18)
 	_text(content, Engine.get_license_text(), 14, muted)
 	_button(box, "返回设置", _settings_dialog)
 

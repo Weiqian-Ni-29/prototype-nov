@@ -201,14 +201,12 @@ func check_playable_route(game: Node) -> void:
 				"The selected node enters the real card battle.")
 			if kind == "boss":
 				expect(not game.combat.can_retreat(), "The final battle is terminal.")
-				game.combat.commanders[Chess.ENEMY].hp = 1
-				expect(game.combat._check_outcome() and game.combat.reveal_pending, "The boss triggers the existing identity reveal.")
-				game._final_battle_page()
-				if not press_text(game.modal_layer, "继续战斗"):
-					return
+				expect(game.combat.commanders[Chess.ENEMY].name == "捕鲸机", "The final opponent is the jammed winch.")
 			game.combat.commanders[Chess.ENEMY].hp = 0
 			game.combat._check_outcome()
 			game._finish_battle()
+			if kind == "boss":
+				expect(settlement_ends_at_surface(run), "Breaking the winch settles the final encounter directly.")
 			expect(run.data.has("pending_victory") and not run.data.has("battle_shop"), "Battles show loot without opening an unrelated merchant.")
 			game._continue_run()
 			expect(press_text(game.modal_layer, "查看结局" if kind == "boss" else "返回旅途"), "Victory receipt reopens after loading.")
@@ -221,6 +219,9 @@ func check_playable_route(game: Node) -> void:
 			return
 	expect(battle_count > 0 and boss_count == 1 and run.data.status == "won" and run.data.journey.history.size() == Journey.STOPS,
 		"All seven stops can complete through the game's normal entry points.")
+
+func settlement_ends_at_surface(run: RefCounted) -> bool:
+	return run.data.status == "won" and Journey.current(run.data).text.begins_with("绞盘停了")
 
 func execute() -> void:
 	check_pools()

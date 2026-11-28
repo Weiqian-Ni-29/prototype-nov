@@ -47,8 +47,6 @@ var last_movement := {}
 var difficulty := 0
 var exploration := 0
 var outcome := ""
-var reveal_pending := false
-var river := false
 var final_battle := false
 var log_lines: Array[String] = []
 var enemy_types: Array = []
@@ -251,8 +249,8 @@ static func enemy_definition(expedition: RefCounted, id: String, leader: bool = 
 		movement += "可沿无阻挡的直线攻击两格。"
 	if healer:
 		movement += "落位时治疗相邻友方。"
-	var piece := {"name": source.name, "kind": "partner", "cost": 2, "portrait": actor_id if npc or id == "war_god" else "",
-		"enemy_art": "" if npc or id == "war_god" else id,
+	var piece := {"name": source.name, "kind": "partner", "cost": 2, "portrait": actor_id if npc else "",
+		"enemy_art": "" if npc else "winch" if id == "war_god" else id,
 		"attack_delivery": source.get("attack_delivery", "melee"),
 		"attack_projectile": "arrow" if id == "archer" or Cards.is_archer(source) else "energy",
 		"attack": attack, "hp": hp, "armor": armor, "move": 1, "range": reach, "heal": 2 if healer else 0,
@@ -282,8 +280,7 @@ func _piece(entry: Dictionary, side: int, leader: bool = false) -> Dictionary:
 	return piece
 
 func attack_power(piece: Dictionary) -> int:
-	return maxi(0, int(piece.attack) + int(_weapon(piece).get("attack", 0))
-		- (1 if river and piece.side == ENEMY else 0))
+	return maxi(0, int(piece.attack) + int(_weapon(piece).get("attack", 0)))
 
 func _weapon(piece: Dictionary) -> Dictionary:
 	return equipment_at(piece, "weapon")
@@ -410,7 +407,7 @@ func card_targets(side: int, index: int, from: int = -1) -> Array[int]:
 	return targets
 
 func can_act(side: int = PLAYER) -> bool:
-	return turn == side and outcome.is_empty() and not reveal_pending
+	return turn == side and outcome.is_empty()
 
 func can_move_piece(side: int = PLAYER) -> bool:
 	return can_act(side) and not board_action_used[side]
@@ -636,7 +633,6 @@ func _copy_public_position() -> RefCounted:
 		preview.commanders.append(preview.board[board.find(commander)])
 	preview.fatigue = fatigue.duplicate()
 	preview.final_battle = final_battle
-	preview.river = river
 	preview.uid_serial = uid_serial
 	preview.public_preview = true
 	preview.relic_ids = relic_ids.duplicate()
@@ -765,8 +761,7 @@ func _damage(piece: Dictionary, damage: int, pierce: int = 0) -> int:
 		if used > 0:
 			item.armor_remaining -= used
 			remaining -= used
-	var phase_floor := 1 if final_battle and not river and piece.leader and piece.side == ENEMY else 0
-	piece.hp = maxi(phase_floor, int(piece.hp) - (damage - absorbed))
+	piece.hp = maxi(0, int(piece.hp) - (damage - absorbed))
 	return absorbed
 
 func _move_piece(from: int, target: int) -> void:
@@ -991,23 +986,10 @@ func _check_outcome() -> bool:
 		_finish("defeat")
 	elif commanders[ENEMY].hp <= 0:
 		_finish("victory")
-	elif final_battle and not river and commanders[ENEMY].hp <= ceili(commanders[ENEMY].hp_max * 0.55):
-		reveal_pending = true
-	return not outcome.is_empty() or reveal_pending
-
-func awaken_death_power() -> void:
-	if not reveal_pending:
-		return
-	reveal_pending = false
-	river = true
-	run.data.flags["hero_identity_revealed"] = true
-	commanders[PLAYER].name = "伊文洛"
-	run.actor("hero").name = "伊文洛"
-	commanders[PLAYER].hp = commanders[PLAYER].hp_max
-	_log("冥河显现，伊文洛恢复生命，敌方攻击 −1。")
+	return not outcome.is_empty()
 
 func can_retreat() -> bool:
-	return outcome.is_empty() and not reveal_pending and not river and turn == PLAYER \
+	return outcome.is_empty() and turn == PLAYER \
 		and (not pending.has("journey_step") or not final_battle)
 
 func retreat() -> bool:
@@ -1059,7 +1041,7 @@ func _finish(result: String) -> void:
 			run.data.item_effect_counts.erase(key)
 	run.note("击倒敌方主战者。" if result == "victory" else "己方主战者倒下。" if result == "defeat" else "远征队撤退。")
 	if on_journey:
-		var message := "队伍击倒了%s，清出了前路。" % commanders[ENEMY].name
+		var message := "绞盘停了。鲸张开了嘴。" if final_battle else "打倒了%s，前面能过去了。" % commanders[ENEMY].name
 		if result == "retreat":
 			message = "你负伤脱身。队伍绕过交战的地方，继续向前。"
 		elif result == "defeat":
