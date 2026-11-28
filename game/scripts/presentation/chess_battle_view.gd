@@ -594,7 +594,7 @@ func _build_equipment_slot(rack: HBoxContainer, slot: String, item: Dictionary, 
 	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content.add_theme_constant_override("separation", 0)
 	frame.add_child(content)
-	var art := UI.art(content, item if equipped else {"icon": empty_icon}, Vector2.ZERO)
+	var art := UI.art(content, item if equipped else {"icon": empty_icon, "art": ""}, Vector2.ZERO)
 	art.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	if not equipped:
 		art.self_modulate = Color(0.88, 0.85, 0.76, 0.28)
@@ -832,6 +832,7 @@ func _render_hand() -> void:
 func _build_card_face(parent: Control, entry: Dictionary, header: String = "") -> void:
 	var face := Control.new()
 	UI.button_body(parent, face, 0)
+	UI.frame(face)
 	var content := VBoxContainer.new()
 	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	face.add_child(content)

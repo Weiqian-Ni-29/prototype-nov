@@ -652,9 +652,8 @@ func _starter_deck_entries() -> Array[Dictionary]:
 		counts[id] = counts.get(id, 0) + 1
 	for id in counts:
 		var card := Cards.owned_definition(id, run.data.actors, run.data)
-		entries.append({"title": card.name, "category": Cards.KINDS[card.kind] + "牌",
-			"count": counts[id], "effect": card.trait, "story": card.get("story", ""),
-			"icon": card.get("icon", ""), "portrait": card.get("portrait", ""), "level": card.get("level", 0)})
+		entries.append(card.merged({"title": card.name, "category": Cards.KINDS[card.kind] + "牌",
+			"count": counts[id], "effect": card.trait, "story": card.get("story", "")}, true))
 	return entries
 
 func _remove_reward_intros(items: Array) -> void:

@@ -4,6 +4,7 @@ const Cards = preload("res://scripts/domain/card_catalog.gd")
 const InventoryPage = preload("res://scripts/presentation/inventory_page.gd")
 const SHIELD = preload("res://assets/ui/shield-badge.svg")
 const BOW = preload("res://assets/ui/chess-bow.svg")
+const CARD_FRAME = preload("res://assets/ui/card-art/frame.png")
 const GOLD = Color("dec38e")
 const INK = Color("ede6cf")
 const MUTED = Color("b1c3b5")
@@ -93,12 +94,33 @@ static func art(parent: Node, entry: Dictionary, minimum: Vector2) -> Control:
 		if ResourceLoader.exists(art_path, "Texture2D"):
 			texture = load(art_path) as Texture2D
 	var icon: String = entry.get("icon", "")
+	var illustration: String = entry.get("art", icon)
+	if texture == null and not illustration.is_empty():
+		var path := "res://assets/ui/card-art/%s.webp" % illustration
+		if ResourceLoader.exists(path, "Texture2D"):
+			texture = load(path) as Texture2D
 	if texture == null:
 		texture = SHIELD if icon == "shield" else BOW if icon == "chess_bow" else InventoryPage.icon(icon)
 	var image := InventoryPage.item_image(texture, int(entry.get("level", 0)))
 	image.custom_minimum_size = minimum
 	parent.add_child(image)
 	return image
+
+static func frame(parent: Control) -> void:
+	var border := NinePatchRect.new()
+	border.texture = CARD_FRAME
+	border.draw_center = false
+	border.patch_margin_left = 9
+	border.patch_margin_right = 9
+	border.patch_margin_top = 9
+	border.patch_margin_bottom = 9
+	border.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(border)
+	border.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	border.set_offset(SIDE_LEFT, 1)
+	border.set_offset(SIDE_TOP, 1)
+	border.set_offset(SIDE_RIGHT, -1)
+	border.set_offset(SIDE_BOTTOM, -1)
 
 static func attack_tag(parent: Node, entry: Dictionary, font_size: int = 12) -> PanelContainer:
 	var ranged := Cards.is_ranged(entry)
