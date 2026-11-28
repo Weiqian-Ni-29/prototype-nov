@@ -43,6 +43,7 @@ func new_run(seed_value: int, profession: String, use_journey: bool = false) -> 
 	for id in Gear.LEGACY_PRICES:
 		data.actors.hero.equipment[Gear.DATA[id].slot] = Items.add_gear(data, id, "common", "actor", "hero")
 	Items.add_gear(data, "frontier_guard_weapon", "common", "actor", "hero")
+	data.starter_loadout = true
 	data.spell_collection = Cards.STARTER_SPELLS.duplicate()
 	for id in Catalog.COMPANIONS:
 		var location = ""
@@ -568,14 +569,24 @@ func recruit_companion(id: String) -> Dictionary:
 	if not result.ok:
 		data = previous
 		return result
-	data.card_deck = card_deck() + [id]
+	var added_card := add_companion_card(id)
 	if not result.relic.is_empty():
 		data.pending_story_rewards = {"source": "招募 · " + actor(id).name,
 			"items": [{"kind": "relic", "id": result.relic, "count": 1}]}
 	var saved := _save_companion_purchase(previous)
 	if saved.ok:
-		saved.message = "%s已入队，伙伴牌已加入卡组。" % actor(id).name
+		saved.message = "%s已入队。" % actor(id).name
+		if added_card:
+			saved.message += "伙伴牌已加入卡组。"
 	return saved
+
+func add_companion_card(id: String) -> bool:
+	var deck := card_deck()
+	var added := id not in deck
+	if added:
+		deck.append(id)
+	data.card_deck = deck
+	return added
 
 func breakthrough_quote(id: String) -> Dictionary:
 	var check := _node_access("hero")
@@ -681,19 +692,19 @@ func card_deck() -> Array:
 	return data.card_deck.duplicate() if data.has("card_deck") else starter_card_deck()
 
 func starter_card_deck() -> Array:
-	return _convert_gear_cards(Cards.DEFAULT_DECK)
+	return _convert_gear_cards(Cards.DEFAULT_DECK if data.get("starter_loadout", false) else Cards.LEGACY_DECK)
 
-func _convert_gear_cards(legacy_deck: Array) -> Array:
+func _convert_gear_cards(deck: Array) -> Array:
+	const DEFINITIONS = {"blade": ["trail_blade"], "pike": ["frontier_guard_weapon"],
+		"coat": ["padded_coat", "lamp_charm"], "charm": ["lamp_charm"]}
 	var result: Array = []
 	var used: Array = []
-	for card in legacy_deck:
-		if card not in ["blade", "pike", "coat"]:
+	for card in deck:
+		if not DEFINITIONS.has(card):
 			result.append(card)
 			continue
-		var definitions: Array = {"blade": ["trail_blade"], "pike": ["frontier_guard_weapon"],
-			"coat": ["padded_coat", "lamp_charm"]}[card]
 		var found := false
-		for definition in definitions:
+		for definition in DEFINITIONS[card]:
 			for uid in gear_owned("actor", "hero"):
 				if data.gear_instances[uid].definition_id == definition and uid not in used:
 					used.append(uid)
@@ -710,7 +721,7 @@ func _replace_old_support_cards() -> void:
 	data.card_deck = deck.filter(func(card): return not Cards.SUPPORT.has(card))
 	if slots == data.card_deck.size():
 		return
-	for card in _convert_gear_cards(Cards.DEFAULT_DECK):
+	for card in _convert_gear_cards(Cards.LEGACY_DECK):
 		if data.card_deck.size() == slots:
 			break
 		if data.card_deck.count(card) < Cards.limit(card):
@@ -863,7 +874,7 @@ func load_game(path: String = "") -> Dictionary:
 		if data.has("card_deck"):
 			data.card_deck = _convert_gear_cards(data.card_deck)
 	if old_support:
-		for spell in Cards.STARTER_SPELLS:
+		for spell in Cards.LEGACY_STARTER_SPELLS:
 			if spell not in data.spell_collection:
 				data.spell_collection.append(spell)
 		if data.has("card_deck"):
@@ -1035,6 +1046,8 @@ func _validate_save(loaded: Dictionary) -> String:
 	var spells: Variant = loaded.get("spell_collection", [])
 	if not spells is Array or spells.any(func(spell): return spell not in Cards.UNLOCKABLE_SPELLS) or spells.any(func(spell): return spells.count(spell) > 1):
 		return "法术牌谱无效"
+	if not loaded.get("starter_loadout", false) is bool:
+		return "初始卡组记录无效"
 	if loaded.has("card_deck") and not (loaded.card_deck is Array
 			and (int(loaded.version) >= 8 or Cards.valid_deck(loaded.card_deck, loaded.actors, false, {}, true))):
 		return "卡组记录无效"

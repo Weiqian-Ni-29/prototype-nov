@@ -50,10 +50,23 @@ func execute() -> void:
 	var deck := run.card_deck()
 	var start: String = run.actor("hero").position
 	var owned := Cards.collection(run.data.actors, run.data)
-	expect(deck.size() == 11 and deck.count("ember_spell") == 2 and deck.count("mend_spell") == 1
-		and deck.filter(func(id): return id.begins_with("gear:")).size() == 4
-		and "ice_spell" not in owned and not owned.any(func(id): return Cards.definition(id).get("kind") == "partner"), "New game owns four real equipment cards, solo defense and spells")
-	var blade_id: String = deck[0]
+	var curve := {}
+	var partners := []
+	var mobility := []
+	for id in deck:
+		var card := Cards.owned_definition(id, run.data.actors, run.data)
+		curve[card.cost] = int(curve.get(card.cost, 0)) + 1
+		if card.kind == "partner":
+			partners.append(id)
+		if card.has("relocate"):
+			mobility.append(id)
+	expect(curve == {1: 5, 2: 5, 3: 4, 4: 1}
+		and partners == ["highdrake", "oathguard", "lorne", "eve"]
+		and mobility == ["tailwind_spell", "sidestep_spell"], "The new deck has four partners, two movement spells and a low-cost curve")
+	expect(Cards.valid_deck(deck, run.data.actors, true, run.data) and "ice_spell" not in owned,
+		"The entire starter deck is owned and ice remains an unlock")
+	var blade_id: String = "gear:" + run.actor("hero").equipment.weapon
+	deck.append(blade_id)
 	var uid := blade_id.trim_prefix("gear:")
 	var original := Cards.owned_definition(blade_id, run.data.actors, run.data)
 	run.data.lamp_coins = 100
@@ -81,10 +94,14 @@ func execute() -> void:
 	run.data.erase("pending_victory")
 	var battle := Chess.new()
 	expect(battle.begin(run, encounter, deck).ok and battle.hands[0].size() == 3
-		and battle.hands[1].size() == 3 and battle.piles[0].size() == 8, "Both sides draw exactly three from shuffled decks")
+		and battle.hands[1].size() == 3 and battle.piles[0].size() == deck.size() - 3, "Both sides draw exactly three from shuffled decks")
 	battle.hands[0] = [blade_id]
 	expect(battle.play(0, 10) and battle.board[10].armor == 2 and battle.attack_power(battle.board[10]) == 6
 		and battle.board[10].weapon == blade_id and battle.can_move_piece(), "The enhanced card equips the commander without using the board action")
+	battle.hands[Chess.PLAYER] = ["highdrake"]
+	battle.mana[Chess.PLAYER] = 2
+	expect(battle.play(0, 9) and battle.board[9].name == "铅翼" and battle.mana[Chess.PLAYER] == 0,
+		"A starter partner deploys for its printed cost")
 	battle.retreat() # The next encounter below starts from a separate expedition.
 	run.new_run(81, "wayfarer")
 	start = run.actor("hero").position
@@ -94,7 +111,8 @@ func execute() -> void:
 	run.data.tiles[start].enemies = ["boar"]
 	battle = Chess.new()
 	expect(battle.begin(run, encounter, run.card_deck()).ok
-		and battle.piles[0].size() == 8 and battle.hands[0].has("temp:ember_spell") and battle.hands[0].size() == 5,
+		and battle.piles[0].size() == run.card_deck().size() - 3
+		and battle.hands[0].has("temp:ember_spell") and battle.hands[0].size() == 5,
 		"A temporary spell enters hand without drawing or changing deck size")
 	var spell_index: int = battle.hands[0].find("temp:ember_spell")
 	var enemy := battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
@@ -121,12 +139,16 @@ func check_mobility_spell_shop() -> void:
 	var run := Run.new()
 	run.save_path = "user://test-mobility-spell-shop.json"
 	run.new_run(81, "wayfarer")
+	run.data.erase("starter_loadout")
+	run.data.spell_collection = Cards.LEGACY_STARTER_SPELLS.duplicate()
+	var deck := run.card_deck()
+	expect(run.save_game().ok and run.load_game().ok and run.card_deck() == deck and deck.size() == 11,
+		"An older save with a default deck keeps its original eleven cards")
 	var cell: String = run.actor("hero").position
 	run.data.pending_victory = {"enemies": 1, "members": ["hero"], "revived": [], "relic": ""}
 	run.data.lamp_coins = 40
 	run.open_battle_shop()
 	var mobility := ["tailwind_spell", "sidestep_spell"]
-	var deck := run.card_deck()
 	expect(not run.save_card_deck(deck + mobility).ok, "The movement spells must be unlocked before adding them to the deck")
 	for i in 3:
 		var offers := run.spell_shop_offers(cell)
@@ -188,6 +210,7 @@ func check_legacy_loadout() -> void:
 	run.actor("eve").position = hero_cell
 	run.join_companion("eve")
 	run.data.version = 8
+	run.data.erase("starter_loadout")
 	run.data.spell_collection = []
 	var equipment := run.card_deck().slice(0, 4)
 	run.data.card_deck = ["support_vanguard", "support_archer", "support_medic", "support_guard",

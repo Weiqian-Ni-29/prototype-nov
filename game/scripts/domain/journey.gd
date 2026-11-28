@@ -229,9 +229,11 @@ static func _event(run: RefCounted, roller: RandomNumberGenerator, stakes: int) 
 				var companion: Dictionary = run.actor(id)
 				companion.position = hero.position
 				var result: Dictionary = run.join_companion(id, "hero")
-				data.card_deck = run.card_deck() + [id]
+				var added_card: bool = run.add_companion_card(id)
 				data.item_revision += 1
-				var message := "%s决定与你同行。伙伴牌已加入卡组。" % companion.name
+				var message := "%s决定与你同行。" % companion.name
+				if added_card:
+					message += "伙伴牌已加入卡组。"
 				if not result.relic.is_empty():
 					_dismiss_intro(data, result.relic)
 					message += " 你还获得了遗器「%s」。" % Relics.DATA[result.relic].name

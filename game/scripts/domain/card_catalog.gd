@@ -8,9 +8,14 @@ const STARTING_PARTNER_HP_BONUS = 2
 const RECRUIT_PRICE = 8
 const BREAKTHROUGH_PRICES = [8, 14, 22]
 const BREAKTHROUGH_BENEFITS = ["生命上限 +2", "生命上限 +1 · 初始护甲 +1", "攻击 +1 · 解锁天赋"]
-const DEFAULT_DECK = ["blade", "pike", "coat", "coat", "brace", "brace", "ward", "ward",
+const LEGACY_DECK = ["blade", "pike", "coat", "coat", "brace", "brace", "ward", "ward",
 	"ember_spell", "ember_spell", "mend_spell"]
-const STARTER_SPELLS = ["ember_spell", "mend_spell"]
+const LEGACY_STARTER_SPELLS = ["ember_spell", "mend_spell"]
+const STARTER_SPELLS = LEGACY_STARTER_SPELLS + ["tailwind_spell", "sidestep_spell"]
+const STARTER_PARTNERS = ["highdrake", "oathguard", "lorne", "eve"]
+const DEFAULT_DECK = ["brace"] + STARTER_SPELLS + STARTER_PARTNERS + [
+	"pike", "ward", "thin_frost", "charm", "stone_shard", "ironbark_guard",
+]
 const LEGACY_STARTERS = {"highdrake": "support_vanguard", "lorne": "support_archer", "eve": "support_medic",
 	"oathguard": "support_guard", "ember": "support_caster"}
 const SUPPORT = {
@@ -196,9 +201,10 @@ static func collection(actors: Dictionary, state: Dictionary = {}, legacy_suppor
 	var result: Array[String] = []
 	if legacy_support:
 		result.assign(SUPPORT.keys())
+	var starter_partners: Array = STARTER_PARTNERS if state.get("starter_loadout", false) else []
 	for id in Catalog.COMPANIONS:
 		var actor: Variant = actors.get(id)
-		if actor is Dictionary and actor.get("joined", false):
+		if id in starter_partners or (actor is Dictionary and actor.get("joined", false)):
 			result.append(id)
 	for id in ["blade", "pike", "coat", "brace", "ward"]:
 		if state.is_empty() or id not in ["blade", "pike", "coat"]:

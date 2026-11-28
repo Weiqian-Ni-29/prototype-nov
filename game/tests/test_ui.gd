@@ -311,8 +311,8 @@ func check_personal_dialogue() -> void:
 	var deck: Array = run.card_deck()
 	await click("确认招募 · %d 灯铢" % price)
 	expect(person.joined and person.position == run.actor("hero").position and run.data.lamp_coins == 0
-		and saved_run().actors.lorne.joined and saved_run().get("card_deck") == deck + ["lorne"],
-		"Recruitment debits the wallet and saves the new companion in the current deck")
+		and saved_run().actors.lorne.joined and saved_run().get("card_deck") == deck
+		and deck.count("lorne") == 1, "Recruitment debits the wallet and preserves the one existing copy")
 	await click("返回远征")
 	game._begin_dialogue("lorne")
 	game._story_choice("unavailable_reply")
@@ -991,9 +991,9 @@ func execute() -> void:
 	expect(game.modal_layer.has_node("StoryRewards") and contains_text(game.modal_layer, "获得初始卡组")
 		and deck.size() == Cards.DEFAULT_DECK.size() and rewards != null and names == PackedStringArray(
 			rewards.find_children("*", "Button", true, false).map(func(button): return button.accessibility_name)),
-		"Departure lists exactly the starter deck, including duplicate counts")
-	for id in ["ember_spell", "mend_spell"]:
-		var card: Dictionary = Cards.ACTIONS[id]
+		"Departure lists exactly the starter deck")
+	for id in ["ember_spell", "mend_spell", "tailwind_spell", "sidestep_spell", "highdrake"]:
+		var card := Cards.owned_definition(id, game.run.data.actors, game.run.data)
 		await select_story_reward(card.name)
 		var detail = game.modal_layer.find_child("RewardDetails", true, false)
 		expect(detail != null and contains_text(detail, card.trait), "Selecting a starter card shows its battle effect")
