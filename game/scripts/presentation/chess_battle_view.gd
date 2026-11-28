@@ -7,6 +7,7 @@ signal menu_requested
 
 const Battle = preload("res://scripts/domain/chess_battle.gd")
 const AttackEffect = preload("res://scripts/presentation/chess_attack_effect.gd")
+const MovementEffect = preload("res://scripts/presentation/chess_movement_effect.gd")
 const CardHistory = preload("res://scripts/presentation/chess_card_history.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
@@ -45,7 +46,6 @@ var battle: RefCounted
 var cells: Array[Button] = []
 var selected_square := -1
 var selected_card := -1
-var spell_source := -1
 var turn_banner: PanelContainer
 var turn_banner_text: Label
 var turn_banner_tween: Tween
@@ -81,13 +81,16 @@ var detail_kind := ""
 var detail_index := -1
 var detail_slot := ""
 var attack_effect: AttackEffect
+var movement_effect: MovementEffect
+var reduce_movement := false
 var card_history: CardHistory
 var reveal_card: Panel
 var pending_reveal := false
 
-func setup(model: RefCounted, scene: Texture2D) -> void:
+func setup(model: RefCounted, scene: Texture2D, reduced_motion: bool = false) -> void:
 	name = "ChessBattle"
 	battle = model
+	reduce_movement = reduced_motion
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var backdrop := ColorRect.new()
 	backdrop.color = Color("132923")
@@ -204,8 +207,8 @@ func _show_turn_banner() -> void:
 	turn_banner_tween.tween_property(turn_banner, "modulate:a", 0.0, 0.22)
 	turn_banner_tween.tween_callback(turn_banner.hide)
 
-func render(hold_square: int = -1) -> void:
-	if is_attack_playing():
+func render(hold_square: int = -1, hold_board: bool = false) -> void:
+	if is_attack_playing() or movement_effect != null:
 		return
 	var usable: bool = battle.can_act()
 	menu.disabled = false
@@ -216,30 +219,33 @@ func render(hold_square: int = -1) -> void:
 	var picked := _selected_card_definition()
 	var equipment_slot := Cards.equipment_slot(picked)
 	for square in cells.size():
-		if square == hold_square:
+		if hold_board or square == hold_square:
 			cells[square].disabled = true
 			continue
 		_render_tile(cells[square], square, legal.get(square, ""))
-	if selected_square >= 0:
-		hint.text = "绿格可移动或部署 · 橙格可攻击"
-	elif selected_card >= 0:
+	if selected_card >= 0:
 		if equipment_slot == "weapon":
 			var required := Cards.attack_type(picked)
 			hint.text = "当前没有可装备的%s棋子。" % required if legal.is_empty() \
 				else "仅%s棋子可装备。替换下来的武器牌会回到手牌。" % required
-		elif picked.has("relocate"):
-			hint.text = "选择高亮的友方棋子。" if spell_source < 0 else "选择高亮空格施法，点击原棋子可重选。"
+		elif Cards.requires_spell_source(picked):
+			hint.text = "%s施放「%s」。" % [battle.board[selected_square].name, picked.name]
 			if legal.is_empty():
-				hint.text = "当前没有可移动的友方棋子。"
+				hint.text += " 这枚棋子没有合法目标，可改选友方棋子。"
+			else:
+				hint.text += " 选择高亮空格。" if picked.has("relocate") else " 选择高亮敌棋。"
 		else:
 			hint.text = "选择高亮棋子装备，替换下来的装备牌会回到手牌。" if not equipment_slot.is_empty() else "选择高亮目标出牌。"
+	elif selected_square >= 0:
+		hint.text = "已选中%s。%s" % [battle.board[selected_square].name,
+			"可选高亮格走棋，或点手牌施法。" if battle.can_move_piece() else "可点手牌施法。"]
 	elif not usable:
 		hint.text = ""
 		if battle.turn == Battle.ENEMY:
 			var message: String = battle.last_enemy_action.get("message", "")
 			hint.text = "敌方行动中。" if message.is_empty() else "敌方 · " + message
 	elif not battle.can_move_piece():
-		hint.text = "本回合已走棋。可继续出牌，或结束回合。"
+		hint.text = "本回合已走棋。可继续出牌，施法时先选友方棋子。"
 	else:
 		hint.text = "可出牌，或选一枚己方棋子移动或普攻。"
 	_render_hand()
@@ -259,21 +265,29 @@ func is_attack_playing() -> bool:
 	return attack_effect != null
 
 func is_action_playing() -> bool:
-	return is_attack_playing() or pending_reveal
+	return is_attack_playing() or movement_effect != null or pending_reveal
 
 func present_action() -> void:
 	if is_action_playing():
 		return
 	var event: Dictionary = battle.take_attack()
+	if event.is_empty():
+		event = battle.take_movement()
 	var count: int = battle.played_cards.size()
 	if count > card_history.shown_count and battle.played_cards[-1].side == Battle.ENEMY:
 		_present_enemy_card(battle.played_cards[-1], event)
-	elif event.is_empty():
+	else:
+		_present_board_event(event)
+
+func _present_board_event(event: Dictionary) -> void:
+	if event.is_empty():
 		render()
+	elif event.has("mover"):
+		_present_movement(event)
 	else:
 		_present_attack(event)
 
-func _present_attack(event: Dictionary) -> void:
+func _lock_board_action() -> void:
 	_hide_detail()
 	_hide_turn_banner()
 	card_history.close_history()
@@ -282,14 +296,19 @@ func _present_attack(event: Dictionary) -> void:
 	retreat.disabled = true
 	end_turn_button.disabled = true
 	end_turn_button.text = "敌方回合" if battle.turn == Battle.ENEMY else "结束回合"
+	for tile in cells:
+		tile.disabled = true
+	for button in hand_buttons:
+		button.disabled = true
+	_update_enemy_resources()
+
+func _present_attack(event: Dictionary) -> void:
+	_lock_board_action()
 	hint.text = "%s 对 %s 释放「%s」" % [event.attacker.name, event.defender.name, event.spell] if event.has("spell") \
 		else "%s 攻击 %s" % [event.attacker.name, event.defender.name]
 	for square in cells.size():
 		_render_tile(cells[square], square, "", square == event.from or square == event.target)
 		cells[square].disabled = true
-	for button in hand_buttons:
-		button.disabled = true
-	_update_enemy_resources()
 	attack_effect = AttackEffect.new()
 	if event.has("spell"):
 		_render_hand()
@@ -300,6 +319,26 @@ func _present_attack(event: Dictionary) -> void:
 	attack_effect.finished.connect(_finish_attack)
 	attack_effect.play(event, cells[event.from], cells[event.target], _build_piece_face)
 
+func _present_movement(event: Dictionary) -> void:
+	_lock_board_action()
+	var destination := Battle.square_name(event.target)
+	hint.text = "%s 移动到%s" % [event.mover.name, destination]
+	if not event.spell.is_empty():
+		hint.text = "%s 借「%s」移动到%s" % [event.mover.name, event.spell, destination]
+	for square in cells.size():
+		_render_tile(cells[square], square, "", square == event.from or square == event.target, true)
+		cells[square].disabled = true
+	movement_effect = MovementEffect.new()
+	if not event.spell.is_empty():
+		_render_hand()
+		_update_draw_counts()
+		_update_mana_display()
+	add_child(movement_effect)
+	movement_effect.finished.connect(_finish_movement)
+	var via: Control = cells[event.via] if event.via >= 0 else null
+	movement_effect.play(event, cells[event.from], cells[event.target], via, battle.board[event.target],
+		_build_piece_face, reduce_movement)
+
 func _hide_turn_banner() -> void:
 	if turn_banner_tween != null:
 		turn_banner_tween.kill()
@@ -309,7 +348,7 @@ func _present_enemy_card(play: Dictionary, event: Dictionary) -> void:
 	pending_reveal = true
 	card_history.close_history()
 	_hide_detail()
-	render(event.get("target", -1))
+	render(event.get("target", -1), event.has("mover"))
 	_hide_turn_banner()
 	menu.disabled = true
 	card_history.toggle.disabled = true
@@ -337,13 +376,11 @@ func _position_reveal(progress: float) -> void:
 	reveal_card.scale = Vector2.ONE * lerpf(large_scale, small_scale, progress)
 
 func _finish_card_reveal(event: Dictionary) -> void:
+	reveal_card.hide()
 	reveal_card.queue_free()
 	reveal_card = null
 	pending_reveal = false
-	if event.is_empty():
-		render()
-	else:
-		_present_attack(event)
+	_present_board_event(event)
 
 func _finish_attack() -> void:
 	attack_effect.hide()
@@ -352,30 +389,33 @@ func _finish_attack() -> void:
 	card_history.toggle.disabled = card_history.shown_count == 0
 	render()
 
+func _finish_movement() -> void:
+	movement_effect.hide()
+	movement_effect.queue_free()
+	movement_effect = null
+	card_history.toggle.disabled = card_history.shown_count == 0
+	render()
+
 func _legal() -> Dictionary:
 	if not battle.can_act():
 		return {}
-	if selected_square >= 0:
-		return battle.moves(selected_square) if battle.can_move_piece() else {}
 	var result := {}
 	if selected_card >= 0:
-		var card: Dictionary = battle.definition(battle.hands[Battle.PLAYER][selected_card])
-		if card.has("relocate"):
-			for square in battle.card_targets(Battle.PLAYER, selected_card):
-				result[square] = "spell_source"
-			if spell_source >= 0:
-				for destination in battle.card_targets(Battle.PLAYER, selected_card, spell_source):
-					result[destination] = "move"
-			return result
+		var card := _selected_card_definition()
+		var source := selected_square if Cards.requires_spell_source(card) else -1
 		var target_kind := "support"
 		if card.kind == "partner":
 			target_kind = "deploy"
+		elif card.has("relocate"):
+			target_kind = "move"
 		elif card.has("damage"):
 			target_kind = "spell_hit"
 		elif not Cards.equipment_slot(card).is_empty():
 			target_kind = "equip"
-		for square in battle.card_targets(Battle.PLAYER, selected_card):
+		for square in battle.card_targets(Battle.PLAYER, selected_card, source):
 			result[square] = target_kind
+	elif selected_square >= 0 and battle.can_move_piece():
+		return battle.moves(selected_square)
 	return result
 
 func _selected_card_definition() -> Dictionary:
@@ -391,25 +431,25 @@ func _select_tile(square: int) -> void:
 	if is_action_playing() or not battle.can_act():
 		return
 	var legal := _legal()
-	if legal.get(square) == "spell_source":
-		spell_source = -1 if spell_source == square else square
-		render()
-		return
+	var picked := _selected_card_definition()
+	var needs_source := Cards.requires_spell_source(picked)
 	if legal.has(square):
-		var accepted: bool = battle.play(selected_card, square, Battle.PLAYER, spell_source) \
+		var source := selected_square if needs_source else -1
+		var accepted: bool = battle.play(selected_card, square, Battle.PLAYER, source) \
 			if selected_card >= 0 else battle.move(selected_square, square)
 		if accepted:
 			_notify_action()
 		return
 	var unit: Dictionary = battle.board[square]
-	var picked := _selected_card_definition()
 	if unit.get("side", -1) == Battle.PLAYER and not Cards.weapon_fits(picked, unit):
 		hint.text = "「%s」仅%s棋子可装备。" % [picked.name.get_slice(" · ", 0), Cards.attack_type(picked)]
 		return
 	if not unit.is_empty():
-		spell_source = -1
+		if needs_source and unit.side != Battle.PLAYER:
+			hint.text = "请选择所选棋子的高亮施法目标。"
+			return
 		selected_card = -1
-		selected_square = square if battle.can_move_piece() and selected_square != square and battle.board[square].side == Battle.PLAYER else -1
+		selected_square = square if selected_square != square and unit.side == Battle.PLAYER else -1
 		render()
 
 func _select_card(index: int) -> void:
@@ -419,14 +459,19 @@ func _select_card(index: int) -> void:
 	if card.cost > battle.mana[Battle.PLAYER]:
 		hint.text = "法力不足 · 需要 %d 点，当前 %d 点。" % [card.cost, battle.mana[Battle.PLAYER]]
 		return
-	selected_square = -1
-	spell_source = -1
+	if Cards.requires_spell_source(card):
+		if selected_square < 0:
+			selected_card = -1
+			render()
+			hint.text = "先选一枚友方棋子，再选择「%s」。" % card.name
+			return
+	else:
+		selected_square = -1
 	selected_card = -1 if selected_card == index else index
 	render()
 
 func _notify_action() -> void:
 	selected_square = -1
-	spell_source = -1
 	selected_card = -1
 	hovered = -1
 	present_action()
@@ -444,7 +489,7 @@ func _icon_button(actions: HBoxContainer, node_name: String, label: String, icon
 	button.accessibility_name = label
 	return button
 
-func _render_tile(tile: Button, square: int, action: String, hide_face: bool = false) -> void:
+func _render_tile(tile: Button, square: int, action: String, hide_face: bool = false, hold_face: bool = false) -> void:
 	var unit: Dictionary = battle.board[square]
 	var empty := unit.is_empty()
 	var row := floori(float(square) / Battle.COLS)
@@ -458,7 +503,7 @@ func _render_tile(tile: Button, square: int, action: String, hide_face: bool = f
 	if not empty and not hide_face:
 		tint = tint.lightened(0.05)
 		border = UI.GOLD
-	if square == selected_square or square == spell_source:
+	if square == selected_square:
 		tint = Color("4a6656")
 	elif action in ["attack", "spell_hit"]:
 		tint = Color("76513c")
@@ -490,6 +535,11 @@ func _render_tile(tile: Button, square: int, action: String, hide_face: bool = f
 	hover_style.bg_color = tint.lightened(0.09)
 	tile.add_theme_stylebox_override("hover", hover_style)
 	tile.disabled = not battle.can_act() or empty and action.is_empty()
+	if hold_face and not empty and not hide_face:
+		var preview := tile.get_node_or_null("PieceFace/Identity/AttackPreview") as Control
+		if preview != null:
+			preview.hide()
+		return
 	UI.clear(tile)
 	if hide_face:
 		tile.text = ""
@@ -539,6 +589,7 @@ func _build_piece_face(tile: Control, unit: Dictionary, action: String) -> void:
 	portrait.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	if action == "attack":
 		var damage := UI.label(identity, "可攻击 · %d" % battle.attack_power(battle.board[selected_square]), 12, UI.ORANGE)
+		damage.name = "AttackPreview"
 		damage.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		damage.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	var rack := HBoxContainer.new()

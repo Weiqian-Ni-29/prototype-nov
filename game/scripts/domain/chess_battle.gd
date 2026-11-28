@@ -43,6 +43,7 @@ var enemy_turn_started := false
 var last_enemy_action := {}
 var played_cards: Array[Dictionary] = []
 var last_attack := {}
+var last_movement := {}
 var difficulty := 0
 var exploration := 0
 var outcome := ""
@@ -311,10 +312,13 @@ func _spell_source(side: int, target: int, reach: int) -> int:
 	var closest := reach + 1
 	for from in board.size():
 		var distance := _distance(from, target)
-		if distance < closest and board[from].get("side", -1) == side and _open_line(from, target, reach):
+		if distance < closest and _can_cast_from(side, from, target, reach):
 			source = from
 			closest = distance
 	return source
+
+func _can_cast_from(side: int, from: int, target: int, reach: int) -> bool:
+	return from >= 0 and from < board.size() and board[from].get("side", -1) == side and _open_line(from, target, reach)
 
 func moves(from: int) -> Dictionary:
 	var options := {}
@@ -386,7 +390,11 @@ func card_targets(side: int, index: int, from: int = -1) -> Array[int]:
 			if piece.is_empty() and ((_row(square) >= 2) == (side == PLAYER)):
 				targets.append(square)
 		elif card.has("damage"):
-			if not piece.is_empty() and piece.side != side and _spell_source(side, square, card.get("cast_range", 2)) >= 0:
+			if piece.is_empty() or piece.side == side:
+				continue
+			var reach: int = card.get("cast_range", 2)
+			var reachable := _can_cast_from(side, from, square, reach) if from != -1 else _spell_source(side, square, reach) >= 0
+			if reachable:
 				targets.append(square)
 		elif piece.get("side", -1) == side:
 			match card.kind:
@@ -412,11 +420,17 @@ func take_attack() -> Dictionary:
 	last_attack = {}
 	return attack
 
+func take_movement() -> Dictionary:
+	var movement := last_movement
+	last_movement = {}
+	return movement
+
 func move(from: int, target: int, side: int = PLAYER) -> bool:
 	if not can_move_piece(side) or not moves(from).has(target) or board[from].side != side:
 		return false
 	last_attack = {}
 	var kind := "move" if board[target].is_empty() else "attack"
+	last_movement = _movement_event(from, target) if kind == "move" else {}
 	_move_piece(from, target)
 	board_action_used[side] = true
 	_complete_action(side, kind)
@@ -426,9 +440,14 @@ func play(index: int, target: int, side: int = PLAYER, from: int = -1) -> bool:
 	if not can_act(side) or target not in card_targets(side, index, from):
 		return false
 	var card := definition(hands[side][index])
-	if card.has("relocate") != (from != -1):
+	var relocating := card.has("relocate")
+	var source_required := Cards.requires_spell_source(card)
+	if from == -1 and (relocating or (side == PLAYER and source_required)):
+		return false
+	if from != -1 and not source_required:
 		return false
 	last_attack = {}
+	last_movement = _movement_event(from, target, card) if relocating else {}
 	var before := _card_board_snapshot()
 	var slot := Cards.equipment_slot(card)
 	var replaced: String = equipment_at(board[target], slot).get("name", "") if not slot.is_empty() else ""
@@ -436,8 +455,20 @@ func play(index: int, target: int, side: int = PLAYER, from: int = -1) -> bool:
 	_complete_action(side, "damage_spell" if card.has("damage") else card.kind)
 	var after := _card_board_snapshot()
 	played_cards.append({"side": side, "round": round_number, "card": card.duplicate(true),
-		"target": target, "slot": slot, "effects": _card_effects(target, before, after, slot, replaced, from)})
+		"target": target, "slot": slot, "effects": _card_effects(target, before, after, slot, replaced, from if relocating else -1)})
 	return true
+
+func _movement_event(from: int, target: int, card: Dictionary = {}) -> Dictionary:
+	var unit: Dictionary = board[from]
+	var dx := absi(from % COLS - target % COLS)
+	var dy := absi(_row(from) - _row(target))
+	var via := -1
+	# A legal diagonal destination without diagonal movement requires the relic's open corner.
+	if card.is_empty() and dx == 1 and dy == 1 and not (unit.get("diagonal", false) or unit.get("ready_diagonal", false)):
+		var horizontal := _row(from) * COLS + target % COLS
+		via = horizontal if board[horizontal].is_empty() else _row(target) * COLS + from % COLS
+	return {"from": from, "target": target, "via": via, "distance": maxi(dx, dy),
+		"mover": unit.duplicate(true), "pattern": card.get("relocate", ""), "spell": card.get("name", "")}
 
 func _card_board_snapshot() -> Array[Dictionary]:
 	var snapshot: Array[Dictionary] = []
@@ -486,6 +517,7 @@ func end_turn() -> bool:
 	if not can_act():
 		return false
 	last_attack = {}
+	last_movement = {}
 	_relic("turn_end")
 	turn = ENEMY
 	last_enemy_action = {}
@@ -507,6 +539,7 @@ func enemy_turn(hold_for_display: bool = false) -> void:
 
 func _enemy_step() -> void:
 	last_attack = {}
+	last_movement = {}
 	if not enemy_turn_started:
 		enemy_turn_started = true
 		_start_turn(ENEMY)
@@ -864,7 +897,7 @@ func _apply_card(side: int, id: String, card: Dictionary, target: int, from: int
 		"spell":
 			if card.has("damage"):
 				if not public_preview:
-					var source := _spell_source(side, target, card.get("cast_range", 2))
+					var source := from if from >= 0 else _spell_source(side, target, card.get("cast_range", 2))
 					last_attack = _attack_presentation(source, target, _distance(source, target))
 					last_attack.spell = card.name
 				var context := {"unit": {}, "victim": piece, "square": target, "kind": "spell",

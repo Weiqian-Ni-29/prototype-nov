@@ -25,6 +25,7 @@ const ShopView = preload("res://scripts/presentation/shop_view.gd")
 const DayTransition = preload("res://scripts/presentation/day_transition.gd")
 const FontAsset = preload("res://assets/fonts/NotoSansSC.ttf")
 const Sound = preload("res://scripts/presentation/sound.gd")
+const SETTINGS_PATH = "user://settings.cfg"
 enum Screen { MENU, OPENING_STORY, EXPEDITION }
 const OBJECTIVE_ICON = preload("res://assets/ui/expedition-objective.svg")
 const LAMP_COIN_ICON = preload("res://assets/ui/lamp-coin.svg")
@@ -61,12 +62,16 @@ var dialogue_subject = ""
 var character_codex_state: Dictionary = {}
 var story_history: Array[Dictionary] = []
 var sound: Node
+var reduce_chess_movement := false
 var gold = Color("dec38e")
 var ink = Color("e8e4d1")
 var muted = Color("a2b3a7")
 
 func _ready() -> void:
 	DisplayServer.window_set_title("维洛丹")
+	var settings := ConfigFile.new()
+	if settings.load(SETTINGS_PATH) == OK:
+		reduce_chess_movement = bool(settings.get_value("display", "reduce_chess_movement", false))
 	sound = Sound.new()
 	add_child(sound)
 	view = World.new()
@@ -1293,10 +1298,10 @@ func _deck_dialog(encounter: bool = false, back_to_rewards: Callable = Callable(
 func _show_chess_view() -> void:
 	chess_view = ChessView.new()
 	ui.add_child(chess_view)
-	chess_view.setup(combat, _story_texture(_story_scene_at(combat.position)))
+	chess_view.setup(combat, _story_texture(_story_scene_at(combat.position)), reduce_chess_movement)
 	chess_view.acted.connect(func():
 		sound.play("click")
-		battle_timer = 0.20 if chess_view.is_attack_playing() else 0.55)
+		battle_timer = 0.20 if chess_view.is_action_playing() else 0.55)
 	chess_view.attack_impact.connect(sound.play)
 	chess_view.retreat_requested.connect(func():
 		var message := "旅人会负伤脱身，队伍将绕道继续前进。" if run.data.has("journey") else "队伍返回出发地，旅人会受伤。"
@@ -1967,7 +1972,7 @@ func _guide() -> void:
 	_notice("旅途只有一个方向。每段选一个动作，低、中、高赌注表示可能得失的量级。选定后才揭晓遭遇，结算后继续前进。灯铢由全队共享。\n\n出战至少需要 %d 张牌，卡组总张数无上限。对战开局抽 3 张，之后每回合抽 1 张。全队每回合可移动或普攻一次，法力足够时可连续出牌。点「结束回合」交给敌方。近战普攻会受到反伤，远程普攻免反伤。伤害先扣护甲再扣生命。击倒目标且存活才能占格。保护我方主战者并击倒对方主战者即可获胜。" % Cards.MIN_DECK_SIZE)
 
 func _settings_dialog() -> void:
-	var box = _modal("设置与操作", 650, 430)
+	var box = _modal("设置与操作", 650, 485)
 	if screen_state == Screen.EXPEDITION:
 		_text(box, "旅途种子 %s" % run.data.seed, 15, muted)
 	_text(box, "音效音量（0 为静音）", 20, gold)
@@ -1978,7 +1983,17 @@ func _settings_dialog() -> void:
 	slider.value = sound.volume
 	slider.value_changed.connect(func(value: float): sound.set_volume(value))
 	box.add_child(slider)
-	_text(box, "途中选定一个动作后，才会揭晓遭遇。\n对战时点棋子或手牌，再选高亮的格子。", 18, muted)
+	var motion := CheckButton.new()
+	motion.text = "减少棋盘移动动效"
+	motion.button_pressed = reduce_chess_movement
+	motion.toggled.connect(func(enabled: bool):
+		reduce_chess_movement = enabled
+		var settings := ConfigFile.new()
+		settings.load(SETTINGS_PATH)
+		settings.set_value("display", "reduce_chess_movement", enabled)
+		settings.save(SETTINGS_PATH))
+	box.add_child(motion)
+	_text(box, "出牌时点手牌，再选高亮格。\n伤害或位移法术要先选友方棋子。", 18, muted)
 	_button(box, "查看完整操作指南", _guide)
 	_button(box, "制作与许可", _credits_dialog)
 	if screen_state == Screen.EXPEDITION and combat == null and run.data.status == "exploring":
