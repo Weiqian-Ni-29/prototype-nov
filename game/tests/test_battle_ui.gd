@@ -160,7 +160,8 @@ func check_rules() -> void:
 	expect(not battle.board[10].has("element") and not battle.board[1].has("element"),
 		"Both commanders are defined by their combat stats and actions")
 	expect(battle.hands.all(func(hand): return hand.size() == 3)
-		and battle.piles[Chess.PLAYER].size() == 8 and battle.piles[Chess.ENEMY].size() == 9,
+		and battle.piles[Chess.PLAYER].size() == battle.run.card_deck().size() - 3
+		and battle.piles[Chess.ENEMY].size() == 9,
 		"Both teams draw exactly three opening cards")
 	expect(battle.moves(10).keys() == [6, 7, 8, 9, 11], "Commander can move one square horizontally, vertically or diagonally")
 	battle.hands[Chess.PLAYER] = ["highdrake"]
@@ -703,8 +704,9 @@ func check_companion_growth() -> void:
 	var run := Run.new()
 	run.save_path = "user://test-companion-growth.json"
 	run.new_run(41, "wayfarer")
-	expect(not "lorne" in Cards.collection(run.data.actors) and Cards.valid_deck(run.card_deck(), run.data.actors, true, run.data),
-		"The solo starter deck is complete and named cards require recruitment")
+	expect(not run.actor("lorne").joined and "lorne" in Cards.collection(run.data.actors, run.data)
+		and Cards.valid_deck(run.card_deck(), run.data.actors, true, run.data),
+		"The starter card is available before the companion joins the expedition")
 	expect(not run.recruit_companion("lorne").ok and run.data.lamp_coins == 8, "Recruitment requires a post-battle shop")
 	var cell: String = run.data.start
 	run.data.battles = 1
@@ -718,7 +720,7 @@ func check_companion_growth() -> void:
 	run.data.lamp_coins = 6
 	expect(run.recruit_companion("lorne").ok and run.data.lamp_coins == 0 and "lorne" in Cards.collection(run.data.actors)
 		and not run.recruit_companion("lorne").ok and run.card_deck().count("lorne") == 1,
-		"Recruitment charges once and appends the companion card")
+		"Recruitment charges once and keeps the existing starter card without duplicating it")
 	expect(not run.breakthrough_companion("lorne", 0).ok, "Breakthrough requires funds")
 	run.data.lamp_coins = 44
 	var normal_path: String = run.save_path
@@ -766,14 +768,17 @@ func check_battle_income() -> void:
 		battle._finish("victory")
 		expect(battle.run.data.lamp_coins == before + coins, "Reopening settlement does not pay twice")
 
+func scroll_into_view(control: Control) -> void:
+	var parent := control.get_parent()
+	while parent != null:
+		if parent is ScrollContainer:
+			parent.ensure_control_visible(control)
+		parent = parent.get_parent()
+
 func click(node: Button, point_in_button: Vector2 = Vector2(0.5, 0.5)) -> void:
 	expect(node != null and not node.disabled, "Visible enabled button: " + (str(node.name) if node != null else "<missing>"))
 	if node != null and not node.disabled:
-		var parent := node.get_parent()
-		while parent != null:
-			if parent is ScrollContainer:
-				parent.ensure_control_visible(node)
-			parent = parent.get_parent()
+		scroll_into_view(node)
 		await process_frame
 		var rect := node.get_global_rect()
 		var point := rect.position + rect.size * point_in_button
@@ -792,6 +797,8 @@ func button_named(parent: Node, title: String) -> Button:
 	return null
 
 func drag_card(card: Button, target: Control) -> void:
+	scroll_into_view(target)
+	await process_frame
 	var from := card.get_global_rect().get_center()
 	var to := target.get_global_rect().get_center()
 	var press := InputEventMouseButton.new()
@@ -822,7 +829,7 @@ func check_editor_draft() -> void:
 	game.sound.set_volume(0, false)
 	game.run.save_path = "user://test-card-editor-draft.json"
 	game._start_new(false)
-	var gear_id: String = game.run.card_deck()[0]
+	var gear_id: String = "gear:" + game.run.actor("hero").equipment.weapon
 	var uid := gear_id.trim_prefix("gear:")
 	var suffix := gear_id.replace(":", "_")
 	expect(game.run.save_card_deck([gear_id]).ok, "An expedition accepts a one-card draft")
@@ -919,14 +926,14 @@ func check_ui() -> void:
 		game.queue_free()
 		return
 	var initial_deck: Array = editor.deck.duplicate()
-	expect(editor.cost_bars[0].value == 7 and editor.cost_bars[0].max_value == 7
-		and editor.cost_bars[1].value == 3 and editor.cost_bars[1].max_value == 7
-		and editor.cost_bars[2].value == 1,
-		"The default eleven cards are counted at their real costs, including the three-cost charm")
+	expect(editor.cost_bars[0].value == 5 and editor.cost_bars[0].max_value == 5
+		and editor.cost_bars[1].value == 5 and editor.cost_bars[1].max_value == 5
+		and editor.cost_bars[2].value == 4 and editor.cost_bars[3].value == 1,
+		"The default fifteen cards are counted at their real costs")
 	var sorted_costs: Array = []
 	for row in editor.slots.get_children():
 		sorted_costs.append(int(row.find_child("CardCost", true, false).get_child(0).text))
-	expect(sorted_costs == [1, 1, 1, 1, 1, 2, 2, 3], "Deck rows group copies and sort by cost")
+	expect(sorted_costs == [1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 4], "Deck rows sort the entire starter deck by cost")
 	expect(editor.cost_buttons.size() == 11 and editor.cost_buttons.back().text == "10+"
 		and editor.cost_bars.size() == 10 and editor._cost_bucket(11) == 10,
 		"All and ten cost slots match the ten chart buckets, with 10+ grouping higher costs")
@@ -956,7 +963,7 @@ func check_ui() -> void:
 		"Type, cost, and text filters intersect")
 	await click(editor.cost_buttons[2])
 	expect(editor.empty_collection.visible and editor.selected.is_empty()
-		and editor.deck == initial_deck and editor.cost_bars[0].value == 7,
+		and editor.deck == initial_deck and editor.cost_bars[0].value == 5,
 		"No matching cards clears the selection without touching the deck")
 	await click(editor.find_child("ClearCardFilters", true, false))
 	expect(editor.search.text.is_empty() and editor.kind == "all"
@@ -973,23 +980,23 @@ func check_ui() -> void:
 	expect(editor.deck == initial_deck and editor.error.visible and editor.search.text == "冰针",
 		"Dropping outside the list leaves the deck and search intact")
 	await drag_card(ice, editor.find_child("Remove_brace", true, false))
-	expect(editor.deck.count("ice_spell") == 1 and editor.cost_bars[0].value == 8
+	expect(editor.deck.count("ice_spell") == 1 and editor.cost_bars[0].value == 6
 		and not editor.error.visible and "已入组 1 张" in ice.accessibility_name,
 		"Dropping onto a deck row updates the card, deck, and distribution together")
 	await click(editor.find_child("AddDeckCard", true, false))
 	var capped := editor.find_child("AddDeckCard", true, false) as Button
-	expect(editor.total.text == "13 张" and capped != null and capped.disabled and ice.has_focus(),
+	expect(editor.total.text == "17 张" and capped != null and capped.disabled and ice.has_focus(),
 		"The editor adds cards and still enforces the per-card limit")
 	await drag_card(ice, editor.deck_scroll)
 	expect(editor.deck.count("ice_spell") == 2 and "同名上限" in editor.error.text,
 		"Dragging onto the list also enforces the per-card limit and explains the rejection")
 	await click(editor.find_child("Remove_ice_spell", true, false))
-	expect(editor.deck.count("ice_spell") == 1 and editor.cost_bars[0].value == 8
+	expect(editor.deck.count("ice_spell") == 1 and editor.cost_bars[0].value == 6
 		and not capped.disabled and editor.selected == "ice_spell" and editor.search.text == "冰针",
 		"Removing a copy updates the detail and distribution without disturbing the current filters")
 	await click(editor.find_child("ConfirmCardDeck", true, false))
 	var saved := Run.new()
-	expect(saved.load_game(game.run.save_path).ok and saved.card_deck().size() == 12 and saved.card_deck().count("ice_spell") == 1,
+	expect(saved.load_game(game.run.save_path).ok and saved.card_deck().size() == 16 and saved.card_deck().count("ice_spell") == 1,
 		"The edited deck persists in the expedition save")
 	var cell: String = game.run.actor("hero").position
 	game.run.data.tiles[cell].enemies = ["boar"]
@@ -1002,8 +1009,8 @@ func check_ui() -> void:
 	if view != null:
 		expect(root.get_visible_rect().encloses(view.get_global_rect()) and view.cells.size() == 12 and view.hand_buttons.size() == 3,
 			"Board fits the viewport with twelve squares and a three-card opening hand")
-		expect(game.combat.piles[Chess.PLAYER].size() == 9 and game.combat.piles[Chess.ENEMY].size() == 9,
-			"The battle uses the saved twelve-card deck and the usual twelve enemy cards")
+		expect(game.combat.piles[Chess.PLAYER].size() == 13 and game.combat.piles[Chess.ENEMY].size() == 9,
+			"The battle uses the saved sixteen-card deck and the usual twelve enemy cards")
 		expect(view.enemy_cards.text == "手牌 3\n牌库 9" and view.enemy_mana_ratio.text == "1/1"
 			and view.enemy_deck_back.visible, "The rail shows the opponent's opening resources without showing card faces")
 		var grid := view.find_child("ChessGrid", true, false) as GridContainer
@@ -1087,7 +1094,8 @@ func check_ui() -> void:
 
 func check_hand_layout() -> void:
 	var battle = fixture()
-	var large_hand: Array = Cards.DEFAULT_DECK + Cards.DEFAULT_DECK + ["ember_spell", "mend_spell"]
+	var starter_deck: Array = battle.run.card_deck()
+	var large_hand := starter_deck + starter_deck + ["ember_spell", "mend_spell"]
 	battle.hands[Chess.PLAYER] = large_hand
 	battle.draw_count = 0
 	var view := ChessView.new()
