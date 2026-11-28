@@ -162,7 +162,7 @@ func _build_deck_panel(right: VBoxContainer, opponent: String, back_label: Strin
 	error.hide()
 	var actions := HBoxContainer.new()
 	right.add_child(actions)
-	var back := UI.button(actions, "返回地图" if back_label.is_empty() else back_label, func(): cancelled.emit())
+	var back := UI.button(actions, "返回远征" if back_label.is_empty() else back_label, func(): cancelled.emit())
 	back.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	done = UI.button(actions, "开始战斗" if in_encounter else "保存卡组", func(): completed.emit(deck.duplicate()))
 	done.name = "ConfirmCardDeck"

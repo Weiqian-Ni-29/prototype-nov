@@ -29,29 +29,6 @@ static func neighbors(id: String, tiles: Dictionary) -> Array[String]:
 static func is_land(tiles: Dictionary, id: String) -> bool:
 	return tiles.has(id) and tiles[id].terrain != "lake"
 
-static func world(id: String) -> Vector3:
-	var p = coord(id)
-	return Vector3(sqrt(3.0) * (p.x + p.y * 0.5), 0, 1.5 * p.y)
-
-static func closest(point: Vector3, tiles: Dictionary) -> String:
-	var id = cell_at(point)
-	return id if tiles.has(id) else ""
-
-static func cell_at(point: Vector3) -> String:
-	var r = point.z / 1.5
-	var q = point.x / sqrt(3.0) - r * 0.5
-	var cx = roundi(q)
-	var cz = roundi(r)
-	var cy = roundi(-q - r)
-	var dx = absf(cx - q)
-	var dz = absf(cz - r)
-	var dy = absf(cy + q + r)
-	if dx > dy and dx > dz:
-		cx = -cy - cz
-	elif dz > dy:
-		cz = -cx - cy
-	return key(Vector2i(cx, cz))
-
 static func path(tiles: Dictionary, start: String, goal: String, avoid_enemies: bool = false) -> Array[String]:
 	if not is_land(tiles, start) or not is_land(tiles, goal):
 		return []

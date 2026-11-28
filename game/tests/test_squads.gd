@@ -41,7 +41,7 @@ func execute():
 		expect(loaded.load_game(run.save_path).ok, "Load old multi-squad checkpoint")
 		var cell = destination if resume_encounter else origin
 		expect(loaded.actor("hero").position == cell and loaded.actor("lorne").position == cell
-			and loaded.actor("lorne").hp == 9 and loaded.data.day == 7 and loaded.remaining_steps() == 5,
+			and loaded.actor("lorne").hp == 9 and loaded.data.day == 7 and loaded.data.steps_today == 0,
 			"Travel migration reunites the party and preserves injuries and date")
 		expect(not loaded.actor("hero").has("ap") and not loaded.data.has("squad_colors"), "Old travel state is removed")
 		expect(loaded.data.relic_inventory.trail_boots == 1 and not loaded.has_relic("trail_boots"),

@@ -2,7 +2,6 @@ extends SceneTree
 
 const Run = preload("res://scripts/domain/expedition.gd")
 const Chess = preload("res://scripts/domain/chess_battle.gd")
-const Hex = preload("res://scripts/domain/hex_map.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const Relics = preload("res://scripts/domain/relic_catalog.gd")
 var checks := 0
@@ -105,7 +104,7 @@ func execute() -> void:
 	battle.board[7] = battle._piece(battle.definition("foe:archer"), Chess.ENEMY)
 	expect(4 not in battle.card_targets(0, spell_index), "A blocker stops a two-square spell")
 	battle.board[7] = {}
-	expect(battle.play(spell_index, 4) and enemy.armor == 0 and enemy.hp == old_hp - 1
+	expect(battle.play(spell_index, 4, Chess.PLAYER, 10) and enemy.armor == 0 and enemy.hp == old_hp - 1
 		and battle.board[10].leader and battle.can_move_piece(), "A spell resolves relic damage and armor without moving a piece")
 	var loaded := Run.new()
 	expect(loaded.load_game(run.save_path).ok and "ice_spell" in Cards.collection(loaded.data.actors, loaded.data),
@@ -180,14 +179,6 @@ func check_progression() -> void:
 	var squad := battle._enemy_deck(["boar", "swarm", "swarm"], "boar", roller)
 	expect(squad.count("foe:swarm") == 1 and "foe:archer" in squad,
 		"The enemy recruits from its encounter first, with at most one copy of each reinforcement")
-
-	for seed in 24:
-		run.new_run(seed, "wayfarer")
-		var guards: Array = run.data.nodes.keys().filter(func(cell): return run.node_at(cell).get("intro_duel", false))
-		var route: bool = guards.size() == 2 and Hex.distance(Hex.coord(guards[0]), Hex.coord(guards[1])) == 1
-		expect(route and guards.all(func(cell): return run.data.tiles[cell].enemies == ["boar"]),
-			"Seed %d has two opening duels" % seed)
-
 
 func check_legacy_loadout() -> void:
 	var run := Run.new()
@@ -265,5 +256,5 @@ func check_expedition_save_migration() -> void:
 		and run.data.actors.values().all(func(actor): return not actor.has("element"))
 		and run.data.log.slice(-3) == ["第 2 天。", "第 3 天。", "抵达山地。"],
 		"Migration clears obsolete map and actor fields and converts old date announcements")
-	expect(run.data.day == 3 and run.remaining_steps() == 3 and run.card_deck() == deck
+	expect(run.data.day == 3 and run.data.steps_today == 2 and run.card_deck() == deck
 		and run.save_game().ok and run.load_game().ok, "Progress and card choices survive migration and resaving")

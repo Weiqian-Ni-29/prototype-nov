@@ -4,7 +4,7 @@ const Cards = preload("res://scripts/domain/card_catalog.gd")
 
 # Event, conditions, operation, argument, charges per battle, player-facing effect.
 const RULES = {
-	"telescope": ["enemy_draw", "", "reveal", "", 1, "扩大地图视野；敌方第一次自然抽牌时，公开抽到的牌。"],
+	"telescope": ["enemy_draw", "", "reveal", "", 1, "敌方第一次自然抽牌时，公开抽到的牌。"],
 	"ranged_sight": ["equip", "weapon,partner", "sight", 1, 1, "首次给伙伴装备武器后，它下一次横竖普通攻击射程 +1，最高 3 格。"],
 	"lamp_badge": ["entry", "", "entry", "", 0, "己方棋子首次登场时，获得其生命上限 12% 的护甲，四舍五入。"],
 	"herbal_case": ["heal", "spell_heal", "amount", 1, 1, "每场首次用治疗法术实际回血时，治疗量 +1。"],

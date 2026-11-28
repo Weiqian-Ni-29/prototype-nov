@@ -123,7 +123,7 @@ func setup(expedition: RefCounted, actor_id: String, stock: Dictionary, width: f
 	var footer := HBoxContainer.new()
 	footer.add_theme_constant_override("separation", 12)
 	add_child(footer)
-	var back := "离开商店" if on_journey else "查看结局" if run.data.status == "won" else "返回地图"
+	var back := "离开商店" if on_journey else "查看结局" if run.data.status == "won" else "返回远征"
 	_button(footer, back, func(): return_requested.emit())
 	if not on_journey:
 		_button(footer, "查看战利品", func(): loot_requested.emit())

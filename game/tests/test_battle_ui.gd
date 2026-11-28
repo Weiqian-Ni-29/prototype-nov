@@ -91,7 +91,8 @@ func check_expanded_cards() -> void:
 			"%s has no element and checks its mana cost" % id)
 		battle.mana[Chess.PLAYER] = card.cost
 		var target := nearby_enemy if card.kind == "spell" else hero
-		expect(battle.play(0, target) and battle.mana[Chess.PLAYER] == 0, "%s can be played at its listed cost" % id)
+		var source := hero if Cards.requires_spell_source(card) else -1
+		expect(battle.play(0, target, Chess.PLAYER, source) and battle.mana[Chess.PLAYER] == 0, "%s can be played at its listed cost" % id)
 		if card.kind == "spell":
 			expect(victim.hp == 30 - int(card.damage) and victim.has("slow_until") == card.get("slow", false),
 				"%s deals the listed damage and applies its status" % id)
@@ -107,7 +108,7 @@ func check_expanded_cards() -> void:
 	battle.board[nearby_enemy] = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
 	expect(enemy not in battle.card_targets(Chess.PLAYER, 1), "A blocker still stops the three-square spell")
 	battle.board[nearby_enemy] = {}
-	expect(battle.play(1, enemy) and battle.last_attack.from == hero and battle.mana[Chess.PLAYER] == 0,
+	expect(battle.play(1, enemy, Chess.PLAYER, hero) and battle.last_attack.from == hero and battle.mana[Chess.PLAYER] == 0,
 		"The ten-cost spell uses the actual three-square attack source")
 
 func check_enemy_turn_budget() -> void:
@@ -371,7 +372,7 @@ func check_retaliation() -> void:
 	battle.hands[Chess.PLAYER] = ["ember_spell"]
 	var hp_before: int = battle.board[10].hp
 	var armor_before: int = battle.board[10].armor
-	expect(battle.play(0, 4) and battle.board[4].is_empty() and battle.board[10].hp == hp_before
+	expect(battle.play(0, 4, Chess.PLAYER, 10) and battle.board[4].is_empty() and battle.board[10].hp == hp_before
 		and battle.board[10].armor == armor_before, "A lethal damage spell leaves its caster in place without retaliation")
 	hit = battle.take_attack()
 	expect(hit.get("spell") == "余烬" and hit.from == 10 and hit.target == 4 and hit.defender.hp == 1
@@ -384,21 +385,34 @@ func check_spell_feedback() -> void:
 	target.armor = 1
 	var caster: Dictionary = battle._piece(Cards.definition("eve"), Chess.PLAYER)
 	battle.board[4] = caster
+	battle.board[0] = battle._piece(Cards.definition("lorne"), Chess.PLAYER)
 	battle.board[7] = battle.board[10]
 	battle.board[10] = {}
 	battle.hands[Chess.PLAYER] = ["ice_spell"]
+	battle.board_action_used[Chess.PLAYER] = true
 	battle.draw_count = 0
+	expect(not battle.play(0, 1) and not battle.play(0, 1, Chess.PLAYER, 7) and battle.mana[Chess.PLAYER] == 1,
+		"A player damage spell requires a friendly source with a clear line")
 	var view := ChessView.new()
 	root.add_child(view)
 	view.setup(battle, null)
 	await process_frame
 	await process_frame
 	view.hand_buttons[0].pressed.emit()
+	expect(view.selected_card == -1 and view.hint.text.begins_with("先选") and battle.mana[Chess.PLAYER] == 1,
+		"Selecting a damage spell before the caster leaves the card and mana untouched")
+	view.cells[7].pressed.emit()
+	view.hand_buttons[0].pressed.emit()
+	expect(view._legal().is_empty(), "A caster blocked by an ally cannot borrow the other ally's targets")
+	view.cells[4].pressed.emit()
+	expect(view.selected_square == 4 and view.selected_card == -1, "Changing caster requires selecting the spell again")
+	view.hand_buttons[0].pressed.emit()
+	expect(view._legal().get(1) == "spell_hit", "A caster can be selected after spending the board action")
 	view.cells[1].pressed.emit()
 	var effect := view.attack_effect
 	expect(effect != null and effect.spell and not effect.attack.has("element") and effect.attack.from == 4 and effect.attack.target == 1
 		and effect.attack.defender.armor == 1 and view.end_turn_button.disabled,
-		"Ice Needle starts at the unobstructed ally and keeps the defender's old armor until contact")
+		"Ice Needle starts at the selected ally, even when another ally could cast it")
 	if effect != null:
 		if not effect.contacted:
 			await effect.impact
@@ -407,6 +421,7 @@ func check_spell_feedback() -> void:
 		await effect.finished
 	expect(not view.is_action_playing() and not view.end_turn_button.disabled and view.card_history.shown_count == 1,
 		"Input and the card record update after the spell animation")
+	expect(not view.card_history.recent.text.contains("移动到"), "Damage spell history is recorded as a hit, not a relocation")
 	view.queue_free()
 	await process_frame
 
@@ -426,11 +441,19 @@ func check_mobility_spells() -> void:
 	await process_frame
 	await click(view.cells[9])
 	await click(view.cells[6])
-	expect(battle.board[6] == ally and not battle.can_move_piece(), "The archer spends the ordinary board action first")
+	var movement := view.movement_effect
+	expect(movement != null and is_equal_approx(movement.duration, 0.36) and battle.board[6] == ally
+		and not battle.can_move_piece() and not view.cells[6].has_node("PieceFace") and view.end_turn_button.disabled,
+		"The ordinary move settles once and holds the tile face and input until the animation ends")
+	if movement != null:
+		view.hand_buttons[0].pressed.emit()
+		expect(view.selected_card == -1, "Movement locks hand input")
+		await movement.finished
+	expect(view.cells[6].has_node("PieceFace") and not view.is_action_playing(), "The landed piece is restored to the board")
 	await click(view.hand_buttons[0])
-	expect(view._legal().get(6) == "spell_source" and not view._legal().has(1),
-		"The movement spell highlights friendly pieces and excludes enemy targets")
+	expect(view.selected_card == -1 and view.hint.text.begins_with("先选"), "A movement spell asks for a source before selecting the card")
 	await click(view.cells[6])
+	await click(view.hand_buttons[0])
 	expect(battle.mana[Chess.PLAYER] == 2 and battle.board[6] == ally and view._legal().get(0) == "move",
 		"Selecting the spell source previews the destination before committing")
 	battle.board[3] = battle._piece(Cards.definition("eve"), Chess.PLAYER)
@@ -440,17 +463,27 @@ func check_mobility_spells() -> void:
 	expect(not view._legal().has(0) and view._legal().has(3), "Slow limits Tailwind to one square")
 	ally.erase("slow_until")
 	await click(view.cells[0])
+	movement = view.movement_effect
+	expect(movement != null and is_equal_approx(movement.duration, 0.44)
+		and movement.pattern == "straight" and view.card_history.shown_count == 0,
+		"Two-square Tailwind plays the longer wind effect before updating the card record")
+	if movement != null:
+		await movement.finished
 	expect(battle.board[0] == ally and battle.board[6].is_empty() and battle.mana[Chess.PLAYER] == 1
 		and not battle.can_move_piece() and "移动到左路后排" in view.card_history.recent.text,
-		"Tailwind immediately moves the archer again and records the destination")
+		"Tailwind moves the archer again and records the destination")
 	expect(battle.played_cards[-1].effects.size() == 1, "Departure from the source square is not logged as a defeat")
-	await click(view.hand_buttons[0])
-	expect(view._legal().get(10) == "spell_source", "Sidestep can also move an ally that already walks diagonally")
 	await click(view.cells[0])
+	await click(view.hand_buttons[0])
 	battle.board[4] = battle._piece(battle.definition("foe:boar"), Chess.ENEMY)
 	expect(not view._legal().has(4) and not battle.play(0, 4, Chess.PLAYER, 0), "Sidestep cannot land on an enemy")
 	battle.board[4] = {}
 	await click(view.cells[4])
+	movement = view.movement_effect
+	expect(movement != null and movement.pattern == "diagonal" and is_equal_approx(movement.duration, 0.36),
+		"Sidestep uses a short arcing move")
+	if movement != null:
+		await movement.finished
 	expect(battle.board[4] == ally and battle.board[0].is_empty() and battle.mana[Chess.PLAYER] == 0
 		and battle.hands[Chess.PLAYER].is_empty() and not battle.can_move_piece(),
 		"The same unit can move a third time by spending its second spell and mana")
@@ -460,6 +493,54 @@ func check_mobility_spells() -> void:
 		"Using a movement spell first preserves the ordinary board action")
 	view.queue_free()
 	await process_frame
+
+func check_movement_routes() -> void:
+	for horizontal_blocked in [false, true]:
+		var battle = fixture()
+		battle.board[11] = battle.board[10]
+		battle.board[10] = {}
+		battle.board[7] = battle._piece(Cards.definition("lorne"), Chess.PLAYER)
+		battle.board[7].bend_move = true
+		if horizontal_blocked:
+			battle.board[6] = battle._piece(Cards.definition("eve"), Chess.PLAYER)
+		expect(battle.move(7, 9), "Relic bends can reach the diagonal destination through an open corner")
+		var event: Dictionary = battle.take_movement()
+		expect(event.get("via") == (10 if horizontal_blocked else 6) and event.mover.bend_move
+			and not battle.board[9].has("bend_move") and battle.take_movement().is_empty(),
+			"Movement records the preferred open corner and snapshots the mover before consuming the relic")
+
+func check_enemy_movement() -> void:
+	var battle = fixture()
+	battle.turn = Chess.ENEMY
+	battle.hands[Chess.ENEMY] = ["tailwind_spell"]
+	battle.mana[Chess.ENEMY] = 1
+	var view := ChessView.new()
+	root.add_child(view)
+	view.setup(battle, null)
+	await process_frame
+	await process_frame
+	expect(battle.play(0, 7, Chess.ENEMY, 1), "Enemy Tailwind can choose its source")
+	view.present_action()
+	expect(view.pending_reveal and view.movement_effect == null and view.cells[1].has_node("PieceFace")
+		and not view.cells[7].has_node("PieceFace"), "The enemy piece remains at its source during the card reveal")
+	if view.reveal_card != null:
+		await view.reveal_card.tree_exiting
+	var movement := view.movement_effect
+	expect(movement != null and not view.pending_reveal and view.card_history.shown_count == 0,
+		"The enemy movement starts after the card reveal and before the history update")
+	if movement != null:
+		await movement.finished
+	expect(view.cells[7].has_node("PieceFace") and view.card_history.shown_count == 1,
+		"The enemy card and destination appear together after landing")
+	view.reduce_movement = true
+	expect(battle.move(7, 4, Chess.ENEMY), "Enemy movement is still available after casting Tailwind")
+	view.present_action()
+	movement = view.movement_effect
+	expect(movement != null and movement.reduced_motion and movement.ghosts.is_empty()
+		and is_equal_approx(movement.duration, 0.11), "Reduced motion marks the two squares without a traveling afterimage")
+	view.queue_free()
+	await process_frame
+	expect(not is_instance_valid(movement), "Leaving a battle clears the movement overlay and its tween")
 
 func check_attack_feedback() -> void:
 	var battle = fixture("archer")
@@ -917,7 +998,7 @@ func check_ui() -> void:
 	var start := game.modal_layer.find_child("ConfirmCardDeck", true, false) as Button
 	await click(start)
 	var view = game.ui.find_child("ChessBattle", true, false)
-	expect(view != null and not game.view.visible, "Normal encounter shows the chess board and hides the map")
+	expect(view != null and view.is_visible_in_tree(), "Normal encounter shows the chess board")
 	if view != null:
 		expect(root.get_visible_rect().encloses(view.get_global_rect()) and view.cells.size() == 12 and view.hand_buttons.size() == 3,
 			"Board fits the viewport with twelve squares and a three-card opening hand")
@@ -967,6 +1048,8 @@ func check_ui() -> void:
 		await click(button_named(game.modal_layer, "取消，继续远征"))
 		await click(view.find_child("ChessSquare10", true, false))
 		await click(view.find_child("ChessSquare7", true, false))
+		if view.movement_effect != null:
+			await view.movement_effect.finished
 		expect(game.combat.turn == Chess.PLAYER and not game.combat.can_move_piece()
 			and not view.end_turn_button.disabled, "A mouse move spends the board action and leaves End Turn available")
 		game.combat.piles[Chess.PLAYER][0] = "ward"
@@ -979,6 +1062,10 @@ func check_ui() -> void:
 		expect(game.combat.turn == Chess.ENEMY and game.combat.board_action_used[Chess.ENEMY]
 			and view.turn_banner_text.text == "敌方回合" and not game.combat.last_enemy_action.is_empty(),
 			"The enemy resolves its action before the player gets another turn")
+		if view.movement_effect != null:
+			await view.movement_effect.finished
+		elif view.attack_effect != null:
+			await view.attack_effect.finished
 		game.battle_timer = 0.0
 		await process_frame
 		await process_frame
@@ -1352,6 +1439,8 @@ func execute() -> void:
 	await check_attack_feedback()
 	await check_spell_feedback()
 	await check_mobility_spells()
+	check_movement_routes()
+	await check_enemy_movement()
 	await check_editor_draft()
 	await check_editor_scroll()
 	await check_ui()
