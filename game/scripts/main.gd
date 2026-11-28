@@ -1599,7 +1599,7 @@ func _settings_dialog() -> void:
 	slider.value_changed.connect(func(value: float): sound.set_volume(value))
 	box.add_child(slider)
 	var motion := CheckButton.new()
-	motion.text = "减少棋盘移动动效"
+	motion.text = "减少棋盘动效"
 	motion.button_pressed = reduce_chess_movement
 	motion.toggled.connect(func(enabled: bool):
 		reduce_chess_movement = enabled
