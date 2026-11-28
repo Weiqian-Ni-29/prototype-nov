@@ -2,6 +2,8 @@ extends SceneTree
 ## Rendered card editor, chess turns and settlement, then NPC injury/rescue.
 const Main = preload("res://scenes/main.tscn")
 const Chess = preload("res://scripts/domain/chess_battle.gd")
+const ChessView = preload("res://scripts/presentation/chess_battle_view.gd")
+const Run = preload("res://scripts/domain/expedition.gd")
 var game: Node
 var checks = 0
 var failures = 0
@@ -9,6 +11,47 @@ func _initialize() -> void: call_deferred("execute")
 func expect(value: bool,text: String) -> void:
 	checks += 1
 	if not value: failures+=1; printerr("FAIL: ",text)
+
+func point_at(tile: Control) -> void:
+	var motion := InputEventMouseMotion.new()
+	motion.position = tile.get_global_transform_with_canvas() * (tile.size * Vector2(0.59, 0.44))
+	root.push_input(motion, true)
+	await create_timer(0.10).timeout
+
+func capture_healing() -> void:
+	var run := Run.new()
+	run.new_run(41, "wayfarer")
+	var site: String = run.actor("hero").position
+	run.data.tiles[site].enemies = ["boar"]
+	var battle := Chess.new()
+	expect(battle.begin(run, {"position": site, "origin": site, "npc": "", "ambush": false}, run.card_deck()).ok,
+		"Native healing fixture starts a battle")
+	battle.board[10].hp -= 1
+	battle.hands[Chess.PLAYER] = ["mend_spell", "ember_spell", "brace"]
+	battle.draw_count = 0
+	game._close_modal()
+	game._clear(game.ui)
+	var chess := ChessView.new()
+	game.ui.add_child(chess)
+	chess.setup(battle, null)
+	await process_frame
+	await process_frame
+	chess.hand_buttons[0].pressed.emit()
+	await point_at(chess.cells[10])
+	expect(chess.aim_arrow.visible and chess.aim_arrow.valid and chess.aim_arrow.origin.position.is_equal_approx(chess._card_aim_point(chess.hand_buttons[0])),
+		"The native healing arrow starts on the selected hand card")
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("user://chess-heal-targeting.png")
+	chess.cells[10].pressed.emit()
+	var healing := chess.healing_effect
+	expect(healing != null, "The selected healing target starts the native animation")
+	if healing != null:
+		if not healing.landed:
+			await healing.contact
+		await RenderingServer.frame_post_draw
+		expect(healing.numbers[0].get_child(0).text == "生命 +1" and battle.board[10].hp == battle.board[10].hp_max,
+			"The native impact displays the actual point restored")
+		root.get_texture().get_image().save_png("user://chess-heal-impact.png")
 
 func check_deck_layout(editor: Control) -> void:
 	var original_size := root.content_scale_size
@@ -82,6 +125,12 @@ func execute() -> void:
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("user://chess-opening.png")
 	chess.cells[10].pressed.emit()
+	await point_at(chess.cells[7])
+	var portrait := chess.cells[10].get_node("PieceFace/Identity/Portrait") as Control
+	expect(chess.aim_arrow.visible and chess.aim_arrow.valid and chess.aim_arrow.origin == chess.aim_arrow.rect_in_layer(portrait),
+		"The movement arrow runs from the selected portrait to the chosen cell before confirmation")
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("user://chess-move-targeting.png")
 	chess.cells[7].pressed.emit()
 	expect(b.turn == Chess.PLAYER and not b.can_move_piece(), "Moving leaves the player in control with their board action spent")
 	var step = chess.movement_effect
@@ -325,6 +374,7 @@ func execute() -> void:
 	for index in [1, 2, 3]:
 		codex.find_child("ConfirmCompanionBreakthrough", true, false).pressed.emit()
 	expect(r.actor("ember").breakthrough == 3 and r.data.lamp_coins == 0, "All three breakthroughs can be purchased in the native UI")
+	await capture_healing()
 	print("NATIVE SESSION: %d checks, %d failures" % [checks,failures])
 	game.queue_free()
 	await create_timer(1.0).timeout

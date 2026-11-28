@@ -8,6 +8,8 @@ signal menu_requested
 const Battle = preload("res://scripts/domain/chess_battle.gd")
 const AttackEffect = preload("res://scripts/presentation/chess_attack_effect.gd")
 const MovementEffect = preload("res://scripts/presentation/chess_movement_effect.gd")
+const HealingEffect = preload("res://scripts/presentation/chess_healing_effect.gd")
+const TargetArrow = preload("res://scripts/presentation/chess_target_arrow.gd")
 const CardHistory = preload("res://scripts/presentation/chess_card_history.gd")
 const Cards = preload("res://scripts/domain/card_catalog.gd")
 const Gear = preload("res://scripts/domain/gear_catalog.gd")
@@ -41,6 +43,8 @@ const ENEMY_CARD_HOLD = 1.25
 const ENEMY_CARD_FLIGHT = 0.32
 const CARD_TINTS = {"partner": Color("294639"), "weapon": Color("494033"),
 	"equipment": Color("494033"), "defense": Color("344b50"), "spell": Color("3a4659")}
+const AIM_TINTS = {"move": Color("ffd690"), "damage": Color("ffad93"), "relocate": Color("d9bcff"),
+	"heal": Color("a9e9bf")}
 
 var battle: RefCounted
 var cells: Array[Button] = []
@@ -82,7 +86,15 @@ var detail_index := -1
 var detail_slot := ""
 var attack_effect: AttackEffect
 var movement_effect: MovementEffect
+var healing_effect: HealingEffect
+var healing_overlay: HealingEffect
 var reduce_movement := false
+var aim_arrow: TargetArrow
+var aim_kind := ""
+var aim_targets := {}
+var aim_hint := ""
+var aim_pointer := Vector2.INF
+var aim_keyboard := false
 var card_history: CardHistory
 var reveal_card: Panel
 var pending_reveal := false
@@ -136,7 +148,9 @@ func setup(model: RefCounted, scene: Texture2D, reduced_motion: bool = false) ->
 		tile.mouse_entered.connect(_hover_tile.bind(square))
 		tile.mouse_exited.connect(_unhover_tile.bind(square))
 		tile.gui_input.connect(_tile_mouse_input.bind(square))
+		tile.focus_entered.connect(_refresh_aim_after_layout)
 		cells.append(tile)
+	grid.resized.connect(_refresh_aim_after_layout)
 	hint = UI.label(board_panel, "", 15, UI.GOLD, true)
 	_build_battle_controls(battlefield)
 
@@ -183,6 +197,11 @@ func setup(model: RefCounted, scene: Texture2D, reduced_motion: bool = false) ->
 	hover_detail_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hover_detail_body.add_theme_constant_override("separation", 4)
 	hover_detail.add_child(hover_detail_body)
+	aim_arrow = TargetArrow.new()
+	add_child(aim_arrow)
+	aim_pointer = get_viewport().get_mouse_position()
+	get_window().mouse_exited.connect(_clear_aim_pointer)
+	card_history.popover.visibility_changed.connect(_update_aim)
 	render()
 
 func _show_turn_banner() -> void:
@@ -208,7 +227,7 @@ func _show_turn_banner() -> void:
 	turn_banner_tween.tween_callback(turn_banner.hide)
 
 func render(hold_square: int = -1, hold_board: bool = false) -> void:
-	if is_attack_playing() or movement_effect != null:
+	if is_attack_playing() or movement_effect != null or healing_effect != null:
 		return
 	var usable: bool = battle.can_act()
 	menu.disabled = false
@@ -217,6 +236,8 @@ func render(hold_square: int = -1, hold_board: bool = false) -> void:
 	end_turn_button.text = "敌方回合" if battle.turn == Battle.ENEMY else "结束回合"
 	var legal := _legal()
 	var picked := _selected_card_definition()
+	aim_kind = _aim_kind(picked)
+	aim_targets = legal
 	var equipment_slot := Cards.equipment_slot(picked)
 	for square in cells.size():
 		if hold_board or square == hold_square:
@@ -234,6 +255,8 @@ func render(hold_square: int = -1, hold_board: bool = false) -> void:
 				hint.text += " 这枚棋子没有合法目标，可改选友方棋子。"
 			else:
 				hint.text += " 选择高亮空格。" if picked.has("relocate") else " 选择高亮敌棋。"
+		elif Cards.is_healing_card(picked):
+			hint.text = "选择高亮友方棋子施放「%s」。" % picked.name if not legal.is_empty() else "当前没有「%s」的合法目标。" % picked.name
 		else:
 			hint.text = "选择高亮棋子装备，替换下来的装备牌会回到手牌。" if not equipment_slot.is_empty() else "选择高亮目标出牌。"
 	elif selected_square >= 0:
@@ -260,12 +283,14 @@ func render(hold_square: int = -1, hold_board: bool = false) -> void:
 	var history_count: int = battle.played_cards.size() - int(pending_reveal)
 	card_history.show_through(battle.played_cards, history_count)
 	_show_turn_banner()
+	aim_hint = hint.text
+	_update_aim()
 
 func is_attack_playing() -> bool:
 	return attack_effect != null
 
 func is_action_playing() -> bool:
-	return is_attack_playing() or movement_effect != null or pending_reveal
+	return is_attack_playing() or movement_effect != null or healing_effect != null or pending_reveal
 
 func present_action() -> void:
 	if is_action_playing():
@@ -273,21 +298,27 @@ func present_action() -> void:
 	var event: Dictionary = battle.take_attack()
 	if event.is_empty():
 		event = battle.take_movement()
+	if event.is_empty():
+		event = battle.take_healing()
 	var count: int = battle.played_cards.size()
 	if count > card_history.shown_count and battle.played_cards[-1].side == Battle.ENEMY:
 		_present_enemy_card(battle.played_cards[-1], event)
 	else:
 		_present_board_event(event)
 
-func _present_board_event(event: Dictionary) -> void:
+func _present_board_event(event: Dictionary, healing_origin: Vector2 = Vector2.INF) -> void:
 	if event.is_empty():
 		render()
 	elif event.has("mover"):
 		_present_movement(event)
+	elif event.has("restored"):
+		_present_healing(event, healing_origin)
 	else:
 		_present_attack(event)
 
 func _lock_board_action() -> void:
+	aim_kind = ""
+	aim_arrow.clear_preview()
 	_hide_detail()
 	_hide_turn_banner()
 	card_history.close_history()
@@ -339,6 +370,42 @@ func _present_movement(event: Dictionary) -> void:
 	movement_effect.play(event, cells[event.from], cells[event.target], via, battle.board[event.target],
 		_build_piece_face, reduce_movement)
 
+func _present_healing(event: Dictionary, origin: Vector2) -> void:
+	if origin == Vector2.INF:
+		var card: Control = hand_buttons[event.card_index] if event.card_index < hand_buttons.size() else card_history.home
+		origin = _card_aim_point(card)
+	_lock_board_action()
+	hint.text = "施放「%s」" % event.card
+	for square in cells.size():
+		_render_tile(cells[square], square, "", false, true)
+		cells[square].disabled = true
+	if is_instance_valid(healing_overlay):
+		healing_overlay.hide()
+		healing_overlay.queue_free()
+	healing_effect = HealingEffect.new()
+	healing_overlay = healing_effect
+	_render_hand()
+	_update_draw_counts()
+	_update_mana_display()
+	add_child(healing_effect)
+	healing_effect.contact.connect(_show_healing_result.bind(event))
+	healing_effect.released.connect(_finish_healing)
+	healing_effect.play(event, origin, cells, reduce_movement)
+
+func _show_healing_result(event: Dictionary) -> void:
+	var recovery: Array[String] = []
+	for result: Dictionary in event.restored:
+		recovery.append("%s回复 %d 点生命" % [result.name, result.amount])
+	for square in cells.size():
+		_render_tile(cells[square], square, "")
+		cells[square].disabled = true
+	hint.text = " · ".join(recovery)
+
+func _finish_healing() -> void:
+	healing_effect = null
+	card_history.toggle.disabled = card_history.shown_count == 0
+	render()
+
 func _hide_turn_banner() -> void:
 	if turn_banner_tween != null:
 		turn_banner_tween.kill()
@@ -348,7 +415,7 @@ func _present_enemy_card(play: Dictionary, event: Dictionary) -> void:
 	pending_reveal = true
 	card_history.close_history()
 	_hide_detail()
-	render(event.get("target", -1), event.has("mover"))
+	render(event.get("target", -1), event.has("mover") or event.has("restored"))
 	_hide_turn_banner()
 	menu.disabled = true
 	card_history.toggle.disabled = true
@@ -376,11 +443,12 @@ func _position_reveal(progress: float) -> void:
 	reveal_card.scale = Vector2.ONE * lerpf(large_scale, small_scale, progress)
 
 func _finish_card_reveal(event: Dictionary) -> void:
+	var healing_origin := _card_aim_point(reveal_card) if event.has("restored") else Vector2.INF
 	reveal_card.hide()
 	reveal_card.queue_free()
 	reveal_card = null
 	pending_reveal = false
-	_present_board_event(event)
+	_present_board_event(event, healing_origin)
 
 func _finish_attack() -> void:
 	attack_effect.hide()
@@ -427,6 +495,102 @@ func _selected_card_definition() -> Dictionary:
 func _selected_equipment_slot() -> String:
 	return Cards.equipment_slot(_selected_card_definition())
 
+func _aim_kind(card: Dictionary) -> String:
+	if not battle.can_act():
+		return ""
+	if selected_card >= 0:
+		if Cards.is_healing_card(card):
+			return "heal"
+		if card.get("kind") == "spell":
+			if card.has("damage"):
+				return "damage"
+			if card.has("relocate"):
+				return "relocate"
+		return ""
+	return "move" if selected_square >= 0 and battle.can_move_piece() else ""
+
+func _card_aim_point(card: Control) -> Vector2:
+	return aim_arrow.point_in_layer(card, Vector2(card.size.x * 0.5, 2.0))
+
+func _aim_origin() -> Rect2:
+	if selected_square >= 0:
+		var tile := cells[selected_square]
+		var portrait := tile.get_node_or_null("PieceFace/Identity/Portrait") as Control
+		return aim_arrow.rect_in_layer(portrait if portrait != null and portrait.size.y > 0.0 else tile)
+	return Rect2(_card_aim_point(hand_buttons[selected_card]), Vector2.ZERO)
+
+func _refresh_aim_after_layout() -> void:
+	_update_aim.call_deferred()
+
+func _clear_aim_pointer() -> void:
+	aim_pointer = Vector2.INF
+	aim_keyboard = false
+	_update_aim()
+
+func _update_aim() -> void:
+	if aim_arrow == null:
+		return
+	if aim_kind.is_empty() or is_action_playing() or not is_visible_in_tree() or card_history.popover.visible:
+		aim_arrow.clear_preview()
+		return
+	var point := Vector2.INF
+	var square := -1
+	if aim_keyboard:
+		square = cells.find(get_viewport().gui_get_focus_owner())
+	elif aim_pointer != Vector2.INF:
+		point = aim_arrow.get_global_transform_with_canvas().affine_inverse() * aim_pointer
+		for index in cells.size():
+			if aim_arrow.rect_in_layer(cells[index]).has_point(point):
+				square = index
+				break
+	if square < 0 or square == selected_square or aim_targets.get(square) == "attack":
+		aim_arrow.clear_preview()
+		hint.text = aim_hint
+		return
+	var destination := aim_arrow.rect_in_layer(cells[square])
+	var valid := aim_targets.has(square)
+	if hover_detail.visible:
+		_hide_detail()
+	if turn_banner.visible:
+		_hide_turn_banner()
+	aim_arrow.aim(_aim_origin(), destination, destination.get_center() if aim_keyboard else point,
+		AIM_TINTS[aim_kind], valid, reduce_movement or aim_keyboard)
+	hint.text = "可确认 · %s" % Battle.square_name(square) if valid else _aim_problem(square)
+
+func _aim_problem(square: int) -> String:
+	var reason: String = battle.targeting_problem(selected_square, square, _selected_card_definition())
+	return reason if not reason.is_empty() else "请选择高亮目标。"
+
+func _cancel_aim() -> void:
+	if aim_kind.is_empty() and selected_square < 0:
+		return
+	selected_square = -1
+	selected_card = -1
+	_hide_detail()
+	render()
+
+func _input(event: InputEvent) -> void:
+	if aim_arrow == null:
+		return
+	var has_aim := not aim_kind.is_empty() or selected_square >= 0
+	if has_aim and not is_action_playing() and not event.is_echo() and event.is_action_pressed("ui_cancel"):
+		_cancel_aim()
+		get_viewport().set_input_as_handled()
+		return
+	if event is InputEventMouseMotion or event is InputEventMouseButton or event is InputEventScreenTouch:
+		aim_keyboard = false
+		aim_pointer = event.position
+		if has_aim and not is_action_playing() and event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
+			_cancel_aim()
+			get_viewport().set_input_as_handled()
+		else:
+			_update_aim()
+	elif event is InputEventKey and (event.is_action_pressed("ui_focus_next") or event.is_action_pressed("ui_focus_prev")
+			or event.is_action_pressed("ui_left") or event.is_action_pressed("ui_right")
+			or event.is_action_pressed("ui_up") or event.is_action_pressed("ui_down")):
+		aim_keyboard = true
+		_refresh_aim_after_layout()
+
 func _select_tile(square: int) -> void:
 	if is_action_playing() or not battle.can_act():
 		return
@@ -438,16 +602,21 @@ func _select_tile(square: int) -> void:
 		var accepted: bool = battle.play(selected_card, square, Battle.PLAYER, source) \
 			if selected_card >= 0 else battle.move(selected_square, square)
 		if accepted:
+			if not aim_kind.is_empty() and legal.get(square) != "attack":
+				aim_arrow.confirm(_aim_origin(), aim_arrow.rect_in_layer(cells[square]), AIM_TINTS[aim_kind], reduce_movement)
 			_notify_action()
+		return
+	if square == selected_square:
+		_cancel_aim()
 		return
 	var unit: Dictionary = battle.board[square]
 	if unit.get("side", -1) == Battle.PLAYER and not Cards.weapon_fits(picked, unit):
 		hint.text = "「%s」仅%s棋子可装备。" % [picked.name.get_slice(" · ", 0), Cards.attack_type(picked)]
 		return
+	if not aim_kind.is_empty() and (unit.get("side", -1) != Battle.PLAYER or selected_card >= 0 and not needs_source):
+		hint.text = _aim_problem(square)
+		return
 	if not unit.is_empty():
-		if needs_source and unit.side != Battle.PLAYER:
-			hint.text = "请选择所选棋子的高亮施法目标。"
-			return
 		selected_card = -1
 		selected_square = square if selected_square != square and unit.side == Battle.PLAYER else -1
 		render()
@@ -534,7 +703,7 @@ func _render_tile(tile: Button, square: int, action: String, hide_face: bool = f
 	var hover_style := style.duplicate() as StyleBoxFlat
 	hover_style.bg_color = tint.lightened(0.09)
 	tile.add_theme_stylebox_override("hover", hover_style)
-	tile.disabled = not battle.can_act() or empty and action.is_empty()
+	tile.disabled = not battle.can_act() or empty and action.is_empty() and aim_kind.is_empty()
 	if hold_face and not empty and not hide_face:
 		var preview := tile.get_node_or_null("PieceFace/Identity/AttackPreview") as Control
 		if preview != null:
@@ -546,7 +715,7 @@ func _render_tile(tile: Button, square: int, action: String, hide_face: bool = f
 		tile.accessibility_name = square_label
 		return
 	if empty:
-		tile.text = "+" if action == "deploy" else "●" if action == "move" else ""
+		tile.text = "+" if action == "deploy" else "◇" if action == "move" else ""
 		tile.accessibility_name = square_label + "空格"
 		return
 	tile.text = ""
@@ -587,6 +756,8 @@ func _build_piece_face(tile: Control, unit: Dictionary, action: String) -> void:
 	var portrait := UI.art(identity, unit, Vector2.ZERO)
 	portrait.name = "Portrait"
 	portrait.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	if selected_square >= 0 and tile == cells[selected_square]:
+		portrait.resized.connect(_refresh_aim_after_layout)
 	if action == "attack":
 		var damage := UI.label(identity, "可攻击 · %d" % battle.attack_power(battle.board[selected_square]), 12, UI.ORANGE)
 		damage.name = "AttackPreview"
@@ -699,10 +870,12 @@ func _build_battle_controls(parent: HBoxContainer) -> void:
 	navigation.add_theme_constant_override("separation", 4)
 	rail.add_child(navigation)
 	retreat = _icon_button(navigation, "ChessRetreat", "撤退", RETREAT_ICON, func():
-		if not is_attack_playing():
+		if not is_action_playing():
+			_cancel_aim()
 			retreat_requested.emit())
 	menu = _icon_button(navigation, "ChessMainMenu", "主菜单", MENU_ICON, func():
-		if not is_attack_playing():
+		if not is_action_playing():
+			_cancel_aim()
 			menu_requested.emit())
 	var enemy := UI.panel(rail, Color("352e29"), Color("8b7057"))
 	enemy.get_parent().name = "ChessEnemyResources"
@@ -1066,7 +1239,7 @@ func _tile_mouse_input(event: InputEvent, square: int) -> void:
 		_inspect_tile_at(square, cells[square].get_global_transform() * event.position)
 
 func _inspect_tile_at(square: int, point: Vector2) -> void:
-	if is_action_playing() or battle.board[square].is_empty():
+	if is_action_playing() or aim_arrow.visible or battle.board[square].is_empty():
 		return
 	var slot := ""
 	var rack := cells[square].get_node_or_null("PieceFace/EquipmentSlots")

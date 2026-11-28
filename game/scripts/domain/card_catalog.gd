@@ -157,6 +157,9 @@ static func weapon_fits(card: Dictionary, piece: Dictionary) -> bool:
 static func requires_spell_source(card: Dictionary) -> bool:
 	return card.get("kind") == "spell" and (card.has("damage") or card.has("relocate"))
 
+static func is_healing_card(card: Dictionary) -> bool:
+	return card.get("kind") != "partner" and (card.has("heal") or card.get("cup", false))
+
 static func balance_ranged(piece: Dictionary, starts_on_board: bool = false) -> void:
 	if not is_ranged(piece):
 		return
